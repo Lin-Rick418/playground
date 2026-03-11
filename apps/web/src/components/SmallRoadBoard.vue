@@ -6,21 +6,32 @@ interface Props {
   bigRoad?: BaccaratGameData[] | null;
   rows?: number;
   cols?: number;
+  cellSize?: number;
 }
 
 const props = withDefaults(defineProps<Props>(), {
   bigRoad: null,
   rows: 6,
   cols: 13,
+  cellSize: 14,
 });
 
 const rowCount = computed(() => Math.max(1, props.rows));
 const colCount = computed(() => Math.max(1, props.cols));
+const cellSize = computed(() => Math.max(1, props.cellSize));
 const grid = computed(() => buildSmallRoadGrid(props.bigRoad ?? [], rowCount.value, colCount.value));
 </script>
 
 <template>
-  <div class="small-road" :style="{ '--road-rows': String(rowCount), '--road-cols': String(colCount) }">
+  <div
+    class="small-road"
+    :style="{
+      '--road-rows': String(rowCount),
+      '--road-cols': String(colCount),
+      '--road-cell-size': `${cellSize}px`,
+      '--road-token-size': `${Math.max(4, Math.round(cellSize * 0.58))}px`,
+    }"
+  >
     <div v-for="(row, rowIndex) in grid" :key="rowIndex" class="small-road-row">
       <div v-for="(cell, colIndex) in row" :key="`${rowIndex}-${colIndex}`" class="small-road-cell">
         <div v-if="cell" class="small-road-token" :class="cell.toLowerCase()" />
@@ -40,13 +51,13 @@ const grid = computed(() => buildSmallRoadGrid(props.bigRoad ?? [], rowCount.val
 
 .small-road-row {
   display: grid;
-  grid-template-columns: repeat(var(--road-cols), minmax(12px, 1fr));
+  grid-template-columns: repeat(var(--road-cols), var(--road-cell-size));
 }
 
 .small-road-cell {
   aspect-ratio: 1;
-  min-width: 12px;
-  min-height: 12px;
+  width: var(--road-cell-size);
+  height: var(--road-cell-size);
   border-right: 1px solid rgba(255, 255, 255, 0.08);
   border-bottom: 1px solid rgba(255, 255, 255, 0.08);
   display: flex;
@@ -56,8 +67,8 @@ const grid = computed(() => buildSmallRoadGrid(props.bigRoad ?? [], rowCount.val
 }
 
 .small-road-token {
-  width: 7px;
-  height: 7px;
+  width: var(--road-token-size);
+  height: var(--road-token-size);
   border-radius: 999px;
 }
 

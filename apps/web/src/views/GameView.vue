@@ -2,64 +2,30 @@
 import { computed, onMounted, onUnmounted, ref, watch } from "vue";
 import axios from "axios";
 import { useRoute, useRouter } from "vue-router";
-import { createLiveEventSource, type LiveUpdateEvent } from "../lib/live";
 import RoadmapPanel from "../components/RoadmapPanel.vue";
+import { BET_OPTIONS, CHIP_VALUES, DEAL_ANIMATION_TIMINGS, DEFAULT_CHIP_VALUE, WINNER_LABELS } from "../const/game";
+import { useLiveChannel } from "../composables/useLiveChannel";
+import { useRoadVisibilitySettings } from "../composables/useRoadVisibilitySettings";
+import type { TableSnapshotMessage, TableUserSnapshotMessage } from "../lib/live";
 import { useAuthStore } from "../stores/auth";
 import { useGameStore } from "../stores/game";
+import type { BetType, Card } from "../types/domain";
 
-type BetKey = "PLAYER" | "BANKER" | "TIE" | "PLAYER_PAIR" | "BANKER_PAIR";
-type DisplayCard = { rank: string; suit: string };
+type BetKey = BetType;
+type DisplayCard = Card;
 type CardRank = DisplayCard["rank"];
 type PendingBetAmounts = Record<BetKey, number>;
-type RoadVisibilitySettings = {
-  beadRoad: boolean;
-  bigRoad: boolean;
-  bigEyeRoad: boolean;
-  smallRoad: boolean;
-  cockroachRoad: boolean;
-};
 
 const authStore = useAuthStore();
 const gameStore = useGameStore();
 const route = useRoute();
 const router = useRouter();
 const tableId = computed(() => String(route.params.tableId));
-const ROAD_VISIBILITY_STORAGE_KEY = "baccarat-road-visibility";
-const chipValues = [100, 500, 1000, 10000, 50000] as const;
-const selectedChip = ref<(typeof chipValues)[number]>(chipValues[1]);
+const betOptions = BET_OPTIONS;
+const selectedChip = ref<(typeof CHIP_VALUES)[number]>(DEFAULT_CHIP_VALUE);
 const isPlacingBet = ref(false);
 const isRoadSettingsOpen = ref(false);
 const betGridRef = ref<HTMLElement | null>(null);
-
-const roadVisibilityOptions = [
-  { key: "beadRoad", label: "珠盤路" },
-  { key: "bigRoad", label: "大路" },
-  { key: "bigEyeRoad", label: "大眼仔路" },
-  { key: "smallRoad", label: "小路" },
-  { key: "cockroachRoad", label: "曱甴路" },
-] as const satisfies ReadonlyArray<{ key: keyof RoadVisibilitySettings; label: string }>;
-
-const mainBetOptions = [
-  { key: "PLAYER", label: "閒", payout: "1:1", accent: "player" },
-  { key: "TIE", label: "和", payout: "8:1", accent: "tie" },
-  { key: "BANKER", label: "莊", payout: "0.95:1", accent: "banker" },
-] as const;
-
-const sideBetOptions = [
-  { key: "PLAYER_PAIR", label: "閒對", payout: "11:1", accent: "pair-player" },
-  { key: "BANKER_PAIR", label: "莊對", payout: "11:1", accent: "pair-banker" },
-] as const;
-
-const betOptions = [
-  ...mainBetOptions.map((option) => ({
-    ...option,
-    gridClass: option.key === "PLAYER" ? "grid-player" : option.key === "TIE" ? "grid-tie" : "grid-banker",
-  })),
-  ...sideBetOptions.map((option) => ({
-    ...option,
-    gridClass: option.key === "PLAYER_PAIR" ? "grid-player-pair" : "grid-banker-pair",
-  })),
-] as const;
 
 const displayedPlayerCards = ref<DisplayCard[]>([]);
 const displayedBankerCards = ref<DisplayCard[]>([]);
@@ -74,6 +40,7 @@ const settlementPopup = ref<null | { amount: number }>(null);
 const settlementPopupTimer = ref<number | null>(null);
 const pendingSettlementAmount = ref<number | null>(null);
 const lastResolvedRoundId = ref("");
+const latestParticipatedRoundId = ref("");
 const pendingBetAmounts = ref<PendingBetAmounts>({
   PLAYER: 0,
   BANKER: 0,
@@ -81,36 +48,47 @@ const pendingBetAmounts = ref<PendingBetAmounts>({
   PLAYER_PAIR: 0,
   BANKER_PAIR: 0,
 });
-const roadVisibility = ref<RoadVisibilitySettings>(loadRoadVisibilitySettings());
+const { roadVisibility, roadVisibilityOptions, toggleRoadVisibility } = useRoadVisibilitySettings();
 const clockNow = ref(Date.now());
 const serverTimeOffsetMs = ref(0);
-let stream: EventSource | null = null;
-let fallbackTimer: number | null = null;
 let clockTimer: number | null = null;
 let refreshGameDataPromise: Promise<void> | null = null;
 let refreshGameDataQueued = false;
 let lastBetGridTouchEndMs = 0;
-const BASE_CARD_INTERVAL_MS = 520;
-const BASE_REVEAL_DELAY_MS = 2400;
-const BONUS_PHASE_DELAY_MS = 620;
-const BONUS_CARD_INTERVAL_MS = 620;
-const NO_BONUS_REVEAL_DELAY_MS = 850;
-const FINAL_REVEAL_DELAY_MS = 520;
+let messageTimer: number | null = null;
 
-const totalBet = computed(() => {
-  const currentTotal = gameStore.currentBets.reduce((sum, bet) => sum + bet.amount, 0);
-  const pendingTotal = Object.values(pendingBetAmounts.value).reduce((sum, amount) => sum + amount, 0);
-  return currentTotal + pendingTotal;
-});
 const currentRound = computed(() => gameStore.currentRound);
 const presentationRound = computed(() => gameStore.previousRound);
 const currentTable = computed(() => gameStore.currentTable);
 const syncedServerNowMs = computed(() => clockNow.value + serverTimeOffsetMs.value);
+const roadmapRounds = computed(() => {
+  const rounds = gameStore.roadRounds;
+  const currentPresentationRound = presentationRound.value;
+  const presentationEndsAt = gameStore.presentation?.endsAt;
+
+  if (!currentPresentationRound || !presentationEndsAt) {
+    return rounds;
+  }
+
+  if (syncedServerNowMs.value >= new Date(presentationEndsAt).getTime()) {
+    return rounds;
+  }
+
+  let skippedLatestPresentationRound = false;
+  return rounds.filter((round) => {
+    if (!skippedLatestPresentationRound && round.id === currentPresentationRound.id) {
+      skippedLatestPresentationRound = true;
+      return false;
+    }
+
+    return true;
+  });
+});
 const availableChips = computed(() => {
-  const minBet = currentTable.value?.minBet ?? chipValues[0];
+  const minBet = currentTable.value?.minBet ?? CHIP_VALUES[0];
   const maxBet = currentTable.value?.maxBet ?? 5000;
-  const chips = chipValues.filter((chip) => chip >= minBet && chip <= maxBet);
-  return chips.length ? chips : chipValues.filter((chip) => chip <= maxBet);
+  const chips = CHIP_VALUES.filter((chip) => chip >= minBet && chip <= maxBet);
+  return chips.length ? chips : CHIP_VALUES.filter((chip) => chip <= maxBet);
 });
 const overlayPlayerCards = computed(() =>
   dealingPhase.value === "revealed"
@@ -137,6 +115,59 @@ const countdownSeconds = computed(() => {
 
   return Math.ceil(Math.max(0, countdownMs) / 1000);
 });
+const countdownTone = computed(() => {
+  if (countdownSeconds.value <= 0) {
+    return "closed";
+  }
+
+  if (countdownSeconds.value <= 5) {
+    return "warning";
+  }
+
+  return "open";
+});
+const countdownDisplay = computed(() => (countdownSeconds.value > 0 ? String(countdownSeconds.value) : ""));
+const countdownStyle = computed(() => {
+  if (countdownSeconds.value <= 0) {
+    return {
+      "--countdown-pulse-duration": "0s",
+      "--countdown-ring-duration": "0s",
+      "--countdown-ring-delay": "0s",
+      "--countdown-ring-second-delay": "0s",
+    };
+  }
+
+  if (countdownSeconds.value <= 5) {
+    const pulseDurationMap: Record<number, string> = {
+      5: "0.95s",
+      4: "0.82s",
+      3: "0.68s",
+      2: "0.54s",
+      1: "0.42s",
+    };
+    const ringDurationMap: Record<number, string> = {
+      5: "1.1s",
+      4: "0.96s",
+      3: "0.82s",
+      2: "0.68s",
+      1: "0.54s",
+    };
+
+    return {
+      "--countdown-pulse-duration": pulseDurationMap[countdownSeconds.value] ?? "0.95s",
+      "--countdown-ring-duration": ringDurationMap[countdownSeconds.value] ?? "1.1s",
+      "--countdown-ring-delay": "0s",
+      "--countdown-ring-second-delay": "0.24s",
+    };
+  }
+
+  return {
+    "--countdown-pulse-duration": "1.4s",
+    "--countdown-ring-duration": "1.8s",
+    "--countdown-ring-delay": "0s",
+    "--countdown-ring-second-delay": "0.9s",
+  };
+});
 const isBettingOpen = computed(() => {
   if (!currentRound.value || currentRound.value.status !== "OPEN") {
     return false;
@@ -153,11 +184,7 @@ const winningLabel = computed(() => {
     return "";
   }
 
-  return presentationRound.value.winner === "PLAYER"
-    ? "閒贏"
-    : presentationRound.value.winner === "BANKER"
-      ? "莊贏"
-      : "和局";
+  return WINNER_LABELS[presentationRound.value.winner];
 });
 const dealStatusLabel = computed(() => {
   if (dealingPhase.value === "revealed") {
@@ -175,53 +202,6 @@ const dealStatusLabel = computed(() => {
   return "發牌中";
 });
 
-function createDefaultRoadVisibility(): RoadVisibilitySettings {
-  return {
-    beadRoad: true,
-    bigRoad: true,
-    bigEyeRoad: true,
-    smallRoad: true,
-    cockroachRoad: true,
-  };
-}
-
-function normalizeRoadVisibilitySettings(value: unknown): RoadVisibilitySettings {
-  const defaults = createDefaultRoadVisibility();
-  if (!value || typeof value !== "object") {
-    return defaults;
-  }
-
-  return {
-    beadRoad: typeof (value as Partial<RoadVisibilitySettings>).beadRoad === "boolean" ? Boolean((value as Partial<RoadVisibilitySettings>).beadRoad) : defaults.beadRoad,
-    bigRoad: typeof (value as Partial<RoadVisibilitySettings>).bigRoad === "boolean" ? Boolean((value as Partial<RoadVisibilitySettings>).bigRoad) : defaults.bigRoad,
-    bigEyeRoad:
-      typeof (value as Partial<RoadVisibilitySettings>).bigEyeRoad === "boolean"
-        ? Boolean((value as Partial<RoadVisibilitySettings>).bigEyeRoad)
-        : defaults.bigEyeRoad,
-    smallRoad:
-      typeof (value as Partial<RoadVisibilitySettings>).smallRoad === "boolean"
-        ? Boolean((value as Partial<RoadVisibilitySettings>).smallRoad)
-        : defaults.smallRoad,
-    cockroachRoad:
-      typeof (value as Partial<RoadVisibilitySettings>).cockroachRoad === "boolean"
-        ? Boolean((value as Partial<RoadVisibilitySettings>).cockroachRoad)
-        : defaults.cockroachRoad,
-  };
-}
-
-function loadRoadVisibilitySettings() {
-  if (typeof window === "undefined") {
-    return createDefaultRoadVisibility();
-  }
-
-  try {
-    const rawValue = window.localStorage.getItem(ROAD_VISIBILITY_STORAGE_KEY);
-    return rawValue ? normalizeRoadVisibilitySettings(JSON.parse(rawValue)) : createDefaultRoadVisibility();
-  } catch {
-    return createDefaultRoadVisibility();
-  }
-}
-
 async function refreshGameData() {
   if (refreshGameDataPromise) {
     refreshGameDataQueued = true;
@@ -230,12 +210,14 @@ async function refreshGameData() {
 
   refreshGameDataPromise = (async () => {
     const previousRoundId = currentRound.value?.id ?? "";
-    const previousRoundBetTotal = gameStore.currentBets.reduce((sum, bet) => sum + bet.amount, 0);
     const state = await gameStore.fetchState(tableId.value);
     serverTimeOffsetMs.value = new Date(state.serverTime).getTime() - Date.now();
     authStore.patchBalance(state.balance);
+    if (state.myBets?.length) {
+      latestParticipatedRoundId.value = state.round.id;
+    }
     if (!availableChips.value.includes(selectedChip.value)) {
-      selectedChip.value = availableChips.value[0] ?? chipValues[0];
+      selectedChip.value = availableChips.value[0] ?? CHIP_VALUES[0];
     }
 
     const settledRound = state.previousRound;
@@ -244,13 +226,13 @@ async function refreshGameData() {
       previousRoundId !== state.round.id &&
       settledRound &&
       settledRound.id === previousRoundId &&
-      previousRoundBetTotal > 0 &&
+      settledRound.id === latestParticipatedRoundId.value &&
       lastResolvedRoundId.value !== settledRound.id
     ) {
       lastResolvedRoundId.value = settledRound.id;
       await gameStore.fetchHistory();
       const settledHistory = gameStore.history.find((item) => item.round.id === settledRound.id);
-      pendingSettlementAmount.value = settledHistory ? settledHistory.totalPayout - settledHistory.totalAmount : 0;
+      queueSettlementPopup(settledHistory ? settledHistory.totalPayout - settledHistory.totalAmount : 0, state.serverTime);
     }
 
     syncPresentationWindow(state.serverTime);
@@ -288,7 +270,7 @@ async function addBet(target: BetKey) {
     return;
   }
 
-  const minBet = currentTable.value?.minBet ?? chipValues[0];
+  const minBet = currentTable.value?.minBet ?? CHIP_VALUES[0];
   const maxBet = currentTable.value?.maxBet ?? 10000;
   if (selectedChip.value < minBet) {
     gameStore.message = `最低下注 ${minBet.toLocaleString()}`;
@@ -300,11 +282,17 @@ async function addBet(target: BetKey) {
     return;
   }
 
+  if ((authStore.user?.balance ?? 0) < selectedChip.value) {
+    gameStore.message = "餘額不足";
+    return;
+  }
+
   isPlacingBet.value = true;
   pendingBetAmounts.value[target] += selectedChip.value;
 
   try {
     const result = await gameStore.placeBet(tableId.value, [{ betType: target, amount: selectedChip.value }]);
+    latestParticipatedRoundId.value = result.round.id;
     authStore.patchBalance(result.balance);
   } catch (error) {
     pendingBetAmounts.value[target] = Math.max(0, pendingBetAmounts.value[target] - selectedChip.value);
@@ -330,6 +318,13 @@ function stopSettlementPopupTimer() {
   if (settlementPopupTimer.value) {
     window.clearTimeout(settlementPopupTimer.value);
     settlementPopupTimer.value = null;
+  }
+}
+
+function stopMessageTimer() {
+  if (messageTimer) {
+    window.clearTimeout(messageTimer);
+    messageTimer = null;
   }
 }
 
@@ -380,12 +375,35 @@ function showPendingSettlementIfNeeded() {
   }
 }
 
+function queueSettlementPopup(amount: number, serverTimeIso?: string) {
+  pendingSettlementAmount.value = amount;
+
+  if (!gameStore.presentation?.endsAt) {
+    showPendingSettlementIfNeeded();
+    return;
+  }
+
+  const serverNowMs = serverTimeIso ? new Date(serverTimeIso).getTime() : syncedServerNowMs.value;
+  const presentationEndsAtMs = new Date(gameStore.presentation.endsAt).getTime();
+
+  if (!showDealOverlay.value || serverNowMs >= presentationEndsAtMs) {
+    showPendingSettlementIfNeeded();
+  }
+}
+
 function scheduleRevealTimer(delayMs: number, callback: () => void) {
   if (delayMs <= 0) {
     return;
   }
 
   revealTimers.push(window.setTimeout(callback, delayMs));
+}
+
+function getBonusCards(round: { playerCards: DisplayCard[]; bankerCards: DisplayCard[] }) {
+  return [
+    { side: "player" as const, card: round.playerCards[2] },
+    { side: "banker" as const, card: round.bankerCards[2] },
+  ].filter((item): item is { side: "player" | "banker"; card: DisplayCard } => Boolean(item.card));
 }
 
 function syncPresentationState(elapsedMs: number) {
@@ -399,12 +417,11 @@ function syncPresentationState(elapsedMs: number) {
     { side: "player", card: presentationRound.value.playerCards[1] },
     { side: "banker", card: presentationRound.value.bankerCards[1] },
   ].filter((item): item is { side: "player" | "banker"; card: DisplayCard } => Boolean(item.card));
-  const bonusCards = [
-    { side: "player", card: presentationRound.value.playerCards[2] },
-    { side: "banker", card: presentationRound.value.bankerCards[2] },
-  ].filter((item): item is { side: "player" | "banker"; card: DisplayCard } => Boolean(item.card));
+  const bonusCards = getBonusCards(presentationRound.value);
 
-  const shownBaseCards = baseCards.filter((_item, index) => elapsedMs >= index * BASE_CARD_INTERVAL_MS);
+  const shownBaseCards = baseCards.filter(
+    (_item, index) => elapsedMs >= index * DEAL_ANIMATION_TIMINGS.baseCardIntervalMs,
+  );
   displayedPlayerCards.value = shownBaseCards.filter((item) => item.side === "player").map((item) => item.card);
   displayedBankerCards.value = shownBaseCards.filter((item) => item.side === "banker").map((item) => item.card);
   playerDealtCount.value = displayedPlayerCards.value.length;
@@ -413,7 +430,7 @@ function syncPresentationState(elapsedMs: number) {
   bankerFaceUpCount.value = 0;
   dealingPhase.value = "dealing";
 
-  if (elapsedMs >= BASE_REVEAL_DELAY_MS) {
+  if (elapsedMs >= DEAL_ANIMATION_TIMINGS.baseRevealDelayMs) {
     dealingPhase.value = "base-revealed";
     playerDealtCount.value = Math.max(playerDealtCount.value, Math.min(2, presentationRound.value.playerCards.length));
     bankerDealtCount.value = Math.max(bankerDealtCount.value, Math.min(2, presentationRound.value.bankerCards.length));
@@ -422,7 +439,10 @@ function syncPresentationState(elapsedMs: number) {
   }
 
   if (!bonusCards.length) {
-    if (elapsedMs >= BASE_REVEAL_DELAY_MS + NO_BONUS_REVEAL_DELAY_MS) {
+    if (
+      elapsedMs >=
+      DEAL_ANIMATION_TIMINGS.baseRevealDelayMs + DEAL_ANIMATION_TIMINGS.noBonusRevealDelayMs
+    ) {
       dealingPhase.value = "revealed";
       displayedPlayerCards.value = [...presentationRound.value.playerCards];
       displayedBankerCards.value = [...presentationRound.value.bankerCards];
@@ -434,27 +454,42 @@ function syncPresentationState(elapsedMs: number) {
     return;
   }
 
-  const bonusStartMs = BASE_REVEAL_DELAY_MS + BONUS_PHASE_DELAY_MS;
+  const bonusStartMs =
+    DEAL_ANIMATION_TIMINGS.baseRevealDelayMs + DEAL_ANIMATION_TIMINGS.bonusPhaseDelayMs;
   if (elapsedMs >= bonusStartMs) {
     dealingPhase.value = "bonus-dealing";
-    const shownBonusCards = bonusCards.filter(
-      (_item, index) => elapsedMs >= bonusStartMs + index * BONUS_CARD_INTERVAL_MS,
+    const dealtBonusCards = bonusCards.filter(
+      (_item, index) => elapsedMs >= bonusStartMs + index * DEAL_ANIMATION_TIMINGS.bonusCardIntervalMs,
+    );
+    const revealedBonusCards = bonusCards.filter(
+      (_item, index) =>
+        elapsedMs >=
+        bonusStartMs +
+          index * DEAL_ANIMATION_TIMINGS.bonusCardIntervalMs +
+          DEAL_ANIMATION_TIMINGS.bonusRevealDelayMs,
     );
     displayedPlayerCards.value = [
       ...presentationRound.value.playerCards.slice(0, 2),
-      ...shownBonusCards.filter((item) => item.side === "player").map((item) => item.card),
+      ...dealtBonusCards.filter((item) => item.side === "player").map((item) => item.card),
     ];
     displayedBankerCards.value = [
       ...presentationRound.value.bankerCards.slice(0, 2),
-      ...shownBonusCards.filter((item) => item.side === "banker").map((item) => item.card),
+      ...dealtBonusCards.filter((item) => item.side === "banker").map((item) => item.card),
     ];
     playerDealtCount.value = displayedPlayerCards.value.length;
     bankerDealtCount.value = displayedBankerCards.value.length;
-    playerFaceUpCount.value = 2;
-    bankerFaceUpCount.value = 2;
+    playerFaceUpCount.value = 2 + revealedBonusCards.filter((item) => item.side === "player").length;
+    bankerFaceUpCount.value = 2 + revealedBonusCards.filter((item) => item.side === "banker").length;
   }
 
-  if (elapsedMs >= bonusStartMs + bonusCards.length * BONUS_CARD_INTERVAL_MS + FINAL_REVEAL_DELAY_MS) {
+  const lastBonusRevealAtMs =
+    bonusStartMs +
+    (bonusCards.length - 1) * DEAL_ANIMATION_TIMINGS.bonusCardIntervalMs +
+    DEAL_ANIMATION_TIMINGS.bonusRevealDelayMs;
+  if (
+    elapsedMs >=
+    lastBonusRevealAtMs + DEAL_ANIMATION_TIMINGS.finalRevealDelayMs
+  ) {
     dealingPhase.value = "revealed";
     displayedPlayerCards.value = [...presentationRound.value.playerCards];
     displayedBankerCards.value = [...presentationRound.value.bankerCards];
@@ -510,15 +545,12 @@ function syncPresentationWindow(serverTimeIso: string) {
     { side: "player", card: round.playerCards[1] },
     { side: "banker", card: round.bankerCards[1] },
   ].filter((item): item is { side: "player" | "banker"; card: DisplayCard } => Boolean(item.card));
-  const bonusCards = [
-    { side: "player", card: round.playerCards[2] },
-    { side: "banker", card: round.bankerCards[2] },
-  ].filter((item): item is { side: "player" | "banker"; card: DisplayCard } => Boolean(item.card));
+  const bonusCards = getBonusCards(round);
 
   const elapsedMs = serverNowMs - presentationStartsAtMs;
 
   baseCards.forEach((item, index) => {
-    scheduleRevealTimer(index * BASE_CARD_INTERVAL_MS - elapsedMs, () => {
+    scheduleRevealTimer(index * DEAL_ANIMATION_TIMINGS.baseCardIntervalMs - elapsedMs, () => {
       if (item.side === "player") {
         displayedPlayerCards.value = [...displayedPlayerCards.value, item.card];
         playerDealtCount.value = displayedPlayerCards.value.length;
@@ -529,7 +561,7 @@ function syncPresentationWindow(serverTimeIso: string) {
     });
   });
 
-  scheduleRevealTimer(BASE_REVEAL_DELAY_MS - elapsedMs, () => {
+  scheduleRevealTimer(DEAL_ANIMATION_TIMINGS.baseRevealDelayMs - elapsedMs, () => {
     dealingPhase.value = "base-revealed";
     playerDealtCount.value = Math.max(playerDealtCount.value, Math.min(2, round.playerCards.length));
     bankerDealtCount.value = Math.max(bankerDealtCount.value, Math.min(2, round.bankerCards.length));
@@ -538,42 +570,67 @@ function syncPresentationWindow(serverTimeIso: string) {
   });
 
   if (!bonusCards.length) {
-    scheduleRevealTimer(BASE_REVEAL_DELAY_MS + NO_BONUS_REVEAL_DELAY_MS - elapsedMs, () => {
-      dealingPhase.value = "revealed";
-      displayedPlayerCards.value = [...round.playerCards];
-      displayedBankerCards.value = [...round.bankerCards];
-      playerDealtCount.value = displayedPlayerCards.value.length;
-      bankerDealtCount.value = displayedBankerCards.value.length;
-      playerFaceUpCount.value = displayedPlayerCards.value.length;
-      bankerFaceUpCount.value = displayedBankerCards.value.length;
-    });
+    scheduleRevealTimer(
+      DEAL_ANIMATION_TIMINGS.baseRevealDelayMs + DEAL_ANIMATION_TIMINGS.noBonusRevealDelayMs - elapsedMs,
+      () => {
+        dealingPhase.value = "revealed";
+        displayedPlayerCards.value = [...round.playerCards];
+        displayedBankerCards.value = [...round.bankerCards];
+        playerDealtCount.value = displayedPlayerCards.value.length;
+        bankerDealtCount.value = displayedBankerCards.value.length;
+        playerFaceUpCount.value = displayedPlayerCards.value.length;
+        bankerFaceUpCount.value = displayedBankerCards.value.length;
+      },
+    );
   } else {
-    const bonusStartMs = BASE_REVEAL_DELAY_MS + BONUS_PHASE_DELAY_MS;
+    const bonusStartMs =
+      DEAL_ANIMATION_TIMINGS.baseRevealDelayMs + DEAL_ANIMATION_TIMINGS.bonusPhaseDelayMs;
     scheduleRevealTimer(bonusStartMs - elapsedMs, () => {
       dealingPhase.value = "bonus-dealing";
     });
 
     bonusCards.forEach((item, index) => {
-      scheduleRevealTimer(bonusStartMs + index * BONUS_CARD_INTERVAL_MS - elapsedMs, () => {
+      const dealAtMs = bonusStartMs + index * DEAL_ANIMATION_TIMINGS.bonusCardIntervalMs;
+      const revealAtMs = dealAtMs + DEAL_ANIMATION_TIMINGS.bonusRevealDelayMs;
+
+      scheduleRevealTimer(
+        dealAtMs - elapsedMs,
+        () => {
+          if (item.side === "player") {
+            displayedPlayerCards.value = [...round.playerCards.slice(0, 2), item.card];
+            playerDealtCount.value = displayedPlayerCards.value.length;
+          } else {
+            displayedBankerCards.value = [...round.bankerCards.slice(0, 2), item.card];
+            bankerDealtCount.value = displayedBankerCards.value.length;
+          }
+        },
+      );
+
+      scheduleRevealTimer(revealAtMs - elapsedMs, () => {
         if (item.side === "player") {
-          displayedPlayerCards.value = [...round.playerCards.slice(0, 2), item.card];
-          playerDealtCount.value = displayedPlayerCards.value.length;
+          playerFaceUpCount.value = 3;
         } else {
-          displayedBankerCards.value = [...round.bankerCards.slice(0, 2), item.card];
-          bankerDealtCount.value = displayedBankerCards.value.length;
+          bankerFaceUpCount.value = 3;
         }
       });
     });
 
-    scheduleRevealTimer(bonusStartMs + bonusCards.length * BONUS_CARD_INTERVAL_MS + FINAL_REVEAL_DELAY_MS - elapsedMs, () => {
-      dealingPhase.value = "revealed";
-      displayedPlayerCards.value = [...round.playerCards];
-      displayedBankerCards.value = [...round.bankerCards];
-      playerDealtCount.value = displayedPlayerCards.value.length;
-      bankerDealtCount.value = displayedBankerCards.value.length;
-      playerFaceUpCount.value = displayedPlayerCards.value.length;
-      bankerFaceUpCount.value = displayedBankerCards.value.length;
-    });
+    const lastBonusRevealAtMs =
+      bonusStartMs +
+      (bonusCards.length - 1) * DEAL_ANIMATION_TIMINGS.bonusCardIntervalMs +
+      DEAL_ANIMATION_TIMINGS.bonusRevealDelayMs;
+    scheduleRevealTimer(
+      lastBonusRevealAtMs + DEAL_ANIMATION_TIMINGS.finalRevealDelayMs - elapsedMs,
+      () => {
+        dealingPhase.value = "revealed";
+        displayedPlayerCards.value = [...round.playerCards];
+        displayedBankerCards.value = [...round.bankerCards];
+        playerDealtCount.value = displayedPlayerCards.value.length;
+        bankerDealtCount.value = displayedBankerCards.value.length;
+        playerFaceUpCount.value = displayedPlayerCards.value.length;
+        bankerFaceUpCount.value = displayedBankerCards.value.length;
+      },
+    );
   }
 
   scheduleRevealTimer(presentationEndsAtMs - serverNowMs, () => {
@@ -599,10 +656,6 @@ function closeRoadSettings() {
   isRoadSettingsOpen.value = false;
 }
 
-function toggleRoadVisibility(target: keyof RoadVisibilitySettings) {
-  roadVisibility.value[target] = !roadVisibility.value[target];
-}
-
 function preventBetGridDoubleTapZoom(event: TouchEvent) {
   const now = event.timeStamp || Date.now();
   if (now - lastBetGridTouchEndMs < 320) {
@@ -612,60 +665,82 @@ function preventBetGridDoubleTapZoom(event: TouchEvent) {
   lastBetGridTouchEndMs = now;
 }
 
-function startFallbackPolling() {
-  if (fallbackTimer) {
-    window.clearInterval(fallbackTimer);
-  }
+async function applyTableSnapshotMessage(message: TableSnapshotMessage) {
+  const previousRoundId = currentRound.value?.id ?? "";
 
-  fallbackTimer = window.setInterval(async () => {
-    await refreshGameData();
-  }, 1000);
+  gameStore.applyTableSnapshot(message.data);
+  serverTimeOffsetMs.value = new Date(message.data.serverTime).getTime() - Date.now();
+  syncPresentationWindow(message.data.serverTime);
+
+  const settledRound = message.data.previousRound;
+  if (
+    previousRoundId &&
+    previousRoundId !== (message.data.round?.id ?? "") &&
+    settledRound &&
+    settledRound.id === previousRoundId &&
+    settledRound.id === latestParticipatedRoundId.value &&
+    lastResolvedRoundId.value !== settledRound.id
+  ) {
+    lastResolvedRoundId.value = settledRound.id;
+    await gameStore.fetchHistory();
+    const settledHistory = gameStore.history.find((item) => item.round.id === settledRound.id);
+    queueSettlementPopup(
+      settledHistory ? settledHistory.totalPayout - settledHistory.totalAmount : 0,
+      message.data.serverTime,
+    );
+  }
 }
 
-function handleLiveEvent(event: LiveUpdateEvent) {
-  if (event.type === "table_updated" && event.tableId === tableId.value) {
-    void refreshGameData();
+function applyTableUserSnapshotMessage(message: TableUserSnapshotMessage) {
+  if (message.data.tableId !== tableId.value) {
     return;
   }
 
-  if (event.type === "user_updated") {
-    void refreshGameData();
+  if (message.data.myBets.length > 0) {
+    latestParticipatedRoundId.value = message.data.currentRoundId;
+  }
+
+  gameStore.applyTableUserSnapshot({
+    currentRoundId: message.data.currentRoundId,
+    myBets: message.data.myBets,
+  });
+  authStore.patchBalance(message.data.balance);
+
+  if (!message.data.isActive) {
+    authStore.logout();
+    router.push("/login");
   }
 }
 
-function connectTableStream() {
-  stream?.close();
+const liveChannel = useLiveChannel({
+  getSubscribeMessage: () => ({ type: "subscribe_table", tableId: tableId.value }),
+  onMessage: (message) => {
+    if (message.type === "table_snapshot") {
+      void applyTableSnapshotMessage(message);
+      return;
+    }
 
-  if (typeof EventSource === "undefined") {
-    startFallbackPolling();
-    return;
-  }
-
-  if (fallbackTimer) {
-    window.clearInterval(fallbackTimer);
-    fallbackTimer = null;
-  }
-
-  stream = createLiveEventSource(`/game/stream/tables/${tableId.value}`, handleLiveEvent);
-}
+    if (message.type === "table_user_snapshot") {
+      applyTableUserSnapshotMessage(message);
+    }
+  },
+  onError: (message) => {
+    gameStore.message = message;
+  },
+});
 
 onMounted(async () => {
-  await refreshGameData();
   clockTimer = window.setInterval(() => {
     clockNow.value = Date.now();
   }, 250);
-  connectTableStream();
   betGridRef.value?.addEventListener("touchend", preventBetGridDoubleTapZoom, { passive: false });
 });
 
 onUnmounted(() => {
   stopRevealTimers();
   stopSettlementPopupTimer();
+  stopMessageTimer();
   pendingSettlementAmount.value = null;
-  stream?.close();
-  if (fallbackTimer) {
-    window.clearInterval(fallbackTimer);
-  }
   if (clockTimer) {
     window.clearInterval(clockTimer);
   }
@@ -673,20 +748,25 @@ onUnmounted(() => {
 });
 
 watch(tableId, async () => {
-  await refreshGameData();
-  connectTableStream();
+  gameStore.currentBets = [];
+  liveChannel.reconnect();
 });
 
 watch(
-  roadVisibility,
-  (value) => {
-    if (typeof window === "undefined") {
+  () => gameStore.message,
+  (message) => {
+    stopMessageTimer();
+
+    if (!message) {
       return;
     }
 
-    window.localStorage.setItem(ROAD_VISIBILITY_STORAGE_KEY, JSON.stringify(value));
+    messageTimer = window.setTimeout(() => {
+      if (gameStore.message === message) {
+        gameStore.message = "";
+      }
+    }, 2200);
   },
-  { deep: true },
 );
 </script>
 
@@ -706,7 +786,14 @@ watch(
       <span class="coin-symbol">$</span>
       <strong>{{ authStore.user?.balance?.toLocaleString() ?? "--" }}</strong>
     </div>
-    <div class="countdown-chip floating-countdown" :class="{ danger: countdownSeconds <= 5 }">{{ countdownSeconds }}</div>
+    <div
+      class="countdown-chip floating-countdown"
+      :class="countdownTone"
+      :style="countdownStyle"
+      :aria-label="countdownDisplay ? `封盤倒數 ${countdownDisplay} 秒` : '封盤中'"
+    >
+      <span v-if="countdownDisplay">{{ countdownDisplay }}</span>
+    </div>
     <transition name="last-hand-fade">
       <div v-if="isLastHandRound" class="last-hand-banner">
         <strong>最後一局</strong>
@@ -718,6 +805,12 @@ watch(
       <div v-if="settlementPopup" class="settlement-popup" :class="settlementPopup.amount >= 0 ? 'positive' : 'negative'">
         <strong>您贏了</strong>
         <span>{{ settlementPopup.amount >= 0 ? "+" : "" }}{{ settlementPopup.amount.toLocaleString() }}</span>
+      </div>
+    </transition>
+
+    <transition name="game-message-pop">
+      <div v-if="gameStore.message" class="game-message-toast">
+        {{ gameStore.message }}
       </div>
     </transition>
 
@@ -780,18 +873,12 @@ watch(
       </div>
     </div>
 
+    <p class="table-limit-banner">
+      {{ currentTable?.code }} / {{ Math.round((currentTable?.roundDurationMs ?? 30000) / 1000) }} 秒 / 最低
+      {{ currentTable?.minBet?.toLocaleString() ?? "--" }} / 單種最高 {{ currentTable?.maxBet?.toLocaleString() ?? "--" }}
+    </p>
+
     <section class="panel table-panel">
-      <div class="table-head">
-        <div>
-          <p class="topbar-label">Baccarat Table</p>
-          <h2>下注桌</h2>
-          <p class="table-limit-text">
-            {{ currentTable?.code }} / {{ Math.round((currentTable?.roundDurationMs ?? 30000) / 1000) }} 秒 / 最低
-            {{ currentTable?.minBet?.toLocaleString() ?? "--" }} / 單種最高 {{ currentTable?.maxBet?.toLocaleString() ?? "--" }}
-          </p>
-        </div>
-        <strong>總下注 {{ formatBetDisplayAmount(totalBet) }}</strong>
-      </div>
 
       <div ref="betGridRef" class="bet-grid">
         <article
@@ -826,7 +913,7 @@ watch(
     </section>
 
     <section class="panel road-panel">
-      <RoadmapPanel :rounds="gameStore.roadRounds" :visibility="roadVisibility" />
+      <RoadmapPanel :rounds="roadmapRounds" :visibility="roadVisibility" />
     </section>
 
     <div v-if="isRoadSettingsOpen" class="modal-backdrop">
@@ -860,13 +947,14 @@ watch(
 
 <style scoped>
 .game-page {
+  --top-ui-clearance: 108px;
   display: flex;
   flex-direction: column;
   gap: 16px;
   overflow-x: clip;
   height: 100vh;
   max-height: 100vh;
-  padding-top: 82px;
+  padding-top: var(--top-ui-clearance);
 }
 
 .corner-button {
@@ -909,12 +997,17 @@ watch(
 
 .table-panel,
 .road-panel {
-  padding: 18px;
+  padding: 10px;
 }
 
 .deal-overlay {
   position: fixed;
-  inset: 0;
+  top: 0;
+  bottom: 0;
+  left: 50%;
+  width: 100%;
+  max-width: 430px;
+  transform: translateX(-50%);
   z-index: 60;
   display: flex;
   align-items: center;
@@ -1056,10 +1149,26 @@ watch(
   margin: 4px 0 0;
 }
 
-.table-limit-text {
-  margin: 8px 0 0;
-  color: rgba(247, 244, 233, 0.72);
-  font-size: 13px;
+.table-limit-banner {
+  margin: 0;
+  padding: 0 16px;
+  min-height: 44px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+  line-height: 1.08;
+  font-family: "Cormorant Garamond", "Times New Roman", serif;
+  font-size: 16px;
+  font-weight: 800;
+  letter-spacing: 0.03em;
+  color: #f7e9b7;
+  text-shadow:
+    0 0 18px rgba(244, 222, 155, 0.18),
+    0 10px 24px rgba(0, 0, 0, 0.22);
+  background: linear-gradient(180deg, #fff7da 0%, #f4de9b 38%, #d7a74c 100%);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
 }
 
 .table-panel,
@@ -1161,12 +1270,30 @@ watch(
     inset 0 0 0 3px rgba(255, 255, 255, 0.22),
     0 10px 20px rgba(0, 0, 0, 0.18),
     0 0 24px rgba(83, 219, 132, 0.28);
-  animation: countdown-pulse 1.4s ease-in-out infinite;
+  animation: countdown-pulse var(--countdown-pulse-duration, 1.4s) ease-in-out infinite;
 }
 
-.countdown-chip.danger {
-  animation-duration: 0.55s;
-  color: #b21919;
+.countdown-chip.warning {
+  background:
+    radial-gradient(circle at 30% 30%, rgba(255, 255, 255, 0.46), transparent 34%),
+    linear-gradient(180deg, #ffe082, #f2c247);
+  color: #c62222;
+  box-shadow:
+    inset 0 0 0 3px rgba(255, 255, 255, 0.22),
+    0 10px 20px rgba(0, 0, 0, 0.18),
+    0 0 24px rgba(242, 194, 71, 0.28);
+}
+
+.countdown-chip.closed {
+  background:
+    radial-gradient(circle at 30% 30%, rgba(255, 255, 255, 0.42), transparent 34%),
+    linear-gradient(180deg, #ff7a7a, #d62f2f);
+  color: transparent;
+  box-shadow:
+    inset 0 0 0 3px rgba(255, 255, 255, 0.2),
+    0 10px 20px rgba(0, 0, 0, 0.18),
+    0 0 24px rgba(214, 47, 47, 0.32);
+  animation: none;
 }
 
 .countdown-chip::before,
@@ -1176,17 +1303,24 @@ watch(
   inset: -6px;
   border-radius: 999px;
   border: 2px solid rgba(124, 243, 164, 0.38);
-  animation: countdown-ring 1.8s ease-out infinite;
+  animation: countdown-ring var(--countdown-ring-duration, 1.8s) ease-out infinite;
+  animation-delay: var(--countdown-ring-delay, 0s);
 }
 
-.countdown-chip.danger::before,
-.countdown-chip.danger::after {
-  border-color: rgba(255, 105, 105, 0.48);
-  animation-duration: 0.8s;
+.countdown-chip.warning::before,
+.countdown-chip.warning::after {
+  border-color: rgba(255, 208, 98, 0.52);
+}
+
+.countdown-chip.closed::before,
+.countdown-chip.closed::after {
+  border-color: rgba(255, 105, 105, 0.56);
+  animation: none;
+  opacity: 0;
 }
 
 .countdown-chip::after {
-  animation-delay: 0.9s;
+  animation-delay: var(--countdown-ring-second-delay, 0.9s);
 }
 
 @keyframes countdown-pulse {
@@ -1214,12 +1348,12 @@ watch(
   display: grid;
   grid-template-columns: repeat(6, minmax(0, 1fr));
   gap: 12px;
-  margin: 18px 0 16px;
+  margin: 10px 0 10px;
 }
 
 .bet-card {
   border-radius: 18px;
-  padding: 16px;
+  padding: 10px;
   border: 1px solid rgba(255, 255, 255, 0.12);
   cursor: pointer;
   touch-action: manipulation;
@@ -1376,6 +1510,36 @@ watch(
 .settlement-pop-leave-to {
   opacity: 0;
   transform: translate(-50%, -16px) scale(0.94);
+}
+
+.game-message-toast {
+  position: fixed;
+  top: 92px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 85;
+  max-width: min(80vw, 320px);
+  padding: 10px 16px;
+  border-radius: 14px;
+  background: rgba(8, 18, 14, 0.94);
+  border: 1px solid rgba(244, 222, 155, 0.22);
+  color: #f7f4e9;
+  font-size: 13px;
+  font-weight: 700;
+  text-align: center;
+  box-shadow: 0 16px 32px rgba(0, 0, 0, 0.24);
+  pointer-events: none;
+}
+
+.game-message-pop-enter-active,
+.game-message-pop-leave-active {
+  transition: opacity 180ms ease, transform 180ms ease;
+}
+
+.game-message-pop-enter-from,
+.game-message-pop-leave-to {
+  opacity: 0;
+  transform: translate(-50%, -10px);
 }
 
 .modal-backdrop {

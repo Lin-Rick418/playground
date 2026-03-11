@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed } from "vue";
+import type { BaccaratPairType } from "../types/domain";
 
 type GameResult = "PLAYER" | "BANKER" | "BANKER_SIX" | "TIE";
 type PositionWinType = "PLAYER" | "BANKER";
@@ -9,7 +10,7 @@ export interface BaccaratGameData {
   winType: GameResult;
   fourBit: "ZERO" | "ONE" | "TWO" | "THREE" | "FOUR" | "FIVE" | "SIX" | "SEVEN" | "EIGHT" | "NINE";
   directKilling: "YES" | "NO";
-  baccaratPair: "PLAYER_PAIR" | "BANKER_PAIR" | "BOTH_PAIR" | "NO_PAIR";
+  baccaratPair: BaccaratPairType;
 }
 
 interface GridCellData extends BaccaratGameData {
@@ -25,16 +26,32 @@ interface Props {
   bigRoad?: BaccaratGameData[] | null;
   rows?: number;
   cols?: number;
+  cellSize?: number | null;
+  tokenSize?: number | null;
 }
 
 const props = withDefaults(defineProps<Props>(), {
   bigRoad: null,
   rows: 6,
   cols: 13,
+  cellSize: null,
+  tokenSize: null,
 });
 
 const rowCount = computed(() => Math.max(1, props.rows));
 const colCount = computed(() => Math.max(1, props.cols));
+const fixedCellSize = computed(() => (typeof props.cellSize === "number" ? Math.max(1, props.cellSize) : null));
+const tokenSize = computed(() => {
+  if (typeof props.tokenSize === "number") {
+    return Math.max(1, props.tokenSize);
+  }
+
+  if (fixedCellSize.value) {
+    return Math.max(5, Math.round(fixedCellSize.value * 0.42));
+  }
+
+  return 12;
+});
 
 const FOUR_BIT_MAP = {
   ZERO: 0,
@@ -353,7 +370,16 @@ const getCircleSvg = (cell: GridCellData): string => `
 </script>
 
 <template>
-  <div class="big-road" :style="{ '--road-rows': String(rowCount), '--road-cols': String(colCount) }">
+  <div
+    class="big-road"
+    :class="{ fixed: !!fixedCellSize }"
+    :style="{
+      '--road-rows': String(rowCount),
+      '--road-cols': String(colCount),
+      '--road-cell-size': fixedCellSize ? `${fixedCellSize}px` : undefined,
+      '--road-token-size': `${tokenSize}px`,
+    }"
+  >
     <div v-for="(row, rowIndex) in grid" :key="rowIndex" class="big-road-row">
       <div v-for="(cell, colIndex) in row" :key="`${rowIndex}-${colIndex}`" class="big-road-cell">
         <div v-if="cell" class="token" v-html="getCircleSvg(cell)" />
@@ -376,10 +402,16 @@ const getCircleSvg = (cell: GridCellData): string => `
   grid-template-columns: repeat(var(--road-cols), minmax(14px, 1fr));
 }
 
+.big-road.fixed .big-road-row {
+  grid-template-columns: repeat(var(--road-cols), var(--road-cell-size));
+}
+
 .big-road-cell {
   aspect-ratio: 1;
   min-width: 14px;
   min-height: 14px;
+  width: var(--road-cell-size);
+  height: var(--road-cell-size);
   border-right: 1px solid rgba(255, 255, 255, 0.08);
   border-bottom: 1px solid rgba(255, 255, 255, 0.08);
   display: flex;
@@ -388,9 +420,14 @@ const getCircleSvg = (cell: GridCellData): string => `
   background: rgba(255, 255, 255, 0.02);
 }
 
+.big-road:not(.fixed) .big-road-cell {
+  width: auto;
+  height: auto;
+}
+
 .token {
-  width: 12px;
-  height: 12px;
+  width: var(--road-token-size);
+  height: var(--road-token-size);
   display: flex;
   align-items: center;
   justify-content: center;

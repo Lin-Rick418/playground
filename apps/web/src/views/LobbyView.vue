@@ -1,13 +1,12 @@
 <script setup lang="ts">
-import { computed, onMounted, onUnmounted, ref } from "vue";
+import { computed, ref } from "vue";
 import { useRouter } from "vue-router";
 import BigRoadBoard from "../components/BigRoadBoard.vue";
-import { createLiveEventSource, type LiveUpdateEvent } from "../lib/live";
+import { BET_TYPE_LABELS, WINNER_LABELS } from "../const/game";
+import { useLiveChannel } from "../composables/useLiveChannel";
 import { useAuthStore } from "../stores/auth";
 import { useGameStore } from "../stores/game";
-
-type BaccaratPairType = "PLAYER_PAIR" | "BANKER_PAIR" | "BOTH_PAIR" | "NO_PAIR";
-type BetKey = "PLAYER" | "BANKER" | "TIE" | "PLAYER_PAIR" | "BANKER_PAIR";
+import type { ActiveRound, BaccaratPairType, BetType, RoundHistoryItem } from "../types/domain";
 
 const authStore = useAuthStore();
 const gameStore = useGameStore();
@@ -15,10 +14,6 @@ const router = useRouter();
 
 const tables = computed(() => gameStore.tables);
 const isHistoryOpen = ref(false);
-let stream: EventSource | null = null;
-let fallbackTimer: number | null = null;
-let lobbyRefreshPromise: Promise<void> | null = null;
-let lobbyRefreshQueued = false;
 
 function openTable(tableId: string) {
   router.push(`/game/${tableId}`);
@@ -38,58 +33,14 @@ function closeHistory() {
   isHistoryOpen.value = false;
 }
 
-onMounted(async () => {
-  await refreshLobby();
-  if (typeof EventSource !== "undefined") {
-    stream = createLiveEventSource("/game/stream/lobby", handleLiveEvent);
-  } else {
-    fallbackTimer = window.setInterval(async () => {
-      await refreshLobby();
-    }, 2000);
-  }
-});
-
-onUnmounted(() => {
-  stream?.close();
-  if (fallbackTimer) {
-    window.clearInterval(fallbackTimer);
-  }
-});
-
-async function refreshLobby() {
-  if (lobbyRefreshPromise) {
-    lobbyRefreshQueued = true;
-    return lobbyRefreshPromise;
-  }
-
-  lobbyRefreshPromise = (async () => {
-    await gameStore.fetchLobby();
-  })();
-
-  try {
-    await lobbyRefreshPromise;
-  } finally {
-    lobbyRefreshPromise = null;
-    if (lobbyRefreshQueued) {
-      lobbyRefreshQueued = false;
-      void refreshLobby();
+useLiveChannel({
+  getSubscribeMessage: () => ({ type: "subscribe_lobby" }),
+  onMessage: (message) => {
+    if (message.type === "lobby_snapshot") {
+      gameStore.applyLobbySnapshot(message.data);
     }
-  }
-}
-
-function handleLiveEvent(event: LiveUpdateEvent) {
-  if (event.type === "lobby_updated") {
-    void refreshLobby();
-    return;
-  }
-
-  if (event.type === "user_updated") {
-    void authStore.fetchMe().catch(() => {
-      authStore.logout();
-      router.push("/login");
-    });
-  }
-}
+  },
+});
 
 function toBaccaratPairType(round: { playerPair: boolean; bankerPair: boolean }): BaccaratPairType {
   if (round.playerPair && round.bankerPair) {
@@ -107,7 +58,7 @@ function toBaccaratPairType(round: { playerPair: boolean; bankerPair: boolean })
   return "NO_PAIR";
 }
 
-function toBigRoad(rounds: { winner: "PLAYER" | "BANKER" | "TIE"; playerPair: boolean; bankerPair: boolean }[]) {
+function toBigRoad(rounds: Pick<ActiveRound, "winner" | "playerPair" | "bankerPair">[]) {
   return [...rounds]
     .reverse()
     .map((round) => ({
@@ -119,60 +70,39 @@ function toBigRoad(rounds: { winner: "PLAYER" | "BANKER" | "TIE"; playerPair: bo
     }));
 }
 
-function betLabel(type: BetKey | string) {
-  return type === "PLAYER"
-    ? "閒"
-    : type === "BANKER"
-      ? "莊"
-      : type === "TIE"
-        ? "和"
-        : type === "PLAYER_PAIR"
-          ? "閒對"
-          : "莊對";
+function betLabel(type: BetType | string) {
+  return BET_TYPE_LABELS[type as BetType] ?? String(type);
 }
 
-function historyNetAmount(item: { totalAmount: number; totalPayout: number }) {
+function historyNetAmount(item: Pick<RoundHistoryItem, "totalAmount" | "totalPayout">) {
   return item.totalPayout - item.totalAmount;
 }
 
-function historyNetText(item: { totalAmount: number; totalPayout: number }) {
+function historyNetText(item: Pick<RoundHistoryItem, "totalAmount" | "totalPayout">) {
   const net = historyNetAmount(item);
   return `${net > 0 ? "+" : ""}${net.toLocaleString()}`;
 }
 
-function historyNetClass(item: { totalAmount: number; totalPayout: number }) {
+function historyNetClass(item: Pick<RoundHistoryItem, "totalAmount" | "totalPayout">) {
   return historyNetAmount(item) >= 0 ? "positive" : "negative";
 }
 
-function historyResultText(item: {
-  round: {
-    winner: "PLAYER" | "BANKER" | "TIE";
-    playerPair: boolean;
-    bankerPair: boolean;
-  };
-}) {
-  const parts = [
-    item.round.winner === "PLAYER" ? "閒贏" : item.round.winner === "BANKER" ? "莊贏" : "和局",
-  ];
+function historyResultText(item: Pick<RoundHistoryItem, "round">) {
+  const parts = [WINNER_LABELS[item.round.winner]];
 
   if (item.round.playerPair) {
-    parts.push("閒對");
+    parts.push(BET_TYPE_LABELS.PLAYER_PAIR);
   }
 
   if (item.round.bankerPair) {
-    parts.push("莊對");
+    parts.push(BET_TYPE_LABELS.BANKER_PAIR);
   }
 
   return parts.join(" / ");
 }
 
-function historyBetSummary(item: {
-  bets: {
-    betType: BetKey;
-    amount: number;
-  }[];
-}) {
-  const totals = new Map<BetKey, number>();
+function historyBetSummary(item: Pick<RoundHistoryItem, "bets">) {
+  const totals = new Map<BetType, number>();
 
   for (const bet of item.bets) {
     totals.set(bet.betType, (totals.get(bet.betType) ?? 0) + bet.amount);

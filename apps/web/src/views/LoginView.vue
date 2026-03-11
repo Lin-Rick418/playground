@@ -23,50 +23,54 @@ async function onSubmit() {
       <div class="login-copy">
         <p class="eyebrow">Live Table</p>
         <h1><span>Baccarat</span></h1>
-        <p class="intro">進入桌面，開始下注。</p>
+        <!-- <p class="intro">進入桌面，開始下注。</p> -->
       </div>
 
       <section class="panel login-card">
         <div class="login-card-head">
-          <p class="card-label">Sign In</p>
-          <h2>會員登入</h2>
+          <div class="login-card-title">
+            <p class="card-label">Sign In</p>
+            <h2>會員登入</h2>
+          </div>
         </div>
 
-        <form class="login-form" @submit.prevent="onSubmit">
-          <label class="field">
-            <span>帳號</span>
-            <input v-model="form.username" placeholder="輸入帳號" />
-          </label>
+        <div class="login-card-body">
+          <form class="login-form" @submit.prevent="onSubmit">
+            <label class="field">
+              <span>帳號</span>
+              <input v-model="form.username" placeholder="輸入帳號" />
+            </label>
 
-          <label class="field">
-            <span>密碼</span>
-            <input v-model="form.password" type="password" placeholder="輸入密碼" />
-          </label>
+            <label class="field">
+              <span>密碼</span>
+              <input v-model="form.password" type="password" placeholder="輸入密碼" />
+            </label>
 
-          <p v-if="authStore.error" class="error-text">{{ authStore.error }}</p>
+            <p v-if="authStore.error" class="error-text">{{ authStore.error }}</p>
 
-          <button class="button-primary login-submit" :disabled="authStore.loading" type="submit">
-            {{ authStore.loading ? "登入中..." : "登入" }}
-          </button>
-        </form>
+            <button class="button-primary login-submit" :disabled="authStore.loading" type="submit">
+              {{ authStore.loading ? "登入中..." : "登入" }}
+            </button>
+          </form>
+        </div>
       </section>
     </section>
   </main>
 </template>
 
 <style scoped>
-@import url("https://fonts.googleapis.com/css2?family=Cormorant+Garamond:wght@700;800&family=Manrope:wght@500;700;800&display=swap");
-
 .login-layout {
   position: relative;
   display: flex;
-  align-items: center;
+  align-items: flex-start;
   justify-content: center;
   width: 100%;
+  min-height: 100vh;
   max-width: 100vw;
   overflow: hidden;
   overflow-x: clip;
   overscroll-behavior-x: none;
+  padding-top: clamp(44px, 10vh, 96px);
 }
 
 .login-layout::before,
@@ -98,11 +102,14 @@ async function onSubmit() {
   position: relative;
   z-index: 1;
   width: min(100%, 440px);
+  min-height: calc(100vh - clamp(88px, 14vh, 140px));
   max-width: 100%;
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 24px;
+  justify-content: center;
+  gap: 20px;
+  transform: translateY(clamp(-34px, -5vh, -18px));
 }
 
 .eyebrow {
@@ -116,11 +123,15 @@ async function onSubmit() {
 }
 
 .login-copy {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
   text-align: center;
 }
 
 .login-copy h1 {
-  margin: 6px 0 10px;
+  margin: 4px 0 6px;
   line-height: 0.9;
   font-family: "Cormorant Garamond", "Times New Roman", serif;
 }
@@ -139,28 +150,46 @@ async function onSubmit() {
   -webkit-text-fill-color: transparent;
 }
 
-.intro {
-  margin: 0;
-  color: rgba(247, 244, 233, 0.75);
-  font-family: "Manrope", "Noto Sans TC", sans-serif;
-}
-
 .login-card {
+  position: relative;
   width: 100%;
   max-width: 100%;
-  padding: 24px 22px 22px;
+  padding: 0 22px 22px;
   background:
     linear-gradient(180deg, rgba(11, 33, 26, 0.92), rgba(7, 22, 17, 0.92)),
     rgba(8, 25, 20, 0.82);
 }
 
 .login-card-head {
-  margin-bottom: 18px;
+  position: absolute;
+  top: 0;
+  left: 50%;
+  width: calc(100% - 44px);
+  display: flex;
+  justify-content: center;
+  transform: translateX(-50%);
+  pointer-events: none;
+}
+
+.login-card-title {
+  position: relative;
+  top: 38px;
+  min-width: 180px;
+  padding: 0 18px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
   text-align: center;
 }
 
+.login-card-body {
+  padding-top: 138px;
+}
+
 .card-label {
-  margin: 0 0 6px;
+  margin: 0;
   color: rgba(247, 244, 233, 0.45);
   font-size: 11px;
   letter-spacing: 0.24em;
@@ -171,6 +200,7 @@ async function onSubmit() {
 .login-card h2 {
   margin: 0;
   font-size: 28px;
+  line-height: 1;
   font-family: "Manrope", "Noto Sans TC", sans-serif;
 }
 
