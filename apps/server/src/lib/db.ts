@@ -1,8 +1,7 @@
-import { mkdirSync } from "node:fs";
-import { dirname, resolve } from "node:path";
 import { randomUUID } from "node:crypto";
 import bcrypt from "bcryptjs";
-import Database from "better-sqlite3";
+import { Pool, PoolClient, type QueryResultRow } from "pg";
+import { env } from "../config/env.js";
 import type {
   BetType,
   GameRoundRecord,
@@ -14,129 +13,176 @@ import type {
 } from "../types/domain.js";
 import { createMassachusettsShoeState, type Card, type TableShoeState } from "./baccarat.js";
 
-const dbPath = resolve(process.cwd(), "data", "baccarat.sqlite");
+type DbExecutor = Pool | PoolClient;
+type DbRow = Record<string, unknown>;
 
-mkdirSync(dirname(dbPath), { recursive: true });
+const sslConfig = env.databaseSsl ? { rejectUnauthorized: false } : undefined;
 
-export const db = new Database(dbPath);
+export const pool = new Pool({
+  connectionString: env.databaseUrl,
+  ssl: sslConfig,
+});
 
-db.exec(`
-  PRAGMA journal_mode = WAL;
+pool.on("error", (error: Error) => {
+  console.error("Postgres pool error", error);
+});
 
-  CREATE TABLE IF NOT EXISTS game_tables (
-    id TEXT PRIMARY KEY,
-    code TEXT NOT NULL UNIQUE,
-    name TEXT NOT NULL,
-    display_order INTEGER NOT NULL DEFAULT 0,
-    round_duration_ms INTEGER NOT NULL DEFAULT 30000,
-    min_bet INTEGER NOT NULL DEFAULT 100,
-    max_bet INTEGER NOT NULL DEFAULT 10000,
-    current_shoe_id TEXT NOT NULL DEFAULT '',
-    shoe_state TEXT NOT NULL DEFAULT '[]',
-    created_at TEXT NOT NULL
-  );
+function toIsoString(value: unknown) {
+  if (value instanceof Date) {
+    return value.toISOString();
+  }
 
-  CREATE TABLE IF NOT EXISTS users (
-    id TEXT PRIMARY KEY,
-    username TEXT NOT NULL UNIQUE,
-    password_hash TEXT NOT NULL,
-    role TEXT NOT NULL,
-    is_active INTEGER NOT NULL DEFAULT 1,
-    balance INTEGER NOT NULL DEFAULT 0,
-    created_at TEXT NOT NULL,
-    updated_at TEXT NOT NULL
-  );
+  return String(value ?? "");
+}
 
-  CREATE TABLE IF NOT EXISTS game_rounds (
-    id TEXT PRIMARY KEY,
-    table_id TEXT NOT NULL DEFAULT '',
-    shoe_id TEXT NOT NULL DEFAULT '',
-    player_cards TEXT NOT NULL,
-    banker_cards TEXT NOT NULL,
-    player_total INTEGER NOT NULL,
-    banker_total INTEGER NOT NULL,
-    winner TEXT NOT NULL,
-    player_pair INTEGER NOT NULL DEFAULT 0,
-    banker_pair INTEGER NOT NULL DEFAULT 0,
-    status TEXT NOT NULL DEFAULT 'SETTLED',
-    betting_opens_at TEXT NOT NULL DEFAULT '',
-    betting_closes_at TEXT NOT NULL DEFAULT '',
-    settled_at TEXT,
-    created_at TEXT NOT NULL
-  );
+function toBoolean(value: unknown) {
+  return value === true || value === 1 || value === "1";
+}
 
-  CREATE TABLE IF NOT EXISTS bets (
-    id TEXT PRIMARY KEY,
-    user_id TEXT NOT NULL,
-    round_id TEXT NOT NULL,
-    bet_type TEXT NOT NULL,
-    amount INTEGER NOT NULL,
-    payout INTEGER NOT NULL,
-    created_at TEXT NOT NULL,
-    FOREIGN KEY(user_id) REFERENCES users(id),
-    FOREIGN KEY(round_id) REFERENCES game_rounds(id)
-  );
+function parseJsonValue<T>(value: unknown, fallback: T): T {
+  if (value === null || value === undefined) {
+    return fallback;
+  }
 
-  CREATE TABLE IF NOT EXISTS balance_adjustments (
-    id TEXT PRIMARY KEY,
-    admin_id TEXT NOT NULL,
-    user_id TEXT NOT NULL,
-    amount INTEGER NOT NULL,
-    note TEXT,
-    created_at TEXT NOT NULL,
-    FOREIGN KEY(admin_id) REFERENCES users(id),
-    FOREIGN KEY(user_id) REFERENCES users(id)
-  );
-`);
+  if (typeof value === "string") {
+    try {
+      return JSON.parse(value) as T;
+    } catch {
+      return fallback;
+    }
+  }
 
-function ensureColumn(table: string, column: string, definition: string) {
-  const columns = db.prepare(`PRAGMA table_info(${table})`).all() as DbRow[];
-  const exists = columns.some((item) => String(item.name) === column);
+  return value as T;
+}
 
-  if (!exists) {
-    db.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${definition}`);
+function isPoolClient(executor: DbExecutor): executor is PoolClient {
+  return "release" in executor;
+}
+
+async function queryRows<T extends QueryResultRow = QueryResultRow>(
+  executor: DbExecutor,
+  text: string,
+  values: unknown[] = [],
+) {
+  const result = await executor.query<T>(text, values);
+  return result.rows;
+}
+
+async function queryRow<T extends QueryResultRow = QueryResultRow>(
+  executor: DbExecutor,
+  text: string,
+  values: unknown[] = [],
+) {
+  const rows = await queryRows<T>(executor, text, values);
+  return rows[0] ?? null;
+}
+
+export async function withTransaction<T>(handler: (client: PoolClient) => Promise<T>) {
+  const client = await pool.connect();
+
+  try {
+    await client.query("BEGIN");
+    const result = await handler(client);
+    await client.query("COMMIT");
+    return result;
+  } catch (error) {
+    await client.query("ROLLBACK");
+    throw error;
+  } finally {
+    client.release();
   }
 }
 
-ensureColumn("game_rounds", "status", "TEXT NOT NULL DEFAULT 'SETTLED'");
-ensureColumn("game_rounds", "betting_opens_at", "TEXT NOT NULL DEFAULT ''");
-ensureColumn("game_rounds", "betting_closes_at", "TEXT NOT NULL DEFAULT ''");
-ensureColumn("game_rounds", "settled_at", "TEXT");
-ensureColumn("game_rounds", "table_id", "TEXT NOT NULL DEFAULT ''");
-ensureColumn("game_rounds", "shoe_id", "TEXT NOT NULL DEFAULT ''");
-ensureColumn("game_rounds", "player_pair", "INTEGER NOT NULL DEFAULT 0");
-ensureColumn("game_rounds", "banker_pair", "INTEGER NOT NULL DEFAULT 0");
-ensureColumn("users", "is_active", "INTEGER NOT NULL DEFAULT 1");
-ensureColumn("game_tables", "round_duration_ms", "INTEGER NOT NULL DEFAULT 30000");
-ensureColumn("game_tables", "min_bet", "INTEGER NOT NULL DEFAULT 100");
-ensureColumn("game_tables", "max_bet", "INTEGER NOT NULL DEFAULT 10000");
-ensureColumn("game_tables", "current_shoe_id", "TEXT NOT NULL DEFAULT ''");
-ensureColumn("game_tables", "shoe_state", "TEXT NOT NULL DEFAULT '[]'");
+export async function initializeDatabase() {
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS game_tables (
+      id TEXT PRIMARY KEY,
+      code TEXT NOT NULL UNIQUE,
+      name TEXT NOT NULL,
+      display_order INTEGER NOT NULL DEFAULT 0,
+      round_duration_ms INTEGER NOT NULL DEFAULT 30000,
+      min_bet INTEGER NOT NULL DEFAULT 100,
+      max_bet INTEGER NOT NULL DEFAULT 10000,
+      current_shoe_id TEXT NOT NULL DEFAULT '',
+      shoe_state JSONB NOT NULL DEFAULT '{}'::jsonb,
+      created_at TIMESTAMPTZ NOT NULL
+    );
 
-db.exec(`
-  UPDATE game_rounds
-  SET
-    status = 'SETTLED',
-    betting_opens_at = CASE WHEN betting_opens_at = '' THEN created_at ELSE betting_opens_at END,
-    betting_closes_at = CASE WHEN betting_closes_at = '' THEN created_at ELSE betting_closes_at END,
-    settled_at = COALESCE(settled_at, created_at)
-  WHERE status IS NULL OR status = '' OR settled_at IS NULL;
-`);
+    CREATE TABLE IF NOT EXISTS users (
+      id TEXT PRIMARY KEY,
+      username TEXT NOT NULL UNIQUE,
+      password_hash TEXT NOT NULL,
+      role TEXT NOT NULL,
+      is_active BOOLEAN NOT NULL DEFAULT TRUE,
+      balance INTEGER NOT NULL DEFAULT 0,
+      created_at TIMESTAMPTZ NOT NULL,
+      updated_at TIMESTAMPTZ NOT NULL
+    );
 
-function mapUser(row: Record<string, unknown>): UserRecord {
+    CREATE TABLE IF NOT EXISTS game_rounds (
+      id TEXT PRIMARY KEY,
+      table_id TEXT NOT NULL,
+      shoe_id TEXT NOT NULL DEFAULT '',
+      player_cards JSONB NOT NULL DEFAULT '[]'::jsonb,
+      banker_cards JSONB NOT NULL DEFAULT '[]'::jsonb,
+      player_total INTEGER NOT NULL,
+      banker_total INTEGER NOT NULL,
+      winner TEXT NOT NULL,
+      player_pair BOOLEAN NOT NULL DEFAULT FALSE,
+      banker_pair BOOLEAN NOT NULL DEFAULT FALSE,
+      status TEXT NOT NULL DEFAULT 'SETTLED',
+      betting_opens_at TIMESTAMPTZ NOT NULL,
+      betting_closes_at TIMESTAMPTZ NOT NULL,
+      settled_at TIMESTAMPTZ,
+      created_at TIMESTAMPTZ NOT NULL
+    );
+
+    CREATE TABLE IF NOT EXISTS bets (
+      id TEXT PRIMARY KEY,
+      user_id TEXT NOT NULL,
+      round_id TEXT NOT NULL,
+      bet_type TEXT NOT NULL,
+      amount INTEGER NOT NULL,
+      payout INTEGER NOT NULL,
+      created_at TIMESTAMPTZ NOT NULL
+    );
+
+    CREATE TABLE IF NOT EXISTS balance_adjustments (
+      id TEXT PRIMARY KEY,
+      admin_id TEXT NOT NULL,
+      user_id TEXT NOT NULL,
+      amount INTEGER NOT NULL,
+      note TEXT,
+      created_at TIMESTAMPTZ NOT NULL
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_game_rounds_active
+      ON game_rounds (table_id, status, created_at DESC);
+    CREATE INDEX IF NOT EXISTS idx_game_rounds_settled
+      ON game_rounds (table_id, status, settled_at DESC);
+    CREATE INDEX IF NOT EXISTS idx_game_rounds_shoe_settled
+      ON game_rounds (table_id, shoe_id, status, settled_at DESC);
+    CREATE INDEX IF NOT EXISTS idx_bets_user_round_created
+      ON bets (user_id, round_id, created_at ASC);
+    CREATE INDEX IF NOT EXISTS idx_bets_round_created
+      ON bets (round_id, created_at ASC);
+    CREATE INDEX IF NOT EXISTS idx_balance_adjustments_created
+      ON balance_adjustments (created_at DESC);
+  `);
+}
+
+function mapUser(row: DbRow): UserRecord {
   return {
     id: String(row.id),
     username: String(row.username),
     passwordHash: String(row.password_hash),
     role: String(row.role) as UserRole,
-    isActive: Boolean(row.is_active),
+    isActive: toBoolean(row.is_active),
     balance: Number(row.balance),
-    createdAt: String(row.created_at),
-    updatedAt: String(row.updated_at),
+    createdAt: toIsoString(row.created_at),
+    updatedAt: toIsoString(row.updated_at),
   };
 }
-
-type DbRow = Record<string, unknown>;
 
 function mapTable(row: DbRow): GameTableRecord {
   return {
@@ -147,7 +193,7 @@ function mapTable(row: DbRow): GameTableRecord {
     roundDurationMs: Number(row.round_duration_ms),
     minBet: Number(row.min_bet),
     maxBet: Number(row.max_bet),
-    createdAt: String(row.created_at),
+    createdAt: toIsoString(row.created_at),
   };
 }
 
@@ -156,164 +202,184 @@ function mapRound(row: DbRow): GameRoundRecord {
     id: String(row.id),
     tableId: String(row.table_id),
     shoeId: String(row.shoe_id ?? ""),
-    playerCards: JSON.parse(String(row.player_cards)),
-    bankerCards: JSON.parse(String(row.banker_cards)),
+    playerCards: parseJsonValue<{ rank: string; suit: string }[]>(row.player_cards, []),
+    bankerCards: parseJsonValue<{ rank: string; suit: string }[]>(row.banker_cards, []),
     playerTotal: Number(row.player_total),
     bankerTotal: Number(row.banker_total),
     winner: String(row.winner) as RoundWinner,
-    playerPair: Boolean(row.player_pair),
-    bankerPair: Boolean(row.banker_pair),
+    playerPair: toBoolean(row.player_pair),
+    bankerPair: toBoolean(row.banker_pair),
     status: String(row.status) as RoundStatus,
-    bettingOpensAt: String(row.betting_opens_at),
-    bettingClosesAt: String(row.betting_closes_at),
-    settledAt: row.settled_at ? String(row.settled_at) : null,
-    createdAt: String(row.created_at),
+    bettingOpensAt: toIsoString(row.betting_opens_at),
+    bettingClosesAt: toIsoString(row.betting_closes_at),
+    settledAt: row.settled_at ? toIsoString(row.settled_at) : null,
+    createdAt: toIsoString(row.created_at),
   };
 }
 
-export function findUserByUsername(username: string) {
-  const row = db.prepare("SELECT * FROM users WHERE username = ?").get(username) as Record<string, unknown> | undefined;
+export async function findUserByUsername(username: string, executor: DbExecutor = pool) {
+  const row = await queryRow(executor, "SELECT * FROM users WHERE username = $1", [username]);
   return row ? mapUser(row) : null;
 }
 
-export function listTables() {
-  return (db.prepare("SELECT * FROM game_tables ORDER BY display_order ASC, created_at ASC").all() as DbRow[]).map((row) =>
-    mapTable(row),
-  );
+export async function listTables(executor: DbExecutor = pool) {
+  const rows = await queryRows(executor, "SELECT * FROM game_tables ORDER BY display_order ASC, created_at ASC");
+  return rows.map((row: DbRow) => mapTable(row));
 }
 
-export function findTableById(tableId: string) {
-  const row = db.prepare("SELECT * FROM game_tables WHERE id = ?").get(tableId) as DbRow | undefined;
+export async function findTableById(tableId: string, executor: DbExecutor = pool) {
+  const row = await queryRow(executor, "SELECT * FROM game_tables WHERE id = $1", [tableId]);
   return row ? mapTable(row) : null;
 }
 
-export function findUserById(id: string) {
-  const row = db.prepare("SELECT * FROM users WHERE id = ?").get(id) as Record<string, unknown> | undefined;
+export async function findUserById(
+  id: string,
+  executor: DbExecutor = pool,
+  options?: { forUpdate?: boolean },
+) {
+  const suffix = options?.forUpdate && isPoolClient(executor) ? " FOR UPDATE" : "";
+  const row = await queryRow(executor, `SELECT * FROM users WHERE id = $1${suffix}`, [id]);
   return row ? mapUser(row) : null;
 }
 
-export function listUsers() {
-  return (db
-    .prepare("SELECT id, username, role, is_active, balance, created_at FROM users ORDER BY created_at ASC")
-    .all() as DbRow[])
-    .map((row: DbRow) => ({
-      id: String(row.id),
-      username: String(row.username),
-      role: String(row.role) as UserRole,
-      isActive: Boolean(row.is_active),
-      balance: Number(row.balance),
-      createdAt: String(row.created_at),
-    }));
+export async function listUsers(executor: DbExecutor = pool) {
+  const rows = await queryRows(
+    executor,
+    "SELECT id, username, role, is_active, balance, created_at FROM users ORDER BY created_at ASC",
+  );
+
+  return rows.map((row: DbRow) => ({
+    id: String(row.id),
+    username: String(row.username),
+    role: String(row.role) as UserRole,
+    isActive: toBoolean(row.is_active),
+    balance: Number(row.balance),
+    createdAt: toIsoString(row.created_at),
+  }));
 }
 
-export function createPlayer(input: { username: string; passwordHash: string; balance: number }) {
+export async function createPlayer(
+  input: { username: string; passwordHash: string; balance: number },
+  executor: DbExecutor = pool,
+) {
   const id = randomUUID();
   const now = new Date().toISOString();
 
-  db.prepare(
+  await executor.query(
     `INSERT INTO users (id, username, password_hash, role, is_active, balance, created_at, updated_at)
-     VALUES (?, ?, ?, 'PLAYER', 1, ?, ?, ?)`,
-  ).run(id, input.username, input.passwordHash, input.balance, now, now);
+     VALUES ($1, $2, $3, 'PLAYER', TRUE, $4, $5, $6)`,
+    [id, input.username, input.passwordHash, input.balance, now, now],
+  );
 
-  return findUserById(id);
+  return findUserById(id, executor);
 }
 
-export function setUserActive(userId: string, isActive: boolean) {
+export async function setUserActive(userId: string, isActive: boolean, executor: DbExecutor = pool) {
   const now = new Date().toISOString();
-  db.prepare("UPDATE users SET is_active = ?, updated_at = ? WHERE id = ?").run(isActive ? 1 : 0, now, userId);
-  return findUserById(userId);
+  await executor.query("UPDATE users SET is_active = $1, updated_at = $2 WHERE id = $3", [isActive, now, userId]);
+  return findUserById(userId, executor);
 }
 
-export function updateUserBalance(userId: string, balance: number) {
+export async function updateUserBalance(userId: string, balance: number, executor: DbExecutor = pool) {
   const now = new Date().toISOString();
-  db.prepare("UPDATE users SET balance = ?, updated_at = ? WHERE id = ?").run(balance, now, userId);
-  return findUserById(userId);
+  await executor.query("UPDATE users SET balance = $1, updated_at = $2 WHERE id = $3", [balance, now, userId]);
+  return findUserById(userId, executor);
 }
 
-export function createRound(input: {
-  tableId: string;
-  shoeId: string;
-  status: RoundStatus;
-  bettingOpensAt: string;
-  bettingClosesAt: string;
-}) {
+export async function createRound(
+  input: {
+    tableId: string;
+    shoeId: string;
+    status: RoundStatus;
+    bettingOpensAt: string;
+    bettingClosesAt: string;
+  },
+  executor: DbExecutor = pool,
+) {
   const id = randomUUID();
   const createdAt = new Date().toISOString();
 
-  db.prepare(
+  await executor.query(
     `INSERT INTO game_rounds (
       id, table_id, player_cards, banker_cards, player_total, banker_total, winner, status,
       shoe_id, player_pair, banker_pair, betting_opens_at, betting_closes_at, settled_at, created_at
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-  ).run(
-    id,
-    input.tableId,
-    JSON.stringify([]),
-    JSON.stringify([]),
-    0,
-    0,
-    "TIE",
-    input.status,
-    input.shoeId,
-    0,
-    0,
-    input.bettingOpensAt,
-    input.bettingClosesAt,
-    null,
-    createdAt,
+    ) VALUES ($1, $2, $3::jsonb, $4::jsonb, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)`,
+    [
+      id,
+      input.tableId,
+      JSON.stringify([]),
+      JSON.stringify([]),
+      0,
+      0,
+      "TIE",
+      input.status,
+      input.shoeId,
+      false,
+      false,
+      input.bettingOpensAt,
+      input.bettingClosesAt,
+      null,
+      createdAt,
+    ],
   );
 
-  return findRoundById(id)!;
+  return findRoundById(id, executor);
 }
 
-export function createBet(input: {
-  userId: string;
-  roundId: string;
-  betType: BetType;
-  amount: number;
-}) {
+export async function createBet(
+  input: {
+    userId: string;
+    roundId: string;
+    betType: BetType;
+    amount: number;
+  },
+  executor: DbExecutor = pool,
+) {
   const id = randomUUID();
   const createdAt = new Date().toISOString();
 
-  db.prepare(
-    "INSERT INTO bets (id, user_id, round_id, bet_type, amount, payout, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
-  ).run(id, input.userId, input.roundId, input.betType, input.amount, 0, createdAt);
+  await executor.query(
+    "INSERT INTO bets (id, user_id, round_id, bet_type, amount, payout, created_at) VALUES ($1, $2, $3, $4, $5, $6, $7)",
+    [id, input.userId, input.roundId, input.betType, input.amount, 0, createdAt],
+  );
 
-  return { id, ...input, createdAt };
+  return { id, ...input, payout: 0, createdAt };
 }
 
-export function listUserHistory(userId: string) {
-  const rounds = (db
-    .prepare(
-      `SELECT
-        g.id AS round_id,
-        g.table_id,
-        g.winner,
-        g.player_cards,
-        g.banker_cards,
-        g.player_total,
-        g.banker_total,
-        g.player_pair,
-        g.banker_pair,
-        g.settled_at
-      FROM game_rounds g
-      JOIN bets b ON b.round_id = g.id
-      WHERE b.user_id = ?
-        AND g.status = 'SETTLED'
-      GROUP BY g.id
-      ORDER BY g.settled_at DESC, g.created_at DESC
-      LIMIT 20`,
-    )
-    .all(userId) as DbRow[]);
+export async function listUserHistory(userId: string, executor: DbExecutor = pool) {
+  const rows = await queryRows(
+    executor,
+    `SELECT
+      g.id AS round_id,
+      g.table_id,
+      g.winner,
+      g.player_cards,
+      g.banker_cards,
+      g.player_total,
+      g.banker_total,
+      g.player_pair,
+      g.banker_pair,
+      g.settled_at,
+      g.created_at
+    FROM game_rounds g
+    JOIN bets b ON b.round_id = g.id
+    WHERE b.user_id = $1
+      AND g.status = 'SETTLED'
+    GROUP BY g.id
+    ORDER BY g.settled_at DESC, g.created_at DESC
+    LIMIT 20`,
+    [userId],
+  );
 
-  return rounds.map((row: DbRow) => {
-    const bets = listUserRoundBets(userId, String(row.round_id));
-    const totalAmount = bets.reduce((sum, bet) => sum + bet.amount, 0);
-    const totalPayout = bets.reduce((sum, bet) => sum + bet.payout, 0);
+  const result = [];
+  for (const row of rows) {
+    const bets = await listUserRoundBets(userId, String(row.round_id), executor);
+    const totalAmount = bets.reduce((sum: number, bet) => sum + bet.amount, 0);
+    const totalPayout = bets.reduce((sum: number, bet) => sum + bet.payout, 0);
 
-    return {
+    result.push({
       id: String(row.round_id),
-      createdAt: String(row.settled_at),
+      createdAt: toIsoString(row.settled_at),
       totalAmount,
       totalPayout,
       bets,
@@ -321,117 +387,142 @@ export function listUserHistory(userId: string) {
         id: String(row.round_id),
         tableId: String(row.table_id),
         winner: String(row.winner) as RoundWinner,
-        playerCards: JSON.parse(String(row.player_cards)),
-        bankerCards: JSON.parse(String(row.banker_cards)),
+        playerCards: parseJsonValue<{ rank: string; suit: string }[]>(row.player_cards, []),
+        bankerCards: parseJsonValue<{ rank: string; suit: string }[]>(row.banker_cards, []),
         playerTotal: Number(row.player_total),
         bankerTotal: Number(row.banker_total),
-        playerPair: Boolean(row.player_pair),
-        bankerPair: Boolean(row.banker_pair),
+        playerPair: toBoolean(row.player_pair),
+        bankerPair: toBoolean(row.banker_pair),
       },
-    };
-  });
+    });
+  }
+
+  return result;
 }
 
-export function listRoundBets(roundId: string) {
-  return (db.prepare("SELECT * FROM bets WHERE round_id = ? ORDER BY created_at ASC").all(roundId) as DbRow[]).map((row) => ({
+export async function listRoundBets(roundId: string, executor: DbExecutor = pool) {
+  const rows = await queryRows(executor, "SELECT * FROM bets WHERE round_id = $1 ORDER BY created_at ASC", [roundId]);
+
+  return rows.map((row: DbRow) => ({
     id: String(row.id),
     userId: String(row.user_id),
     roundId: String(row.round_id),
     betType: String(row.bet_type) as BetType,
     amount: Number(row.amount),
     payout: Number(row.payout),
-    createdAt: String(row.created_at),
+    createdAt: toIsoString(row.created_at),
   }));
 }
 
-export function listRoundBetsDetailed(roundId: string) {
-  return (db
-    .prepare(
-      `SELECT
-        b.id,
-        b.user_id,
-        u.username,
-        b.round_id,
-        b.bet_type,
-        b.amount,
-        b.payout,
-        b.created_at
-      FROM bets b
-      JOIN users u ON u.id = b.user_id
-      WHERE b.round_id = ?
-      ORDER BY b.created_at ASC`,
-    )
-    .all(roundId) as DbRow[])
-    .map((row) => ({
-      id: String(row.id),
-      userId: String(row.user_id),
-      username: String(row.username),
-      roundId: String(row.round_id),
-      betType: String(row.bet_type) as BetType,
-      amount: Number(row.amount),
-      payout: Number(row.payout),
-      createdAt: String(row.created_at),
-    }));
+export async function listRoundBetsDetailed(roundId: string, executor: DbExecutor = pool) {
+  const rows = await queryRows(
+    executor,
+    `SELECT
+      b.id,
+      b.user_id,
+      u.username,
+      b.round_id,
+      b.bet_type,
+      b.amount,
+      b.payout,
+      b.created_at
+    FROM bets b
+    JOIN users u ON u.id = b.user_id
+    WHERE b.round_id = $1
+    ORDER BY b.created_at ASC`,
+    [roundId],
+  );
+
+  return rows.map((row: DbRow) => ({
+    id: String(row.id),
+    userId: String(row.user_id),
+    username: String(row.username),
+    roundId: String(row.round_id),
+    betType: String(row.bet_type) as BetType,
+    amount: Number(row.amount),
+    payout: Number(row.payout),
+    createdAt: toIsoString(row.created_at),
+  }));
 }
 
-export function listUserRoundBets(userId: string, roundId: string) {
-  return (db
-    .prepare("SELECT id, bet_type, amount, payout, created_at FROM bets WHERE user_id = ? AND round_id = ? ORDER BY created_at ASC")
-    .all(userId, roundId) as DbRow[])
-    .map((row) => ({
-      id: String(row.id),
-      betType: String(row.bet_type) as BetType,
-      amount: Number(row.amount),
-      payout: Number(row.payout),
-      createdAt: String(row.created_at),
-    }));
+export async function listUserRoundBets(userId: string, roundId: string, executor: DbExecutor = pool) {
+  const rows = await queryRows(
+    executor,
+    "SELECT id, bet_type, amount, payout, created_at FROM bets WHERE user_id = $1 AND round_id = $2 ORDER BY created_at ASC",
+    [userId, roundId],
+  );
+
+  return rows.map((row: DbRow) => ({
+    id: String(row.id),
+    betType: String(row.bet_type) as BetType,
+    amount: Number(row.amount),
+    payout: Number(row.payout),
+    createdAt: toIsoString(row.created_at),
+  }));
 }
 
-export function updateBetPayout(betId: string, payout: number) {
-  db.prepare("UPDATE bets SET payout = ? WHERE id = ?").run(payout, betId);
+export async function updateBetPayout(betId: string, payout: number, executor: DbExecutor = pool) {
+  await executor.query("UPDATE bets SET payout = $1 WHERE id = $2", [payout, betId]);
 }
 
-export function findRoundById(id: string) {
-  const row = db.prepare("SELECT * FROM game_rounds WHERE id = ?").get(id) as DbRow | undefined;
+export async function findRoundById(
+  id: string,
+  executor: DbExecutor = pool,
+  options?: { forUpdate?: boolean },
+) {
+  const suffix = options?.forUpdate && isPoolClient(executor) ? " FOR UPDATE" : "";
+  const row = await queryRow(executor, `SELECT * FROM game_rounds WHERE id = $1${suffix}`, [id]);
   return row ? mapRound(row) : null;
 }
 
-export function getActiveRound(tableId: string) {
-  const row = db
-    .prepare(
-      "SELECT * FROM game_rounds WHERE table_id = ? AND status IN ('OPEN', 'LOCKED') ORDER BY created_at DESC LIMIT 1",
-    )
-    .get(tableId) as DbRow | undefined;
+export async function getActiveRound(
+  tableId: string,
+  executor: DbExecutor = pool,
+  options?: { forUpdate?: boolean },
+) {
+  const suffix = options?.forUpdate && isPoolClient(executor) ? " FOR UPDATE" : "";
+  const row = await queryRow(
+    executor,
+    `SELECT * FROM game_rounds WHERE table_id = $1 AND status IN ('OPEN', 'LOCKED') ORDER BY created_at DESC LIMIT 1${suffix}`,
+    [tableId],
+  );
 
   return row ? mapRound(row) : null;
 }
 
-export function listRecentSettledRounds(tableId: string, limit = 8) {
-  return (db
-    .prepare("SELECT * FROM game_rounds WHERE table_id = ? AND status = 'SETTLED' ORDER BY settled_at DESC LIMIT ?")
-    .all(tableId, limit) as DbRow[])
-    .map((row) => mapRound(row));
+export async function listRecentSettledRounds(tableId: string, limit = 8, executor: DbExecutor = pool) {
+  const rows = await queryRows(
+    executor,
+    "SELECT * FROM game_rounds WHERE table_id = $1 AND status = 'SETTLED' ORDER BY settled_at DESC LIMIT $2",
+    [tableId, limit],
+  );
+  return rows.map((row: DbRow) => mapRound(row));
 }
 
-export function listRecentSettledRoundsByShoe(tableId: string, shoeId: string, limit = 8) {
+export async function listRecentSettledRoundsByShoe(
+  tableId: string,
+  shoeId: string,
+  limit = 8,
+  executor: DbExecutor = pool,
+) {
   if (!shoeId) {
     return [] as GameRoundRecord[];
   }
 
-  return (db
-    .prepare(
-      "SELECT * FROM game_rounds WHERE table_id = ? AND shoe_id = ? AND status = 'SETTLED' ORDER BY settled_at DESC LIMIT ?",
-    )
-    .all(tableId, shoeId, limit) as DbRow[])
-    .map((row) => mapRound(row));
+  const rows = await queryRows(
+    executor,
+    "SELECT * FROM game_rounds WHERE table_id = $1 AND shoe_id = $2 AND status = 'SETTLED' ORDER BY settled_at DESC LIMIT $3",
+    [tableId, shoeId, limit],
+  );
+  return rows.map((row: DbRow) => mapRound(row));
 }
 
-export function updateRoundStatus(roundId: string, status: RoundStatus) {
-  db.prepare("UPDATE game_rounds SET status = ? WHERE id = ?").run(status, roundId);
-  return findRoundById(roundId);
+export async function updateRoundStatus(roundId: string, status: RoundStatus, executor: DbExecutor = pool) {
+  await executor.query("UPDATE game_rounds SET status = $1 WHERE id = $2", [status, roundId]);
+  return findRoundById(roundId, executor);
 }
 
-export function settleRound(
+export async function settleRound(
   roundId: string,
   result: {
     playerCards: unknown;
@@ -442,69 +533,80 @@ export function settleRound(
     playerPair: boolean;
     bankerPair: boolean;
   },
+  executor: DbExecutor = pool,
 ) {
   const settledAt = new Date().toISOString();
 
-  db.prepare(
+  await executor.query(
     `UPDATE game_rounds
-     SET player_cards = ?, banker_cards = ?, player_total = ?, banker_total = ?, winner = ?, status = 'SETTLED', settled_at = ?
-     , player_pair = ?, banker_pair = ?
-     WHERE id = ?`,
-  ).run(
-    JSON.stringify(result.playerCards),
-    JSON.stringify(result.bankerCards),
-    result.playerTotal,
-    result.bankerTotal,
-    result.winner,
-    settledAt,
-    result.playerPair ? 1 : 0,
-    result.bankerPair ? 1 : 0,
-    roundId,
+     SET player_cards = $1::jsonb,
+         banker_cards = $2::jsonb,
+         player_total = $3,
+         banker_total = $4,
+         winner = $5,
+         status = 'SETTLED',
+         settled_at = $6,
+         player_pair = $7,
+         banker_pair = $8
+     WHERE id = $9`,
+    [
+      JSON.stringify(result.playerCards),
+      JSON.stringify(result.bankerCards),
+      result.playerTotal,
+      result.bankerTotal,
+      result.winner,
+      settledAt,
+      result.playerPair,
+      result.bankerPair,
+      roundId,
+    ],
   );
 
-  return findRoundById(roundId)!;
+  return findRoundById(roundId, executor);
 }
 
-export function purgeSettledRoundsBefore(cutoffIso: string) {
-  const oldRoundIds = (
-    db
-      .prepare("SELECT id FROM game_rounds WHERE status = 'SETTLED' AND settled_at IS NOT NULL AND settled_at < ?")
-      .all(cutoffIso) as DbRow[]
-  ).map((row) => String(row.id));
+export async function purgeSettledRoundsBefore(
+  cutoffIso: string,
+  executor: DbExecutor = pool,
+): Promise<{ deletedRounds: number; deletedBets: number }> {
+  if (isPoolClient(executor)) {
+    const deletedBets = await executor.query(
+      `DELETE FROM bets
+       WHERE round_id IN (
+         SELECT id FROM game_rounds
+         WHERE status = 'SETTLED'
+           AND settled_at IS NOT NULL
+           AND settled_at < $1
+       )`,
+      [cutoffIso],
+    );
+    const deletedRounds = await executor.query(
+      "DELETE FROM game_rounds WHERE status = 'SETTLED' AND settled_at IS NOT NULL AND settled_at < $1",
+      [cutoffIso],
+    );
 
-  if (!oldRoundIds.length) {
-    return { deletedRounds: 0, deletedBets: 0 };
+    return { deletedRounds: deletedRounds.rowCount ?? 0, deletedBets: deletedBets.rowCount ?? 0 };
   }
 
-  const deleteBets = db.prepare("DELETE FROM bets WHERE round_id = ?");
-  const deleteRounds = db.prepare("DELETE FROM game_rounds WHERE id = ?");
-  const transaction = db.transaction((roundIds: string[]) => {
-    let deletedBets = 0;
-    let deletedRounds = 0;
-
-    for (const roundId of roundIds) {
-      deletedBets += deleteBets.run(roundId).changes;
-      deletedRounds += deleteRounds.run(roundId).changes;
-    }
-
-    return { deletedRounds, deletedBets };
-  });
-
-  return transaction(oldRoundIds);
+  return withTransaction((client) => purgeSettledRoundsBefore(cutoffIso, client));
 }
 
-export function createBalanceAdjustment(input: {
-  adminId: string;
-  userId: string;
-  amount: number;
-  note?: string;
-}) {
+export async function createBalanceAdjustment(
+  input: {
+    adminId: string;
+    userId: string;
+    amount: number;
+    note?: string;
+  },
+  executor: DbExecutor = pool,
+) {
   const id = randomUUID();
   const createdAt = new Date().toISOString();
 
-  db.prepare(
-    "INSERT INTO balance_adjustments (id, admin_id, user_id, amount, note, created_at) VALUES (?, ?, ?, ?, ?, ?)",
-  ).run(id, input.adminId, input.userId, input.amount, input.note ?? null, createdAt);
+  await executor.query(
+    "INSERT INTO balance_adjustments (id, admin_id, user_id, amount, note, created_at) VALUES ($1, $2, $3, $4, $5, $6)",
+    [id, input.adminId, input.userId, input.amount, input.note ?? null, createdAt],
+  );
 
   return { id, ...input, createdAt };
 }
@@ -527,42 +629,44 @@ function normalizeLegacyShoeState(cards: Card[]): TableShoeState {
   };
 }
 
-export function getTableShoe(tableId: string) {
-  const row = db.prepare("SELECT current_shoe_id, shoe_state FROM game_tables WHERE id = ?").get(tableId) as DbRow | undefined;
+export async function getTableShoe(
+  tableId: string,
+  executor: DbExecutor = pool,
+  options?: { forUpdate?: boolean },
+) {
+  const suffix = options?.forUpdate && isPoolClient(executor) ? " FOR UPDATE" : "";
+  const row = await queryRow(executor, `SELECT current_shoe_id, shoe_state FROM game_tables WHERE id = $1${suffix}`, [tableId]);
 
   if (!row) {
     return null;
   }
 
   const shoeId = String(row.current_shoe_id ?? "");
-  const shoeState = String(row.shoe_state ?? "[]");
-  const parsed = shoeState ? (JSON.parse(shoeState) as unknown) : [];
+  const parsed = parseJsonValue<Partial<TableShoeState> | Card[]>(row.shoe_state, []);
 
   if (Array.isArray(parsed)) {
     return {
       shoeId,
-      ...normalizeLegacyShoeState(parsed as Card[]),
+      ...normalizeLegacyShoeState(parsed),
     };
   }
 
-  const nextState = parsed as Partial<TableShoeState> | null;
-  const cards = Array.isArray(nextState?.cards) ? (nextState.cards as Card[]) : [];
-
+  const cards = Array.isArray(parsed.cards) ? (parsed.cards as Card[]) : [];
   return {
     shoeId,
     cards,
     cutCardRemaining:
-      typeof nextState?.cutCardRemaining === "number" && Number.isFinite(nextState.cutCardRemaining)
-        ? nextState.cutCardRemaining
+      typeof parsed.cutCardRemaining === "number" && Number.isFinite(parsed.cutCardRemaining)
+        ? parsed.cutCardRemaining
         : Math.min(14, cards.length),
-    cutCardReached: Boolean(nextState?.cutCardReached),
-    lastHandPending: Boolean(nextState?.lastHandPending),
+    cutCardReached: Boolean(parsed.cutCardReached),
+    lastHandPending: Boolean(parsed.lastHandPending),
   };
 }
 
-export function replaceTableShoe(tableId: string) {
+export async function replaceTableShoe(tableId: string, executor: DbExecutor = pool) {
   const nextShoe = createShuffledShoeState();
-  db.prepare("UPDATE game_tables SET current_shoe_id = ?, shoe_state = ? WHERE id = ?").run(
+  await executor.query("UPDATE game_tables SET current_shoe_id = $1, shoe_state = $2::jsonb WHERE id = $3", [
     nextShoe.shoeId,
     JSON.stringify({
       cards: nextShoe.cards,
@@ -571,12 +675,12 @@ export function replaceTableShoe(tableId: string) {
       lastHandPending: nextShoe.lastHandPending,
     }),
     tableId,
-  );
+  ]);
   return nextShoe;
 }
 
-export function saveTableShoe(tableId: string, shoeId: string, shoe: TableShoeState) {
-  db.prepare("UPDATE game_tables SET current_shoe_id = ?, shoe_state = ? WHERE id = ?").run(
+export async function saveTableShoe(tableId: string, shoeId: string, shoe: TableShoeState, executor: DbExecutor = pool) {
+  await executor.query("UPDATE game_tables SET current_shoe_id = $1, shoe_state = $2::jsonb WHERE id = $3", [
     shoeId,
     JSON.stringify({
       cards: shoe.cards,
@@ -585,130 +689,244 @@ export function saveTableShoe(tableId: string, shoeId: string, shoe: TableShoeSt
       lastHandPending: shoe.lastHandPending,
     }),
     tableId,
-  );
+  ]);
   return {
     shoeId,
     ...shoe,
   };
 }
 
-export function ensureTableShoe(tableId: string) {
-  const currentShoe = getTableShoe(tableId);
+export async function ensureTableShoe(tableId: string, executor: DbExecutor = pool) {
+  const currentShoe = await getTableShoe(tableId, executor, isPoolClient(executor) ? { forUpdate: true } : undefined);
 
   if (!currentShoe || !currentShoe.shoeId || currentShoe.cards.length === 0) {
-    return replaceTableShoe(tableId);
+    return replaceTableShoe(tableId, executor);
   }
 
   return currentShoe;
 }
 
-export function listAdjustments() {
-  return (db
-    .prepare(
-      `SELECT
-        ba.id,
-        ba.amount,
-        ba.note,
-        ba.created_at,
-        a.username AS admin_username,
-        u.username AS user_username
-      FROM balance_adjustments ba
-      JOIN users a ON a.id = ba.admin_id
-      JOIN users u ON u.id = ba.user_id
-      ORDER BY ba.created_at DESC
-      LIMIT 20`,
-    )
-    .all() as DbRow[])
-    .map((row: DbRow) => ({
-      id: String(row.id),
-      amount: Number(row.amount),
-      note: row.note ? String(row.note) : undefined,
-      createdAt: String(row.created_at),
-      admin: { username: String(row.admin_username) },
-      user: { username: String(row.user_username) },
-    }));
+export async function listAdjustments(executor: DbExecutor = pool) {
+  const rows = await queryRows(
+    executor,
+    `SELECT
+      ba.id,
+      ba.amount,
+      ba.note,
+      ba.created_at,
+      a.username AS admin_username,
+      u.username AS user_username
+    FROM balance_adjustments ba
+    JOIN users a ON a.id = ba.admin_id
+    JOIN users u ON u.id = ba.user_id
+    ORDER BY ba.created_at DESC
+    LIMIT 20`,
+  );
+
+  return rows.map((row: DbRow) => ({
+    id: String(row.id),
+    amount: Number(row.amount),
+    note: row.note ? String(row.note) : undefined,
+    createdAt: toIsoString(row.created_at),
+    admin: { username: String(row.admin_username) },
+    user: { username: String(row.user_username) },
+  }));
 }
 
-export async function ensureSeedData() {
+export async function buildLobbyTables(executor: DbExecutor = pool) {
+  const tables = await listTables(executor);
+  const snapshots = [];
+
+  for (const table of tables) {
+    const recentRounds = await listRecentSettledRounds(table.id, 30, executor);
+    const activeRound = await getActiveRound(table.id, executor);
+    const previousRound = recentRounds[0] ?? null;
+    const roadRounds = activeRound ? await listRecentSettledRoundsByShoe(table.id, activeRound.shoeId, 200, executor) : [];
+
+    snapshots.push({
+      table,
+      activeRound,
+      previousRound,
+      recentRounds: recentRounds.slice(0, 6),
+      roadRounds,
+    });
+  }
+
+  return snapshots;
+}
+
+export async function buildTablePublicState(tableId: string, executor: DbExecutor = pool) {
+  const table = await findTableById(tableId, executor);
+
+  if (!table) {
+    return null;
+  }
+
+  const activeRound = await getActiveRound(table.id, executor);
+  const recentRounds = await listRecentSettledRounds(table.id, 24, executor);
+  const previousRound = recentRounds[0] ?? null;
+  const roadRounds = activeRound ? await listRecentSettledRoundsByShoe(table.id, activeRound.shoeId, 200, executor) : [];
+  const shoe = await getTableShoe(table.id, executor);
+
+  if (!activeRound) {
+    return {
+      table,
+      round: null,
+      previousRound,
+      presentation: null,
+      recentRounds,
+      roadRounds,
+      shoeStatus: {
+        isLastHand: Boolean(shoe?.lastHandPending),
+        cutCardReached: Boolean(shoe?.cutCardReached),
+      },
+      serverTime: new Date().toISOString(),
+    };
+  }
+
+  return {
+    table,
+    round: activeRound,
+    previousRound,
+    presentation: previousRound?.settledAt
+      ? {
+          startsAt: previousRound.settledAt,
+          endsAt: activeRound.bettingOpensAt,
+        }
+      : null,
+    recentRounds,
+    roadRounds,
+    shoeStatus: {
+      isLastHand: Boolean(shoe?.lastHandPending),
+      cutCardReached: Boolean(shoe?.cutCardReached),
+    },
+    serverTime: new Date().toISOString(),
+  };
+}
+
+export async function buildTableUserState(userId: string, tableId: string, executor: DbExecutor = pool) {
+  const user = await findUserById(userId, executor);
+  const tableState = await buildTablePublicState(tableId, executor);
+  const roundId = tableState?.round?.id ?? "";
+  const myBets = roundId ? await listUserRoundBets(userId, roundId, executor) : [];
+
+  return {
+    tableId,
+    currentRoundId: roundId,
+    myBets,
+    balance: user?.balance ?? 0,
+    isActive: user?.isActive ?? false,
+    serverTime: new Date().toISOString(),
+  };
+}
+
+export async function buildUserLiveState(userId: string, executor: DbExecutor = pool) {
+  const user = await findUserById(userId, executor);
+
+  if (!user) {
+    return null;
+  }
+
+  return {
+    id: user.id,
+    username: user.username,
+    role: user.role,
+    isActive: user.isActive,
+    balance: user.balance,
+    serverTime: new Date().toISOString(),
+  };
+}
+
+const INIT_LOCK_KEY = 48201931;
+
+async function withAdvisoryLock<T>(lockKey: number, handler: (client: PoolClient) => Promise<T>) {
+  const client = await pool.connect();
+
+  try {
+    await client.query("SELECT pg_advisory_lock($1)", [lockKey]);
+    return await handler(client);
+  } finally {
+    try {
+      await client.query("SELECT pg_advisory_unlock($1)", [lockKey]);
+    } finally {
+      client.release();
+    }
+  }
+}
+
+async function seedDemoUsers(executor: DbExecutor) {
+  const now = new Date().toISOString();
+
+  await executor.query(
+    `INSERT INTO users (id, username, password_hash, role, balance, created_at, updated_at)
+     VALUES ($1, $2, $3, $4, $5, $6, $7)
+     ON CONFLICT (username) DO NOTHING`,
+    [randomUUID(), "admin", await bcrypt.hash("admin123", 10), "ADMIN", 0, now, now],
+  );
+
+  await executor.query(
+    `INSERT INTO users (id, username, password_hash, role, balance, created_at, updated_at)
+     VALUES ($1, $2, $3, $4, $5, $6, $7)
+     ON CONFLICT (username) DO NOTHING`,
+    [randomUUID(), "player1", await bcrypt.hash("player123", 10), "PLAYER", 10000, now, now],
+  );
+}
+
+export async function ensureSeedData(options?: { seedDemoUsers?: boolean }) {
   const configuredTables = [
     { code: "A01", name: "極速廳 A01", displayOrder: 1, roundDurationMs: 15000, minBet: 100, maxBet: 10000 },
     { code: "A02", name: "極速廳 A02", displayOrder: 2, roundDurationMs: 15000, minBet: 100, maxBet: 10000 },
     { code: "C01", name: "經典廳 C01", displayOrder: 3, roundDurationMs: 30000, minBet: 100, maxBet: 10000 },
     { code: "H01", name: "高額廳 H01", displayOrder: 4, roundDurationMs: 30000, minBet: 1000, maxBet: 50000 },
   ] as const;
-  const admin = findUserByUsername("admin");
-  const player = findUserByUsername("player1");
-  const now = new Date().toISOString();
 
-  if (!admin) {
-    db.prepare(
-      "INSERT INTO users (id, username, password_hash, role, balance, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
-    ).run(randomUUID(), "admin", await bcrypt.hash("admin123", 10), "ADMIN", 0, now, now);
-  }
+  await withAdvisoryLock(INIT_LOCK_KEY, async (client) => {
+    await initializeDatabase();
 
-  if (!player) {
-    db.prepare(
-      "INSERT INTO users (id, username, password_hash, role, balance, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
-    ).run(randomUUID(), "player1", await bcrypt.hash("player123", 10), "PLAYER", 10000, now, now);
-  }
-
-  const syncTables = db.transaction(() => {
-    for (const table of configuredTables) {
-      const existingByOrder = db
-        .prepare("SELECT id FROM game_tables WHERE display_order = ?")
-        .get(table.displayOrder) as DbRow | undefined;
-
-      if (existingByOrder) {
-        db.prepare("UPDATE game_tables SET code = ? WHERE id = ?").run(`__TMP__${table.displayOrder}`, String(existingByOrder.id));
-      }
+    if (options?.seedDemoUsers) {
+      await seedDemoUsers(client);
     }
 
-    for (const table of configuredTables) {
-      const existingByOrder = db
-        .prepare("SELECT id FROM game_tables WHERE display_order = ?")
-        .get(table.displayOrder) as DbRow | undefined;
+    const now = new Date().toISOString();
 
-      if (existingByOrder) {
-        db.prepare(
-          `UPDATE game_tables
-           SET code = ?, name = ?, display_order = ?, round_duration_ms = ?, min_bet = ?, max_bet = ?
-           WHERE id = ?`,
-        ).run(
-          table.code,
-          table.name,
-          table.displayOrder,
-          table.roundDurationMs,
-          table.minBet,
-          table.maxBet,
-          String(existingByOrder.id),
+    await withTransaction(async (tx) => {
+      for (const table of configuredTables) {
+        const existingByOrder = await queryRow(tx, "SELECT id FROM game_tables WHERE display_order = $1", [table.displayOrder]);
+
+        if (existingByOrder) {
+          await tx.query("UPDATE game_tables SET code = $1 WHERE id = $2", [`__TMP__${table.displayOrder}`, String(existingByOrder.id)]);
+        }
+      }
+
+      for (const table of configuredTables) {
+        const existingByOrder = await queryRow(tx, "SELECT id FROM game_tables WHERE display_order = $1", [table.displayOrder]);
+
+        if (existingByOrder) {
+          await tx.query(
+            `UPDATE game_tables
+             SET code = $1, name = $2, display_order = $3, round_duration_ms = $4, min_bet = $5, max_bet = $6
+             WHERE id = $7`,
+            [table.code, table.name, table.displayOrder, table.roundDurationMs, table.minBet, table.maxBet, String(existingByOrder.id)],
+          );
+          continue;
+        }
+
+        await tx.query(
+          `INSERT INTO game_tables (id, code, name, display_order, round_duration_ms, min_bet, max_bet, created_at)
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
+          [randomUUID(), table.code, table.name, table.displayOrder, table.roundDurationMs, table.minBet, table.maxBet, now],
         );
-        continue;
       }
+    });
 
-      db.prepare(
-        `INSERT INTO game_tables (id, code, name, display_order, round_duration_ms, min_bet, max_bet, created_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-      ).run(randomUUID(), table.code, table.name, table.displayOrder, table.roundDurationMs, table.minBet, table.maxBet, now);
+    const tables = await listTables(client);
+
+    for (const table of tables) {
+      const currentShoe = await getTableShoe(table.id, client);
+      const ensuredShoe =
+        !currentShoe || !currentShoe.shoeId || currentShoe.cards.length === 0 ? await replaceTableShoe(table.id, client) : currentShoe;
+
+      await client.query("UPDATE game_rounds SET shoe_id = $1 WHERE table_id = $2 AND shoe_id = ''", [ensuredShoe.shoeId, table.id]);
     }
   });
-
-  syncTables();
-
-  const tables = listTables();
-  const primaryTable = tables[0];
-
-  if (primaryTable) {
-    db.prepare("UPDATE game_rounds SET table_id = ? WHERE table_id = ''").run(primaryTable.id);
-  }
-
-  const backfillShoes = db.transaction((tableRecords: GameTableRecord[]) => {
-    for (const table of tableRecords) {
-      const currentShoe = getTableShoe(table.id);
-      const ensuredShoe = !currentShoe || !currentShoe.shoeId || currentShoe.cards.length === 0 ? replaceTableShoe(table.id) : currentShoe;
-
-      db.prepare("UPDATE game_rounds SET shoe_id = ? WHERE table_id = ? AND shoe_id = ''").run(ensuredShoe.shoeId, table.id);
-    }
-  });
-
-  backfillShoes(tables);
 }

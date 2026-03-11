@@ -1,4 +1,4 @@
 import { ensureSeedData } from "../lib/db.js";
 
-await ensureSeedData();
+await ensureSeedData({ seedDemoUsers: true });
 console.log("Seed completed");

@@ -14,8 +14,9 @@ import {
   listUsers,
   setUserActive,
   updateUserBalance,
+  withTransaction,
 } from "../../lib/db.js";
-import { publishUserUpdate } from "../../lib/live-updates.js";
+import { publishLiveEvent } from "../../lib/live-events.js";
 
 const adjustBalanceSchema = z.object({
   userId: z.string().min(1),
@@ -40,15 +41,15 @@ adminRouter.use(authenticate);
 adminRouter.use((req, res, next) => requireRole(req as AuthenticatedRequest, res, next, "ADMIN"));
 
 adminRouter.get("/users", async (_req, res) => {
-  return res.json(listUsers());
+  return res.json(await listUsers());
 });
 
 adminRouter.get("/adjustments", async (_req, res) => {
-  return res.json(listAdjustments());
+  return res.json(await listAdjustments());
 });
 
 adminRouter.get("/rounds/:roundId/bets", async (req, res) => {
-  const round = findRoundById(req.params.roundId);
+  const round = await findRoundById(req.params.roundId);
 
   if (!round) {
     return res.status(404).json({ message: "Round not found" });
@@ -56,7 +57,7 @@ adminRouter.get("/rounds/:roundId/bets", async (req, res) => {
 
   return res.json({
     round,
-    bets: listRoundBetsDetailed(round.id),
+    bets: await listRoundBetsDetailed(round.id),
   });
 });
 
@@ -67,12 +68,12 @@ adminRouter.post("/players", async (req, res) => {
     return res.status(400).json({ message: "Invalid payload" });
   }
 
-  if (findUserByUsername(parsed.data.username)) {
+  if (await findUserByUsername(parsed.data.username)) {
     return res.status(400).json({ message: "Username already exists" });
   }
 
   const passwordHash = await bcrypt.hash(parsed.data.password, 10);
-  const user = createPlayer({
+  const user = await createPlayer({
     username: parsed.data.username,
     passwordHash,
     balance: parsed.data.balance,
@@ -88,7 +89,7 @@ adminRouter.post("/users/set-active", async (req, res) => {
     return res.status(400).json({ message: "Invalid payload" });
   }
 
-  const targetUser = findUserById(parsed.data.userId);
+  const targetUser = await findUserById(parsed.data.userId);
 
   if (!targetUser) {
     return res.status(404).json({ message: "Target user not found" });
@@ -98,8 +99,13 @@ adminRouter.post("/users/set-active", async (req, res) => {
     return res.status(400).json({ message: "Admin account cannot be disabled here" });
   }
 
-  const user = setUserActive(targetUser.id, parsed.data.isActive);
-  publishUserUpdate(targetUser.id, "user_active_changed");
+  const user = await setUserActive(targetUser.id, parsed.data.isActive);
+  await publishLiveEvent({
+    type: "user_changed",
+    userId: targetUser.id,
+    reason: "user_active_changed",
+    at: new Date().toISOString(),
+  });
   return res.json(user);
 });
 
@@ -110,25 +116,41 @@ adminRouter.post("/adjust-balance", async (req: AuthenticatedRequest, res) => {
     return res.status(400).json({ message: "Invalid payload" });
   }
 
-  const targetUser = findUserById(parsed.data.userId);
+  const payload = await withTransaction(async (client) => {
+    const targetUser = await findUserById(parsed.data.userId, client, { forUpdate: true });
 
-  if (!targetUser) {
-    return res.status(404).json({ message: "Target user not found" });
-  }
+    if (!targetUser) {
+      return { error: { status: 404, message: "Target user not found" } } as const;
+    }
 
-  if (targetUser.balance + parsed.data.amount < 0) {
-    return res.status(400).json({ message: "Balance cannot be negative" });
-  }
+    if (targetUser.balance + parsed.data.amount < 0) {
+      return { error: { status: 400, message: "Balance cannot be negative" } } as const;
+    }
 
-  const user = updateUserBalance(targetUser.id, targetUser.balance + parsed.data.amount);
-  const adjustment = createBalanceAdjustment({
-    adminId: req.currentUser!.id,
-    userId: targetUser.id,
-    amount: parsed.data.amount,
-    note: parsed.data.note,
+    const user = await updateUserBalance(targetUser.id, targetUser.balance + parsed.data.amount, client);
+    const adjustment = await createBalanceAdjustment(
+      {
+        adminId: req.currentUser!.id,
+        userId: targetUser.id,
+        amount: parsed.data.amount,
+        note: parsed.data.note,
+      },
+      client,
+    );
+
+    return { user, adjustment, userId: targetUser.id } as const;
   });
 
-  publishUserUpdate(targetUser.id, "balance_adjusted");
+  if ("error" in payload && payload.error) {
+    return res.status(payload.error.status).json({ message: payload.error.message });
+  }
 
-  return res.json({ user, adjustment });
+  await publishLiveEvent({
+    type: "user_changed",
+    userId: payload.userId,
+    reason: "balance_adjusted",
+    at: new Date().toISOString(),
+  });
+
+  return res.json({ user: payload.user, adjustment: payload.adjustment });
 });

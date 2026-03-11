@@ -1,6 +1,6 @@
 # Baccarat Platform
 
-Vue 3 + Pinia 前端，Node.js + Express 後端，SQLite 資料庫。
+Vue 3 + Pinia 前端，Node.js + Express 後端，PostgreSQL 資料庫。
 
 ## 功能
 
@@ -12,8 +12,9 @@ Vue 3 + Pinia 前端，Node.js + Express 後端，SQLite 資料庫。
 - Admin 手動調整玩家餘額
 - 最近餘額異動紀錄
 
-## 預設帳號
+## 開發用預設帳號
 
+執行 `npm run db:seed` 後才會建立：
 - `admin / admin123`
 - `player1 / player123`
 
@@ -21,13 +22,25 @@ Vue 3 + Pinia 前端，Node.js + Express 後端，SQLite 資料庫。
 
 ```bash
 npm install
+npm run dev:db
 npm run db:seed
-npm run dev:server
-npm run dev:web
+npm run dev:all
 ```
 
 - 前端: `http://localhost:5173`
-- 後端: `http://localhost:4000`
+- 後端 HTTP / WS: `http://localhost:4000`
+
+如果你只想先把 PostgreSQL 拉起來：
+
+```bash
+npm run dev:db
+```
+
+結束後可用：
+
+```bash
+npm run dev:db:down
+```
 
 ## 對外分享 / Forwarded Port
 
@@ -58,11 +71,16 @@ VITE_API_BASE_URL=https://your-api-host.example.com
 ## 技術選擇
 
 - 前端: Vue 3, Pinia, Vue Router, Vite
-- 後端: Node.js, Express, JWT
-- 資料庫: SQLite (`better-sqlite3`)
+- 後端: Node.js, Express, JWT, WebSocket
+- 資料庫: PostgreSQL
 
 ## 備註
 
 - 目前是測試幣模式，未接金流。
 - 牌局會持續自動進行，即使沒有玩家下注也會照常輪轉。
+- 後端目前拆成兩個常駐進程：
+  - `api server`
+  - `round worker`
+- 桌況同步改成 WebSocket snapshot 推送，前端不再依賴收到事件後整包 refresh。
+- 正式環境啟動時不會自動建立 demo 帳號；若要開發測試帳號，請手動執行 `npm run db:seed`。
 - 若未來要多人同步牌桌、路單分析、會員管理、操作審計，可在此基礎擴充。

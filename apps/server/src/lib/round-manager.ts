@@ -2,10 +2,11 @@ import { calculatePayout, dealRoundFromShoe, getMassachusettsCutCardConfig } fro
 import {
   createRound,
   ensureTableShoe,
+  findUserById,
   getActiveRound,
   getTableShoe,
-  listTables,
   listRoundBets,
+  listTables,
   purgeSettledRoundsBefore,
   replaceTableShoe,
   saveTableShoe,
@@ -13,17 +14,15 @@ import {
   updateBetPayout,
   updateRoundStatus,
   updateUserBalance,
-  findUserById,
+  withTransaction,
 } from "./db.js";
-import { publishTableUpdate } from "./live-updates.js";
+import { publishLiveEvent } from "./live-events.js";
 import type { GameTableRecord } from "../types/domain.js";
 
 const REVEAL_WINDOW_MS = 5000;
 const LOOP_INTERVAL_MS = 1000;
 const CLEANUP_INTERVAL_MS = 24 * 60 * 60 * 1000;
 const SETTLED_ROUND_RETENTION_MS = 24 * 60 * 60 * 1000;
-// Must cover the slowest full reveal path:
-// deal 4 cards -> base reveal -> optional two bonus cards -> final reveal hold.
 const DEAL_ANIMATION_BUFFER_MS = 7000;
 const MIN_CARDS_TO_COMPLETE_ROUND = 6;
 
@@ -34,90 +33,130 @@ function getTableRoundDurationMs(table: GameTableRecord) {
 const roundManagerState = globalThis as typeof globalThis & {
   __baccaratRoundManagerInterval?: NodeJS.Timeout;
   __baccaratNextCleanupAt?: number;
+  __baccaratRoundManagerTicking?: boolean;
 };
 
-function createOpenRound(table: GameTableRecord, startTime = Date.now()) {
-  const shoe = ensureTableShoe(table.id);
-  const opensAtMs = startTime + DEAL_ANIMATION_BUFFER_MS;
-  const opensAt = new Date(opensAtMs).toISOString();
-  const closesAt = new Date(opensAtMs + getTableRoundDurationMs(table)).toISOString();
-  const round = createRound({
-    tableId: table.id,
-    shoeId: shoe.shoeId,
-    status: "OPEN",
-    bettingOpensAt: opensAt,
-    bettingClosesAt: closesAt,
+async function createOpenRound(table: GameTableRecord, startTime = Date.now()) {
+  const round = await withTransaction(async (client) => {
+    const shoe = await ensureTableShoe(table.id, client);
+    const opensAtMs = startTime + DEAL_ANIMATION_BUFFER_MS;
+    const opensAt = new Date(opensAtMs).toISOString();
+    const closesAt = new Date(opensAtMs + getTableRoundDurationMs(table)).toISOString();
+
+    return createRound(
+      {
+        tableId: table.id,
+        shoeId: shoe.shoeId,
+        status: "OPEN",
+        bettingOpensAt: opensAt,
+        bettingClosesAt: closesAt,
+      },
+      client,
+    );
   });
-  publishTableUpdate(table.id, "round_opened");
+
+  await publishLiveEvent({
+    type: "table_changed",
+    tableId: table.id,
+    reason: "round_opened",
+    at: new Date().toISOString(),
+  });
+
   return round;
 }
 
-function settleActiveRound(roundId: string, tableId: string) {
-  let shoe = getTableShoe(tableId);
+async function settleActiveRound(roundId: string, tableId: string) {
+  const affectedUserIds = new Set<string>();
 
-  if (!shoe || !shoe.shoeId || shoe.cards.length < MIN_CARDS_TO_COMPLETE_ROUND) {
-    shoe = replaceTableShoe(tableId);
-  }
+  await withTransaction(async (client) => {
+    let shoe = await getTableShoe(tableId, client, { forUpdate: true });
 
-  const wasLastHand = shoe.lastHandPending;
-  const result = dealRoundFromShoe(shoe);
+    if (!shoe || !shoe.shoeId || shoe.cards.length < MIN_CARDS_TO_COMPLETE_ROUND) {
+      shoe = await replaceTableShoe(tableId, client);
+    }
 
-  const applySettlement = () => {
-    const bets = listRoundBets(roundId);
+    const wasLastHand = shoe.lastHandPending;
+    const result = dealRoundFromShoe(shoe);
+    const bets = await listRoundBets(roundId, client);
+    const payoutsByUser = new Map<string, number>();
 
     for (const bet of bets) {
       const payout = calculatePayout(bet.betType, bet.amount, result);
-      updateBetPayout(bet.id, payout);
+      affectedUserIds.add(bet.userId);
+      await updateBetPayout(bet.id, payout, client);
 
       if (payout > 0) {
-        const user = findUserById(bet.userId);
-
-        if (user) {
-          updateUserBalance(user.id, user.balance + payout);
-        }
+        payoutsByUser.set(bet.userId, (payoutsByUser.get(bet.userId) ?? 0) + payout);
       }
     }
 
-    settleRound(roundId, result);
-  };
+    for (const [userId, payout] of payoutsByUser.entries()) {
+      const user = await findUserById(userId, client, { forUpdate: true });
 
-  applySettlement();
+      if (user) {
+        await updateUserBalance(user.id, user.balance + payout, client);
+      }
+    }
 
-  if (wasLastHand) {
-    replaceTableShoe(tableId);
-    return;
+    await settleRound(roundId, result, client);
+
+    if (wasLastHand) {
+      await replaceTableShoe(tableId, client);
+      return;
+    }
+
+    if (result.cutCardAppeared) {
+      shoe.lastHandPending = true;
+    }
+
+    await saveTableShoe(tableId, shoe.shoeId, shoe, client);
+  });
+
+  await publishLiveEvent({
+    type: "table_changed",
+    tableId,
+    reason: "round_settled",
+    at: new Date().toISOString(),
+  });
+
+  for (const userId of affectedUserIds) {
+    await publishLiveEvent({
+      type: "user_changed",
+      userId,
+      reason: "round_settled",
+      at: new Date().toISOString(),
+    });
   }
-
-  if (result.cutCardAppeared) {
-    shoe.lastHandPending = true;
-  }
-
-  saveTableShoe(tableId, shoe.shoeId, shoe);
 }
 
-function tickTable(table: GameTableRecord) {
-  let round = getActiveRound(table.id);
+async function tickTable(table: GameTableRecord) {
+  let round = await getActiveRound(table.id);
   const now = Date.now();
 
   if (!round) {
-    createOpenRound(table, now);
+    await createOpenRound(table, now);
     return;
   }
 
   const closesAt = new Date(round.bettingClosesAt).getTime();
 
   if (round.status === "OPEN" && now >= closesAt) {
-    round = updateRoundStatus(round.id, "LOCKED") ?? round;
-    publishTableUpdate(table.id, "round_locked");
+    round = (await updateRoundStatus(round.id, "LOCKED")) ?? round;
+    await publishLiveEvent({
+      type: "table_changed",
+      tableId: table.id,
+      reason: "round_locked",
+      at: new Date().toISOString(),
+    });
   }
 
   if (round.status === "LOCKED" && now >= closesAt + REVEAL_WINDOW_MS) {
-    settleActiveRound(round.id, table.id);
-    createOpenRound(table, now);
+    await settleActiveRound(round.id, table.id);
+    await createOpenRound(table, now);
   }
 }
 
-function runDailyCleanup(now: number) {
+async function runDailyCleanup(now: number) {
   if (!roundManagerState.__baccaratNextCleanupAt) {
     roundManagerState.__baccaratNextCleanupAt = now;
   }
@@ -127,7 +166,7 @@ function runDailyCleanup(now: number) {
   }
 
   const cutoffIso = new Date(now - SETTLED_ROUND_RETENTION_MS).toISOString();
-  const result = purgeSettledRoundsBefore(cutoffIso);
+  const result = await purgeSettledRoundsBefore(cutoffIso);
   roundManagerState.__baccaratNextCleanupAt = now + CLEANUP_INTERVAL_MS;
 
   if (result.deletedRounds > 0 || result.deletedBets > 0) {
@@ -149,20 +188,36 @@ export function getRoundConfig() {
   };
 }
 
-export function startRoundManager() {
+export async function startRoundManager() {
   if (roundManagerState.__baccaratRoundManagerInterval) {
     return;
   }
 
-  const runTick = () => {
-    const now = Date.now();
-    for (const table of listTables()) {
-      tickTable(table);
+  const runTick = async () => {
+    if (roundManagerState.__baccaratRoundManagerTicking) {
+      return;
     }
 
-    runDailyCleanup(now);
+    roundManagerState.__baccaratRoundManagerTicking = true;
+
+    try {
+      const now = Date.now();
+      const tables = await listTables();
+
+      for (const table of tables) {
+        await tickTable(table);
+      }
+
+      await runDailyCleanup(now);
+    } catch (error) {
+      console.error("Round manager tick failed", error);
+    } finally {
+      roundManagerState.__baccaratRoundManagerTicking = false;
+    }
   };
 
-  runTick();
-  roundManagerState.__baccaratRoundManagerInterval = setInterval(runTick, LOOP_INTERVAL_MS);
+  await runTick();
+  roundManagerState.__baccaratRoundManagerInterval = setInterval(() => {
+    void runTick();
+  }, LOOP_INTERVAL_MS);
 }

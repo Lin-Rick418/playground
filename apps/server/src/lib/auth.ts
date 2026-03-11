@@ -28,16 +28,18 @@ export function requireRole(
     return res.status(403).json({ message: "Forbidden" });
   }
 
-  const freshUser = findUserById(req.user.userId);
+  return findUserById(req.user.userId)
+    .then((freshUser) => {
+      if (!freshUser) {
+        return res.status(401).json({ message: "User not found" });
+      }
 
-  if (!freshUser) {
-    return res.status(401).json({ message: "User not found" });
-  }
+      if (!freshUser.isActive) {
+        return res.status(403).json({ message: "Account is disabled" });
+      }
 
-  if (!freshUser.isActive) {
-    return res.status(403).json({ message: "Account is disabled" });
-  }
-
-  req.currentUser = freshUser;
-  next();
+      req.currentUser = freshUser;
+      next();
+    })
+    .catch(next);
 }

@@ -19,7 +19,7 @@ authRouter.post("/login", async (req, res) => {
     return res.status(400).json({ message: "Invalid login payload" });
   }
 
-  const user = findUserByUsername(parsed.data.username);
+  const user = await findUserByUsername(parsed.data.username);
 
   if (!user) {
     return res.status(401).json({ message: "Invalid credentials" });
@@ -53,7 +53,7 @@ authRouter.post("/login", async (req, res) => {
 });
 
 authRouter.get("/me", authenticate, async (req: AuthenticatedRequest, res) => {
-  const user = req.user ? findUserById(req.user.userId) : null;
+  const user = req.user ? await findUserById(req.user.userId) : null;
 
   if (!user) {
     return res.status(404).json({ message: "User not found" });

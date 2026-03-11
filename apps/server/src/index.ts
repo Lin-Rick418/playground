@@ -1,8 +1,9 @@
 import cors from "cors";
 import express from "express";
+import { createServer } from "node:http";
 import { env } from "./config/env.js";
+import { attachLiveWebSocketServer } from "./lib/live-ws.js";
 import { ensureSeedData } from "./lib/db.js";
-import { startRoundManager } from "./lib/round-manager.js";
 import { authRouter } from "./modules/auth/router.js";
 import { gameRouter } from "./modules/game/router.js";
 import { adminRouter } from "./modules/admin/router.js";
@@ -21,8 +22,9 @@ app.use("/game", gameRouter);
 app.use("/admin", adminRouter);
 
 await ensureSeedData();
-startRoundManager();
+const server = createServer(app);
+await attachLiveWebSocketServer(server);
 
-app.listen(env.port, env.host, () => {
+server.listen(env.port, env.host, () => {
   console.log(`Server listening on http://${env.host}:${env.port}`);
 });
