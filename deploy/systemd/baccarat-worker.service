@@ -1,0 +1,22 @@
+[Unit]
+Description=Baccarat Round Worker
+After=network.target postgresql.service baccarat-api.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=baccarat
+Group=baccarat
+WorkingDirectory=/opt/baccarat/current
+Environment=NODE_ENV=production
+EnvironmentFile=/etc/baccarat/baccarat.env
+ExecStart=/usr/bin/env node /opt/baccarat/current/apps/server/dist/worker.js
+Restart=always
+RestartSec=3
+KillSignal=SIGTERM
+TimeoutStopSec=20
+NoNewPrivileges=true
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target
