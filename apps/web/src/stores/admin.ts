@@ -1,38 +1,6 @@
 import { defineStore } from "pinia";
 import { api } from "../lib/api";
-
-export type AdminUser = {
-  id: string;
-  username: string;
-  role: "ADMIN" | "PLAYER";
-  isActive: boolean;
-  balance: number;
-  createdAt: string;
-};
-
-export type Adjustment = {
-  id: string;
-  amount: number;
-  note?: string;
-  createdAt: string;
-  admin: {
-    username: string;
-  };
-  user: {
-    username: string;
-  };
-};
-
-export type RoundBetDetail = {
-  id: string;
-  userId: string;
-  username: string;
-  roundId: string;
-  betType: "PLAYER" | "BANKER" | "TIE";
-  amount: number;
-  payout: number;
-  createdAt: string;
-};
+import type { Adjustment, AdminUser, RoundBetDetail, RoundWinner } from "../types/domain";
 
 export const useAdminStore = defineStore("admin", {
   state: () => ({
@@ -41,7 +9,7 @@ export const useAdminStore = defineStore("admin", {
     roundDetail: null as null | {
       round: {
         id: string;
-        winner: "PLAYER" | "BANKER" | "TIE";
+        winner: RoundWinner;
         playerTotal: number;
         bankerTotal: number;
       };

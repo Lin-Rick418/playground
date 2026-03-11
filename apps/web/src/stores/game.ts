@@ -1,85 +1,6 @@
 import { defineStore } from "pinia";
 import { api } from "../lib/api";
-
-export type RoundHistoryItem = {
-  id: string;
-  createdAt: string;
-  totalAmount: number;
-  totalPayout: number;
-  bets: {
-    id: string;
-    betType: "PLAYER" | "BANKER" | "TIE" | "PLAYER_PAIR" | "BANKER_PAIR";
-    amount: number;
-    payout: number;
-    createdAt: string;
-  }[];
-  round: {
-    id: string;
-    tableId: string;
-    winner: "PLAYER" | "BANKER" | "TIE";
-    playerCards: { rank: string; suit: string }[];
-    bankerCards: { rank: string; suit: string }[];
-    playerTotal: number;
-    bankerTotal: number;
-    playerPair: boolean;
-    bankerPair: boolean;
-  };
-};
-
-export type ActiveRound = {
-  id: string;
-  tableId: string;
-  shoeId: string;
-  status: "OPEN" | "LOCKED" | "SETTLED";
-  bettingOpensAt: string;
-  bettingClosesAt: string;
-  settledAt: string | null;
-  playerCards: { rank: string; suit: string }[];
-  bankerCards: { rank: string; suit: string }[];
-  playerTotal: number;
-  bankerTotal: number;
-  winner: "PLAYER" | "BANKER" | "TIE";
-  playerPair: boolean;
-  bankerPair: boolean;
-  createdAt: string;
-};
-
-export type GameTable = {
-  id: string;
-  code: string;
-  name: string;
-  displayOrder: number;
-  roundDurationMs: number;
-  minBet: number;
-  maxBet: number;
-  createdAt: string;
-};
-
-export type LobbyTable = {
-  table: GameTable;
-  activeRound: ActiveRound | null;
-  previousRound: ActiveRound | null;
-  recentRounds: ActiveRound[];
-  roadRounds: ActiveRound[];
-};
-
-export type PresentationWindow = {
-  startsAt: string;
-  endsAt: string;
-};
-
-export type ShoeStatus = {
-  isLastHand: boolean;
-  cutCardReached: boolean;
-};
-
-export type CurrentBet = {
-  id: string;
-  betType: "PLAYER" | "BANKER" | "TIE" | "PLAYER_PAIR" | "BANKER_PAIR";
-  amount: number;
-  payout: number;
-  createdAt: string;
-};
+import type { ActiveRound, BetType, CurrentBet, GameTable, LobbyTable, PresentationWindow, RoundHistoryItem, ShoeStatus } from "../types/domain";
 
 export const useGameStore = defineStore("game", {
   state: () => ({
@@ -99,14 +20,22 @@ export const useGameStore = defineStore("game", {
     lastSettledRoundId: "",
   }),
   actions: {
-    async fetchLobby() {
-      const { data } = await api.get("/game/lobby");
+    applyLobbySnapshot(data: { tables: LobbyTable[]; serverTime: string }) {
       this.tables = data.tables;
       this.serverTime = data.serverTime;
-      return data;
     },
-    async fetchState(tableId: string) {
-      const { data } = await api.get(`/game/tables/${tableId}/state`);
+    applyTableSnapshot(
+      data: {
+        table: GameTable;
+        round: ActiveRound | null;
+        previousRound: ActiveRound | null;
+        presentation: PresentationWindow | null;
+        shoeStatus: ShoeStatus;
+        recentRounds: ActiveRound[];
+        roadRounds: ActiveRound[];
+        serverTime: string;
+      },
+    ) {
       const previousCurrentRoundId = this.currentRound?.id ?? "";
 
       this.currentTable = data.table;
@@ -116,7 +45,6 @@ export const useGameStore = defineStore("game", {
       this.shoeStatus = data.shoeStatus;
       this.recentRounds = data.recentRounds;
       this.roadRounds = data.roadRounds;
-      this.currentBets = data.myBets;
       this.serverTime = data.serverTime;
       this.tables = this.tables.map((item) =>
         item.table.id === data.table.id
@@ -133,13 +61,33 @@ export const useGameStore = defineStore("game", {
       const latestSettledRoundId = data.previousRound?.id ?? "";
       if (
         previousCurrentRoundId &&
-        previousCurrentRoundId !== data.round.id &&
+        previousCurrentRoundId !== (data.round?.id ?? "") &&
         latestSettledRoundId &&
         latestSettledRoundId !== this.lastSettledRoundId
       ) {
         this.lastSettledRoundId = latestSettledRoundId;
-        this.message = `第 ${latestSettledRoundId.slice(0, 8)} 局已結算`;
       }
+    },
+    applyTableUserSnapshot(data: { currentRoundId: string; myBets: CurrentBet[] }) {
+      if (!this.currentRound || this.currentRound.id === data.currentRoundId) {
+        this.currentBets = data.myBets;
+        return;
+      }
+
+      this.currentBets = [];
+    },
+    async fetchLobby() {
+      const { data } = await api.get("/game/lobby");
+      this.applyLobbySnapshot(data);
+      return data;
+    },
+    async fetchState(tableId: string) {
+      const { data } = await api.get(`/game/tables/${tableId}/state`);
+      this.applyTableSnapshot(data);
+      this.applyTableUserSnapshot({
+        currentRoundId: data.round?.id ?? "",
+        myBets: data.myBets,
+      });
 
       return data;
     },
@@ -153,9 +101,8 @@ export const useGameStore = defineStore("game", {
         this.loading = false;
       }
     },
-    async placeBet(tableId: string, payload: { betType: "PLAYER" | "BANKER" | "TIE" | "PLAYER_PAIR" | "BANKER_PAIR"; amount: number }[]) {
+    async placeBet(tableId: string, payload: { betType: BetType; amount: number }[]) {
       const { data } = await api.post(`/game/tables/${tableId}/bet`, { bets: payload });
-      this.message = `已下注到局號 ${data.round.id.slice(0, 8)}`;
       if (this.currentRound?.id === data.round.id) {
         this.currentBets = [...this.currentBets, ...data.bets];
       }

@@ -1,17 +1,11 @@
 import { defineStore } from "pinia";
 import { api } from "../lib/api";
-
-export type User = {
-  id: string;
-  username: string;
-  role: "ADMIN" | "PLAYER";
-  isActive: boolean;
-  balance: number;
-};
+import { clearStoredToken, getStoredToken, setStoredToken } from "../lib/settings";
+import type { User } from "../types/domain";
 
 export const useAuthStore = defineStore("auth", {
   state: () => ({
-    token: localStorage.getItem("baccarat_token") ?? "",
+    token: getStoredToken(),
     user: null as User | null,
     loading: false,
     error: "",
@@ -25,7 +19,7 @@ export const useAuthStore = defineStore("auth", {
         const { data } = await api.post("/auth/login", { username, password });
         this.token = data.token;
         this.user = data.user;
-        localStorage.setItem("baccarat_token", data.token);
+        setStoredToken(data.token);
       } catch (error) {
         this.error = "登入失敗，請確認帳號密碼。";
         throw error;
@@ -42,7 +36,10 @@ export const useAuthStore = defineStore("auth", {
       this.token = "";
       this.user = null;
       this.error = "";
-      localStorage.removeItem("baccarat_token");
+      clearStoredToken();
+    },
+    setUser(user: User | null) {
+      this.user = user;
     },
     patchBalance(balance: number) {
       if (this.user) {

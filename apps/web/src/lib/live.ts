@@ -1,36 +1,96 @@
-export type LiveUpdateEvent = {
-  type: "connected" | "lobby_updated" | "table_updated" | "user_updated";
-  reason?: string;
-  tableId?: string;
-  userId?: string;
-  at: string;
+import { getStoredToken } from "./settings";
+import type { ActiveRound, CurrentBet, GameTable, LobbyTable, PresentationWindow, RoundConfig, ShoeStatus, User } from "../types/domain";
+
+export type LobbySnapshotMessage = {
+  type: "lobby_snapshot";
+  data: {
+    tables: LobbyTable[];
+    config: RoundConfig;
+    serverTime: string;
+  };
 };
 
-function buildStreamUrl(path: string) {
+export type TableSnapshotMessage = {
+  type: "table_snapshot";
+  data: {
+    table: GameTable;
+        round: ActiveRound | null;
+        previousRound: ActiveRound | null;
+        presentation: PresentationWindow | null;
+        recentRounds: ActiveRound[];
+        roadRounds: ActiveRound[];
+        shoeStatus: ShoeStatus;
+        config: RoundConfig;
+        serverTime: string;
+      };
+};
+
+export type TableUserSnapshotMessage = {
+  type: "table_user_snapshot";
+  data: {
+    tableId: string;
+    currentRoundId: string;
+    myBets: CurrentBet[];
+    balance: number;
+    isActive: boolean;
+    serverTime: string;
+  };
+};
+
+export type UserSnapshotMessage = {
+  type: "user_snapshot";
+  data: User & {
+    serverTime: string;
+  };
+};
+
+export type LiveMessage =
+  | { type: "connected"; serverTime: string }
+  | { type: "error"; message: string }
+  | LobbySnapshotMessage
+  | TableSnapshotMessage
+  | TableUserSnapshotMessage
+  | UserSnapshotMessage;
+
+type SocketCallbacks = {
+  onMessage: (message: LiveMessage) => void;
+  onOpen?: (socket: WebSocket) => void;
+  onClose?: () => void;
+};
+
+function buildWebSocketUrl() {
   const baseUrl = import.meta.env.VITE_API_BASE_URL ?? "/api";
-  const normalizedBase = baseUrl.endsWith("/") ? baseUrl.slice(0, -1) : baseUrl;
-  const normalizedPath = path.startsWith("/") ? path : `/${path}`;
-  const url = new URL(`${normalizedBase}${normalizedPath}`, window.location.origin);
-  const token = localStorage.getItem("baccarat_token");
+  const normalizedBase = new URL(baseUrl, window.location.origin);
+  normalizedBase.protocol = normalizedBase.protocol === "https:" ? "wss:" : "ws:";
+  normalizedBase.pathname = `${normalizedBase.pathname.replace(/\/$/, "")}/ws`;
+  const token = getStoredToken();
 
   if (token) {
-    url.searchParams.set("token", token);
+    normalizedBase.searchParams.set("token", token);
   }
 
-  return url.toString();
+  return normalizedBase.toString();
 }
 
-export function createLiveEventSource(path: string, onEvent: (event: LiveUpdateEvent) => void) {
-  const source = new EventSource(buildStreamUrl(path));
+export function createLiveSocket(callbacks: SocketCallbacks) {
+  const socket = new WebSocket(buildWebSocketUrl());
 
-  source.onmessage = (message) => {
+  socket.addEventListener("open", () => {
+    callbacks.onOpen?.(socket);
+  });
+
+  socket.addEventListener("message", (event) => {
     try {
-      const event = JSON.parse(message.data) as LiveUpdateEvent;
-      onEvent(event);
+      const message = JSON.parse(String(event.data)) as LiveMessage;
+      callbacks.onMessage(message);
     } catch {
-      // Ignore malformed keep-alive payloads.
+      // Ignore malformed messages.
     }
-  };
+  });
 
-  return source;
+  socket.addEventListener("close", () => {
+    callbacks.onClose?.();
+  });
+
+  return socket;
 }
