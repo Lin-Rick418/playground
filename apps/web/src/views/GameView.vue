@@ -913,7 +913,7 @@ watch(
     </section>
 
     <section class="panel road-panel">
-      <RoadmapPanel :rounds="roadmapRounds" :visibility="roadVisibility" />
+      <RoadmapPanel :rounds="roadmapRounds" :visibility="roadVisibility" :clear-preview-signal="showDealOverlay ? presentationRound?.id ?? 'active' : null" />
     </section>
 
     <div v-if="isRoadSettingsOpen" class="modal-backdrop">

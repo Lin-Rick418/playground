@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, nextTick, onMounted, onUnmounted, ref } from "vue";
+import { computed, nextTick, onMounted, onUnmounted, ref, watch } from "vue";
 import BeadRoadBoard from "./BeadRoadBoard.vue";
 import BigRoadBoard from "./BigRoadBoard.vue";
 import BigEyeRoadBoard from "./BigEyeRoadBoard.vue";
@@ -29,14 +29,17 @@ import {
 interface Props {
   rounds?: ActiveRound[] | null;
   visibility?: RoadVisibilitySettings;
+  clearPreviewSignal?: string | number | null;
 }
 
 const props = withDefaults(defineProps<Props>(), {
   rounds: null,
   visibility: () => ({ ...DEFAULT_ROAD_VISIBILITY_SETTINGS }),
+  clearPreviewSignal: null,
 });
 
 const chronologicalRounds = computed(() => [...(props.rounds ?? [])].reverse());
+const askRoadPreview = ref<"PLAYER" | "BANKER" | null>(null);
 const roadmapViewportRef = ref<HTMLElement | null>(null);
 const beadViewportRef = ref<HTMLElement | null>(null);
 const roadmapViewportHeight = ref(0);
@@ -127,10 +130,33 @@ const derivedCellSize = computed(() => {
     Math.max(ROADMAP_MIN_DERIVED_CELL_PX, Math.floor(derivedAvailableHeight.value / ROADMAP_BOARD_ROWS)),
   );
 });
-const bigRoadCols = computed(() => Math.max(ROADMAP_MIN_BIG_ROAD_COLS, getBigRoadColumnCount(bigRoadData.value, ROADMAP_BOARD_ROWS)));
-const bigEyeRoadCols = computed(() => Math.max(ROADMAP_MIN_DERIVED_COLS, getBigEyeRoadColumnCount(bigRoadData.value, ROADMAP_BOARD_ROWS)));
-const smallRoadCols = computed(() => Math.max(ROADMAP_MIN_DERIVED_COLS, getSmallRoadColumnCount(bigRoadData.value, ROADMAP_BOARD_ROWS)));
-const cockroachRoadCols = computed(() => Math.max(ROADMAP_MIN_DERIVED_COLS, getCockroachRoadColumnCount(bigRoadData.value, ROADMAP_BOARD_ROWS)));
+const previewRoadData = computed(() =>
+  askRoadPreview.value
+    ? [
+        ...bigRoadData.value,
+        {
+          existBead: "EXIST" as const,
+          winType: askRoadPreview.value,
+          fourBit: "ZERO" as const,
+          directKilling: "NO" as const,
+          baccaratPair: "NO_PAIR" as const,
+        },
+      ]
+    : bigRoadData.value,
+);
+const previewRoadIndex = computed(() => (askRoadPreview.value ? previewRoadData.value.length - 1 : null));
+const bigRoadCols = computed(() =>
+  Math.max(ROADMAP_MIN_BIG_ROAD_COLS, getBigRoadColumnCount(previewRoadData.value, ROADMAP_BOARD_ROWS)),
+);
+const bigEyeRoadCols = computed(() =>
+  Math.max(ROADMAP_MIN_DERIVED_COLS, getBigEyeRoadColumnCount(previewRoadData.value, ROADMAP_BOARD_ROWS)),
+);
+const smallRoadCols = computed(() =>
+  Math.max(ROADMAP_MIN_DERIVED_COLS, getSmallRoadColumnCount(previewRoadData.value, ROADMAP_BOARD_ROWS)),
+);
+const cockroachRoadCols = computed(() =>
+  Math.max(ROADMAP_MIN_DERIVED_COLS, getCockroachRoadColumnCount(previewRoadData.value, ROADMAP_BOARD_ROWS)),
+);
 
 const beadTrackWidth = computed(() => `${beadCols.value * beadCellSize.value}px`);
 const beadTrackHeight = computed(() => `${ROADMAP_BOARD_ROWS * beadCellSize.value}px`);
@@ -151,7 +177,7 @@ const hasVisibleBoards = computed(
   () => visibleRoads.value.beadRoad || visibleRoads.value.bigRoad || visibleDerivedCount.value > 0,
 );
 const roadmapShellStyle = computed(() => ({
-  gridTemplateColumns: visibleRoads.value.beadRoad ? "max-content max-content" : "max-content",
+  gridTemplateColumns: visibleRoads.value.beadRoad ? "max-content max-content 88px" : "max-content 88px",
 }));
 const centerColumnStyle = computed(() => ({
   gridTemplateRows:
@@ -168,6 +194,24 @@ const smallRoadTrackWidth = computed(() => `${smallRoadCols.value * derivedCellS
 const smallRoadTrackHeight = computed(() => `${ROADMAP_BOARD_ROWS * derivedCellSize.value}px`);
 const cockroachRoadTrackWidth = computed(() => `${cockroachRoadCols.value * derivedCellSize.value}px`);
 const cockroachRoadTrackHeight = computed(() => `${ROADMAP_BOARD_ROWS * derivedCellSize.value}px`);
+const isAskRoadLocked = computed(() => Boolean(props.clearPreviewSignal));
+
+function showAskRoad(nextWinner: "PLAYER" | "BANKER") {
+  if (isAskRoadLocked.value) {
+    return;
+  }
+
+  askRoadPreview.value = nextWinner;
+}
+
+watch(
+  () => props.clearPreviewSignal,
+  (signal) => {
+    if (signal) {
+      askRoadPreview.value = null;
+    }
+  },
+);
 
 function syncBeadViewportHeight() {
   if (!beadViewportRef.value) {
@@ -240,11 +284,12 @@ onUnmounted(() => {
           <div class="board-surface">
             <div class="board-track" :style="{ width: bigRoadTrackWidth, height: bigRoadTrackHeight }">
               <BigRoadBoard
-                :big-road="bigRoadData"
+                :big-road="previewRoadData"
                 :cols="bigRoadCols"
                 :rows="ROADMAP_BOARD_ROWS"
                 :cell-size="bigRoadCellSize"
-                :token-size="5"
+                :token-size="Math.max(7, Math.round(bigRoadCellSize * 0.58))"
+                :preview-index="previewRoadIndex"
               />
             </div>
           </div>
@@ -255,10 +300,11 @@ onUnmounted(() => {
             <div class="board-surface compact-surface">
               <div class="board-track" :style="{ width: bigEyeTrackWidth, height: bigEyeTrackHeight }">
                 <BigEyeRoadBoard
-                  :big-road="bigRoadData"
+                  :big-road="previewRoadData"
                   :cols="bigEyeRoadCols"
                   :rows="ROADMAP_BOARD_ROWS"
                   :cell-size="derivedCellSize"
+                  :preview-index="previewRoadIndex"
                 />
               </div>
             </div>
@@ -267,7 +313,13 @@ onUnmounted(() => {
           <div v-if="visibleRoads.smallRoad" class="derived-card">
             <div class="board-surface compact-surface">
               <div class="board-track" :style="{ width: smallRoadTrackWidth, height: smallRoadTrackHeight }">
-                <SmallRoadBoard :big-road="bigRoadData" :cols="smallRoadCols" :rows="ROADMAP_BOARD_ROWS" :cell-size="derivedCellSize" />
+                <SmallRoadBoard
+                  :big-road="previewRoadData"
+                  :cols="smallRoadCols"
+                  :rows="ROADMAP_BOARD_ROWS"
+                  :cell-size="derivedCellSize"
+                  :preview-index="previewRoadIndex"
+                />
               </div>
             </div>
           </div>
@@ -276,16 +328,22 @@ onUnmounted(() => {
             <div class="board-surface compact-surface">
               <div class="board-track" :style="{ width: cockroachRoadTrackWidth, height: cockroachRoadTrackHeight }">
                 <CockroachRoadBoard
-                  :big-road="bigRoadData"
+                  :big-road="previewRoadData"
                   :cols="cockroachRoadCols"
                   :rows="ROADMAP_BOARD_ROWS"
                   :cell-size="derivedCellSize"
+                  :preview-index="previewRoadIndex"
                 />
               </div>
             </div>
           </div>
         </div>
       </div>
+
+      <aside class="roadmap-actions">
+        <button type="button" class="ask-road-button player" :disabled="isAskRoadLocked" @click="showAskRoad('PLAYER')">閒問路</button>
+        <button type="button" class="ask-road-button banker" :disabled="isAskRoadLocked" @click="showAskRoad('BANKER')">莊問路</button>
+      </aside>
     </section>
 
     <section v-else class="roadmap-empty">
@@ -309,7 +367,6 @@ onUnmounted(() => {
   gap: 10px;
   min-width: max-content;
   height: 100%;
-  padding: 10px;
   border-radius: 18px;
   background: linear-gradient(180deg, #f9f8f1, #efede3);
   box-shadow:
@@ -321,7 +378,8 @@ onUnmounted(() => {
 .center-column,
 .big-road-zone,
 .derived-zone,
-.derived-card {
+.derived-card,
+.roadmap-actions {
   min-height: 0;
 }
 
@@ -355,6 +413,40 @@ onUnmounted(() => {
 
 .bead-track {
   height: auto;
+}
+
+.roadmap-actions {
+  width: 88px;
+  padding: 10px 10px 10px 0;
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.ask-road-button {
+  width: 100%;
+  border: 0;
+  border-radius: 10px;
+  padding: 10px 8px;
+  font-size: 12px;
+  font-weight: 800;
+  letter-spacing: 0.02em;
+  color: #fff;
+  box-shadow: 0 6px 16px rgba(0, 0, 0, 0.12);
+}
+
+.ask-road-button:disabled {
+  opacity: 0.48;
+  box-shadow: none;
+}
+
+.ask-road-button.player {
+  background: linear-gradient(180deg, #6aa9ff, #3978f0);
+}
+
+.ask-road-button.banker {
+  background: linear-gradient(180deg, #f26e66, #d64a40);
 }
 
 .roadmap-empty {

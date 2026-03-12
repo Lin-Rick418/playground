@@ -67,7 +67,12 @@ function beadClass(round: BeadRound) {
 <template>
   <div
     class="bead-road"
-    :style="{ '--road-rows': String(rowCount), '--road-cols': String(colCount), '--cell-size': `${cellSize}px` }"
+    :style="{
+      '--road-rows': String(rowCount),
+      '--road-cols': String(colCount),
+      '--cell-size': `${cellSize}px`,
+      '--bead-font-size': `${Math.max(10, Math.round(cellSize * 0.48))}px`,
+    }"
   >
     <div v-for="(row, rowIndex) in grid" :key="rowIndex" class="bead-road-row">
       <div v-for="(cell, colIndex) in row" :key="`${rowIndex}-${colIndex}`" class="bead-road-cell">
@@ -114,7 +119,7 @@ function beadClass(round: BeadRound) {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  font-size: clamp(8px, 2vw, 12px);
+  font-size: var(--bead-font-size);
   font-weight: 900;
   color: #fff;
 }

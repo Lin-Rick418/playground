@@ -1,6 +1,10 @@
 export type GameResult = "PLAYER" | "BANKER" | "BANKER_SIX" | "TIE";
 export type PositionWinType = "PLAYER" | "BANKER";
 export type DerivedRoadColor = "RED" | "BLUE";
+export type DerivedRoadCell = {
+  color: DerivedRoadColor;
+  originalIndex: number;
+};
 
 export interface BaccaratGameData {
   existBead: "EXIST" | "NOT_EXIST";
@@ -15,14 +19,30 @@ export type BigRoadPlacement = {
   row: number;
 };
 
-type DerivedRoadPlacement = BigRoadPlacement & {
-  color: DerivedRoadColor;
-};
+type DerivedRoadPlacement = BigRoadPlacement & DerivedRoadCell;
 
 type DerivedRoadConfig = {
   start: BigRoadPlacement;
   fallbackStart: BigRoadPlacement;
   sameRowCompareOffset: number;
+};
+
+const SMALL_ROAD_CONFIG: DerivedRoadConfig = {
+  start: { col: 2, row: 1 },
+  fallbackStart: { col: 3, row: 0 },
+  sameRowCompareOffset: 2,
+};
+
+const BIG_EYE_ROAD_CONFIG: DerivedRoadConfig = {
+  start: { col: 1, row: 1 },
+  fallbackStart: { col: 2, row: 0 },
+  sameRowCompareOffset: 1,
+};
+
+const COCKROACH_ROAD_CONFIG: DerivedRoadConfig = {
+  start: { col: 3, row: 1 },
+  fallbackStart: { col: 4, row: 0 },
+  sameRowCompareOffset: 3,
 };
 
 const FOUR_BIT_MAP = {
@@ -176,7 +196,7 @@ function buildDerivedPlacements(colors: DerivedRoadColor[], rowCount: number) {
   let isFirst = true;
   let isTailing = false;
 
-  for (const color of colors) {
+  colors.forEach((color, originalIndex) => {
     if (isFirst) {
       currentCol = 0;
       currentRow = 0;
@@ -209,9 +229,9 @@ function buildDerivedPlacements(colors: DerivedRoadColor[], rowCount: number) {
     }
 
     occupied.add(`${currentCol}:${currentRow}`);
-    placements.push({ col: currentCol, row: currentRow, color });
+    placements.push({ col: currentCol, row: currentRow, color, originalIndex });
     previousColor = color;
-  }
+  });
 
   return placements;
 }
@@ -222,7 +242,7 @@ function getPlacementColumnCount(placements: BigRoadPlacement[]) {
 }
 
 function buildVisibleGrid(placements: DerivedRoadPlacement[], rowCount: number, colCount: number) {
-  const grid = Array.from({ length: rowCount }, () => Array.from({ length: colCount }, () => null as DerivedRoadColor | null));
+  const grid = Array.from({ length: rowCount }, () => Array.from({ length: colCount }, () => null as DerivedRoadCell | null));
   const maxCol = placements.reduce((highest, placement) => Math.max(highest, placement.col), -1);
   const startCol = Math.max(0, maxCol - colCount + 1);
 
@@ -237,55 +257,29 @@ function buildVisibleGrid(placements: DerivedRoadPlacement[], rowCount: number, 
       continue;
     }
 
-    grid[placement.row]![visibleCol] = placement.color;
+    grid[placement.row]![visibleCol] = {
+      color: placement.color,
+      originalIndex: placement.originalIndex,
+    };
   }
 
   return grid;
 }
 
+function buildDerivedRoadPlacements(bigRoad: BaccaratGameData[], rowCount: number, config: DerivedRoadConfig) {
+  return buildDerivedPlacements(deriveRoadColors(buildBigRoadPlacements(bigRoad, rowCount), config), rowCount);
+}
+
 export function buildSmallRoadGrid(bigRoad: BaccaratGameData[], rowCount: number, colCount: number) {
-  return buildVisibleGrid(
-    buildDerivedPlacements(
-      deriveRoadColors(buildBigRoadPlacements(bigRoad, rowCount), {
-        start: { col: 2, row: 1 },
-        fallbackStart: { col: 3, row: 0 },
-        sameRowCompareOffset: 2,
-      }),
-      rowCount,
-    ),
-    rowCount,
-    colCount,
-  );
+  return buildVisibleGrid(buildDerivedRoadPlacements(bigRoad, rowCount, SMALL_ROAD_CONFIG), rowCount, colCount);
 }
 
 export function buildBigEyeRoadGrid(bigRoad: BaccaratGameData[], rowCount: number, colCount: number) {
-  return buildVisibleGrid(
-    buildDerivedPlacements(
-      deriveRoadColors(buildBigRoadPlacements(bigRoad, rowCount), {
-        start: { col: 1, row: 1 },
-        fallbackStart: { col: 2, row: 0 },
-        sameRowCompareOffset: 1,
-      }),
-      rowCount,
-    ),
-    rowCount,
-    colCount,
-  );
+  return buildVisibleGrid(buildDerivedRoadPlacements(bigRoad, rowCount, BIG_EYE_ROAD_CONFIG), rowCount, colCount);
 }
 
 export function buildCockroachRoadGrid(bigRoad: BaccaratGameData[], rowCount: number, colCount: number) {
-  return buildVisibleGrid(
-    buildDerivedPlacements(
-      deriveRoadColors(buildBigRoadPlacements(bigRoad, rowCount), {
-        start: { col: 3, row: 1 },
-        fallbackStart: { col: 4, row: 0 },
-        sameRowCompareOffset: 3,
-      }),
-      rowCount,
-    ),
-    rowCount,
-    colCount,
-  );
+  return buildVisibleGrid(buildDerivedRoadPlacements(bigRoad, rowCount, COCKROACH_ROAD_CONFIG), rowCount, colCount);
 }
 
 export function getBigRoadColumnCount(bigRoad: BaccaratGameData[], rowCount: number) {
@@ -293,40 +287,13 @@ export function getBigRoadColumnCount(bigRoad: BaccaratGameData[], rowCount: num
 }
 
 export function getSmallRoadColumnCount(bigRoad: BaccaratGameData[], rowCount: number) {
-  return getPlacementColumnCount(
-    buildDerivedPlacements(
-      deriveRoadColors(buildBigRoadPlacements(bigRoad, rowCount), {
-        start: { col: 2, row: 1 },
-        fallbackStart: { col: 3, row: 0 },
-        sameRowCompareOffset: 2,
-      }),
-      rowCount,
-    ),
-  );
+  return getPlacementColumnCount(buildDerivedRoadPlacements(bigRoad, rowCount, SMALL_ROAD_CONFIG));
 }
 
 export function getBigEyeRoadColumnCount(bigRoad: BaccaratGameData[], rowCount: number) {
-  return getPlacementColumnCount(
-    buildDerivedPlacements(
-      deriveRoadColors(buildBigRoadPlacements(bigRoad, rowCount), {
-        start: { col: 1, row: 1 },
-        fallbackStart: { col: 2, row: 0 },
-        sameRowCompareOffset: 1,
-      }),
-      rowCount,
-    ),
-  );
+  return getPlacementColumnCount(buildDerivedRoadPlacements(bigRoad, rowCount, BIG_EYE_ROAD_CONFIG));
 }
 
 export function getCockroachRoadColumnCount(bigRoad: BaccaratGameData[], rowCount: number) {
-  return getPlacementColumnCount(
-    buildDerivedPlacements(
-      deriveRoadColors(buildBigRoadPlacements(bigRoad, rowCount), {
-        start: { col: 3, row: 1 },
-        fallbackStart: { col: 4, row: 0 },
-        sameRowCompareOffset: 3,
-      }),
-      rowCount,
-    ),
-  );
+  return getPlacementColumnCount(buildDerivedRoadPlacements(bigRoad, rowCount, COCKROACH_ROAD_CONFIG));
 }

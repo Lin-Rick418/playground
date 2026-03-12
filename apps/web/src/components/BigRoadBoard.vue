@@ -28,6 +28,7 @@ interface Props {
   cols?: number;
   cellSize?: number | null;
   tokenSize?: number | null;
+  previewIndex?: number | null;
 }
 
 const props = withDefaults(defineProps<Props>(), {
@@ -36,6 +37,7 @@ const props = withDefaults(defineProps<Props>(), {
   cols: 13,
   cellSize: null,
   tokenSize: null,
+  previewIndex: null,
 });
 
 const rowCount = computed(() => Math.max(1, props.rows));
@@ -299,6 +301,7 @@ const displayGameData = computed<BaccaratGameData[]>(() => {
   const maxDisplayCount = calculateMaxDisplayCount(props.bigRoad);
   return props.bigRoad.slice(-maxDisplayCount);
 });
+const previewDisplayIndex = computed(() => (props.previewIndex === null ? null : Math.max(0, displayGameData.value.length - 1)));
 
 const grid = computed<GridMatrix>(() => buildBigRoadGrid(displayGameData.value));
 
@@ -382,7 +385,7 @@ const getCircleSvg = (cell: GridCellData): string => `
   >
     <div v-for="(row, rowIndex) in grid" :key="rowIndex" class="big-road-row">
       <div v-for="(cell, colIndex) in row" :key="`${rowIndex}-${colIndex}`" class="big-road-cell">
-        <div v-if="cell" class="token" v-html="getCircleSvg(cell)" />
+        <div v-if="cell" class="token" :class="{ preview: previewDisplayIndex === cell.originalIndex }" v-html="getCircleSvg(cell)" />
       </div>
     </div>
   </div>
@@ -431,5 +434,27 @@ const getCircleSvg = (cell: GridCellData): string => `
   display: flex;
   align-items: center;
   justify-content: center;
+}
+
+.token :deep(svg) {
+  width: 100%;
+  height: 100%;
+}
+
+.token.preview {
+  animation: ask-road-blink 0.82s steps(2, end) infinite;
+  filter: drop-shadow(0 0 6px rgba(92, 147, 222, 0.7));
+}
+
+@keyframes ask-road-blink {
+  0%,
+  100% {
+    opacity: 1;
+    transform: scale(1.08);
+  }
+  50% {
+    opacity: 0.14;
+    transform: scale(0.88);
+  }
 }
 </style>
