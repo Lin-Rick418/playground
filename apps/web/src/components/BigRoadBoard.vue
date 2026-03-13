@@ -20,6 +20,11 @@ interface GridCellData extends BaccaratGameData {
   tieData?: BaccaratGameData;
 }
 
+interface PositionedGridCellData extends GridCellData {
+  col: number;
+  row: number;
+}
+
 type GridMatrix = (GridCellData | null)[][];
 
 interface Props {
@@ -114,83 +119,6 @@ const createInitialState = (): GridState => ({
   isTailing: false,
 });
 
-const simulateGridColumns = (gameDataList: BaccaratGameData[]): number => {
-  let maxCol = 0;
-  let currentCol = 0;
-  let currentRow = 0;
-  let prevWin: PositionWinType | null = null;
-  let isFirst = true;
-  let anchorCol = 0;
-  let isTailing = false;
-
-  for (const gameData of gameDataList) {
-    if (isFirst && isTieRound(gameData)) {
-      continue;
-    }
-
-    const curWin = normalizeWinType(gameData.winType);
-
-    if (isFirst) {
-      currentCol = 0;
-      currentRow = 0;
-      anchorCol = 0;
-      isTailing = false;
-      isFirst = false;
-      maxCol = Math.max(maxCol, currentCol);
-    } else if (isTieRound(gameData)) {
-      continue;
-    } else if (curWin === prevWin) {
-      if (isTailing) {
-        currentCol += 1;
-      } else {
-        const nextRow = currentRow + 1;
-        if (nextRow < rowCount.value) {
-          currentRow = nextRow;
-        } else {
-          currentCol += 1;
-          isTailing = true;
-        }
-      }
-      maxCol = Math.max(maxCol, currentCol);
-    } else {
-      currentCol = anchorCol + 1;
-      currentRow = 0;
-      anchorCol = currentCol;
-      isTailing = false;
-      maxCol = Math.max(maxCol, currentCol);
-      prevWin = curWin;
-    }
-
-    if (!isTieRound(gameData)) {
-      prevWin = curWin;
-    }
-  }
-
-  return maxCol + 1;
-};
-
-const calculateMaxDisplayCount = (gameDataList: BaccaratGameData[]): number => {
-  if (!gameDataList.length) {
-    return 0;
-  }
-
-  const maxCols = colCount.value - 1;
-  let currentCount = gameDataList.length;
-
-  while (currentCount > 0) {
-    const testData = gameDataList.slice(-currentCount);
-    const usedColumns = simulateGridColumns(testData);
-
-    if (usedColumns <= maxCols) {
-      return currentCount;
-    }
-
-    currentCount -= 1;
-  }
-
-  return 0;
-};
-
 const initializeFirstPosition = (state: GridState): void => {
   Object.assign(state, {
     col: 0,
@@ -201,12 +129,14 @@ const initializeFirstPosition = (state: GridState): void => {
   });
 };
 
-const handleSameWinType = (grid: GridMatrix, state: GridState): void => {
+const positionKey = (col: number, row: number) => `${col}:${row}`;
+
+const handleSameWinType = (occupied: Set<string>, state: GridState): void => {
   if (state.isTailing) {
     state.col += 1;
   } else {
     const nextRow = state.row + 1;
-    const canMoveDown = nextRow < rowCount.value && !grid[nextRow]![state.col];
+    const canMoveDown = nextRow < rowCount.value && !occupied.has(positionKey(state.col, nextRow));
 
     if (canMoveDown) {
       state.row = nextRow;
@@ -217,44 +147,51 @@ const handleSameWinType = (grid: GridMatrix, state: GridState): void => {
   }
 };
 
-const handleDifferentWinType = (grid: GridMatrix, state: GridState): void => {
+const handleDifferentWinType = (occupied: Set<string>, state: GridState): void => {
   state.col = state.anchorCol + 1;
   state.row = 0;
 
   // 換邊一定從新欄第一列開始；若該欄頂部已被佔用，則整欄往右找。
-  while (state.col < colCount.value && grid[0]![state.col]) {
+  while (occupied.has(positionKey(state.col, 0))) {
     state.col += 1;
   }
 
-  state.col = Math.min(state.col, colCount.value - 1);
   state.anchorCol = state.col;
   state.isTailing = false;
 };
 
-const handleTieWrite = (grid: GridMatrix, state: GridState, gameData: BaccaratGameData, index: number): void => {
+const handleTieWrite = (
+  cells: Map<string, PositionedGridCellData>,
+  state: GridState,
+  gameData: BaccaratGameData,
+  index: number,
+): void => {
   const { row, col } = state;
   const fourBitNumber = getFourBitNumber(gameData.fourBit);
-  const existingCell = grid[row]![col];
+  const key = positionKey(col, row);
+  const existingCell = cells.get(key);
 
   if (existingCell) {
     const currentTieCount = existingCell.tieCount ?? 0;
     const newTieCount = fourBitNumber > 0 ? fourBitNumber : currentTieCount + 1;
 
-    grid[row]![col] = {
+    cells.set(key, {
       ...existingCell,
       hastie: true,
       tieCount: newTieCount,
       tieData: gameData,
-    };
+    });
     return;
   }
 
-  grid[row]![col] = {
+  cells.set(key, {
     ...gameData,
     originalIndex: index,
     tieCount: Math.max(fourBitNumber, 1),
     hastie: true,
-  };
+    col,
+    row,
+  });
 };
 
 const buildBigRoadGrid = (gameDataList: BaccaratGameData[] | null): GridMatrix => {
@@ -263,7 +200,10 @@ const buildBigRoadGrid = (gameDataList: BaccaratGameData[] | null): GridMatrix =
   }
 
   const grid = createEmptyGrid();
+  const cells = new Map<string, PositionedGridCellData>();
+  const occupied = new Set<string>();
   const state = createInitialState();
+  let maxCol = 0;
 
   gameDataList.forEach((gameData, index) => {
     if (state.isFirst && isTieRound(gameData)) {
@@ -275,35 +215,58 @@ const buildBigRoadGrid = (gameDataList: BaccaratGameData[] | null): GridMatrix =
     if (state.isFirst) {
       initializeFirstPosition(state);
     } else if (isTieRound(gameData)) {
-      handleTieWrite(grid, state, gameData, index);
+      handleTieWrite(cells, state, gameData, index);
       return;
     } else if (curWin === state.prevWin) {
-      handleSameWinType(grid, state);
+      handleSameWinType(occupied, state);
     } else {
-      handleDifferentWinType(grid, state);
+      handleDifferentWinType(occupied, state);
     }
 
-    grid[state.row]![state.col] = {
+    const key = positionKey(state.col, state.row);
+    occupied.add(key);
+    cells.set(key, {
       ...gameData,
       originalIndex: index,
-    };
+      col: state.col,
+      row: state.row,
+    });
+    maxCol = Math.max(maxCol, state.col);
     state.prevWin = curWin;
+  });
+
+  const startCol = Math.max(0, maxCol - colCount.value + 1);
+
+  cells.forEach((cell) => {
+    if (cell.col < startCol) {
+      return;
+    }
+
+    const visibleCol = cell.col - startCol;
+
+    if (visibleCol >= colCount.value) {
+      return;
+    }
+
+    grid[cell.row]![visibleCol] = {
+      existBead: cell.existBead,
+      winType: cell.winType,
+      fourBit: cell.fourBit,
+      directKilling: cell.directKilling,
+      baccaratPair: cell.baccaratPair,
+      originalIndex: cell.originalIndex,
+      hastie: cell.hastie,
+      tieCount: cell.tieCount,
+      tieData: cell.tieData,
+    };
   });
 
   return grid;
 };
 
-const displayGameData = computed<BaccaratGameData[]>(() => {
-  if (!props.bigRoad?.length) {
-    return [];
-  }
+const previewDisplayIndex = computed(() => props.previewIndex);
 
-  const maxDisplayCount = calculateMaxDisplayCount(props.bigRoad);
-  return props.bigRoad.slice(-maxDisplayCount);
-});
-const previewDisplayIndex = computed(() => (props.previewIndex === null ? null : Math.max(0, displayGameData.value.length - 1)));
-
-const grid = computed<GridMatrix>(() => buildBigRoadGrid(displayGameData.value));
+const grid = computed<GridMatrix>(() => buildBigRoadGrid(props.bigRoad ?? null));
 
 const getStrokeColor = (cell: GridCellData): string => {
   switch (cell.winType) {

@@ -8,9 +8,7 @@ import SmallRoadBoard from "./SmallRoadBoard.vue";
 import {
   DEFAULT_ROAD_VISIBILITY_SETTINGS,
   ROADMAP_BEAD_CELL_PX,
-  ROADMAP_BIG_ROAD_CELL_PX,
   ROADMAP_BOARD_ROWS,
-  ROADMAP_DERIVED_CELL_PX,
   ROADMAP_MIN_BEAD_CELL_PX,
   ROADMAP_MIN_BIG_ROAD_CELL_PX,
   ROADMAP_MIN_DERIVED_CELL_PX,
@@ -112,23 +110,17 @@ const beadCellSize = computed(() => {
 });
 const bigRoadCellSize = computed(() => {
   if (!bigRoadAvailableHeight.value) {
-    return ROADMAP_BIG_ROAD_CELL_PX;
+    return ROADMAP_MIN_BIG_ROAD_CELL_PX;
   }
 
-  return Math.min(
-    ROADMAP_BIG_ROAD_CELL_PX,
-    Math.max(ROADMAP_MIN_BIG_ROAD_CELL_PX, Math.floor(bigRoadAvailableHeight.value / ROADMAP_BOARD_ROWS)),
-  );
+  return Math.max(ROADMAP_MIN_BIG_ROAD_CELL_PX, Math.floor(bigRoadAvailableHeight.value / ROADMAP_BOARD_ROWS));
 });
 const derivedCellSize = computed(() => {
   if (!derivedAvailableHeight.value) {
-    return ROADMAP_DERIVED_CELL_PX;
+    return ROADMAP_MIN_DERIVED_CELL_PX;
   }
 
-  return Math.min(
-    ROADMAP_DERIVED_CELL_PX,
-    Math.max(ROADMAP_MIN_DERIVED_CELL_PX, Math.floor(derivedAvailableHeight.value / ROADMAP_BOARD_ROWS)),
-  );
+  return Math.max(ROADMAP_MIN_DERIVED_CELL_PX, Math.floor(derivedAvailableHeight.value / ROADMAP_BOARD_ROWS));
 });
 const previewRoadData = computed(() =>
   askRoadPreview.value
@@ -173,11 +165,28 @@ const visibleDerivedCount = computed(
     Number(visibleRoads.value.smallRoad) +
     Number(visibleRoads.value.cockroachRoad),
 );
+const roadSummaryItems = computed(() => {
+  const total = chronologicalRounds.value.length;
+  const playerCount = chronologicalRounds.value.filter((round) => round.winner === "PLAYER").length;
+  const bankerCount = chronologicalRounds.value.filter((round) => round.winner === "BANKER").length;
+  const tieCount = chronologicalRounds.value.filter((round) => round.winner === "TIE").length;
+  const playerPairCount = chronologicalRounds.value.filter((round) => round.playerPair).length;
+  const bankerPairCount = chronologicalRounds.value.filter((round) => round.bankerPair).length;
+
+  return [
+    { label: "總局", value: total },
+    { label: "閒", value: playerCount },
+    { label: "莊", value: bankerCount },
+    { label: "和", value: tieCount },
+    { label: "閒對", value: playerPairCount },
+    { label: "莊對", value: bankerPairCount },
+  ];
+});
 const hasVisibleBoards = computed(
   () => visibleRoads.value.beadRoad || visibleRoads.value.bigRoad || visibleDerivedCount.value > 0,
 );
 const roadmapShellStyle = computed(() => ({
-  gridTemplateColumns: visibleRoads.value.beadRoad ? "max-content max-content 88px" : "max-content 88px",
+  gridTemplateColumns: visibleRoads.value.beadRoad ? "max-content max-content" : "max-content",
 }));
 const centerColumnStyle = computed(() => ({
   gridTemplateRows:
@@ -269,91 +278,186 @@ onUnmounted(() => {
 </script>
 
 <template>
-  <div ref="roadmapViewportRef" class="roadmap-scroll">
-    <section v-if="hasVisibleBoards" class="roadmap-shell" :style="roadmapShellStyle">
-      <div v-if="visibleRoads.beadRoad" class="road-column bead-column">
-        <div ref="beadViewportRef" class="board-surface">
-          <div class="board-track bead-track" :style="{ width: beadTrackWidth, height: beadTrackHeight }">
-            <BeadRoadBoard :rounds="chronologicalRounds" :rows="ROADMAP_BOARD_ROWS" :cols="beadCols" :cell-size="beadCellSize" />
-          </div>
-        </div>
-      </div>
+  <section class="roadmap-panel">
+    <div class="roadmap-stats" aria-label="看路統計">
+      <article v-for="item in roadSummaryItems" :key="item.label" class="roadmap-stat-pill">
+        <span>{{ item.label }}</span>
+        <strong>{{ item.value }}</strong>
+      </article>
+      <button type="button" class="roadmap-stat-pill ask-road-inline player" :disabled="isAskRoadLocked" @click="showAskRoad('PLAYER')">
+        <span>問路</span>
+        <strong>閒</strong>
+      </button>
+      <button type="button" class="roadmap-stat-pill ask-road-inline banker" :disabled="isAskRoadLocked" @click="showAskRoad('BANKER')">
+        <span>問路</span>
+        <strong>莊</strong>
+      </button>
+    </div>
 
-      <div class="road-column center-column" :style="centerColumnStyle">
-        <div v-if="visibleRoads.bigRoad" class="big-road-zone">
-          <div class="board-surface">
-            <div class="board-track" :style="{ width: bigRoadTrackWidth, height: bigRoadTrackHeight }">
-              <BigRoadBoard
-                :big-road="previewRoadData"
-                :cols="bigRoadCols"
-                :rows="ROADMAP_BOARD_ROWS"
-                :cell-size="bigRoadCellSize"
-                :token-size="Math.max(7, Math.round(bigRoadCellSize * 0.58))"
-                :preview-index="previewRoadIndex"
-              />
+    <div ref="roadmapViewportRef" class="roadmap-scroll">
+      <section v-if="hasVisibleBoards" class="roadmap-shell" :style="roadmapShellStyle">
+        <div v-if="visibleRoads.beadRoad" class="road-column bead-column">
+          <div ref="beadViewportRef" class="board-surface">
+            <div class="board-track bead-track" :style="{ width: beadTrackWidth, height: beadTrackHeight }">
+              <BeadRoadBoard :rounds="chronologicalRounds" :rows="ROADMAP_BOARD_ROWS" :cols="beadCols" :cell-size="beadCellSize" />
             </div>
           </div>
         </div>
 
-        <div v-if="visibleDerivedCount > 0" class="derived-zone" :style="derivedZoneStyle">
-          <div v-if="visibleRoads.bigEyeRoad" class="derived-card">
-            <div class="board-surface compact-surface">
-              <div class="board-track" :style="{ width: bigEyeTrackWidth, height: bigEyeTrackHeight }">
-                <BigEyeRoadBoard
+        <div class="road-column center-column" :style="centerColumnStyle">
+          <div v-if="visibleRoads.bigRoad" class="big-road-zone">
+            <div class="board-surface">
+              <div class="board-track" :style="{ width: bigRoadTrackWidth, height: bigRoadTrackHeight }">
+                <BigRoadBoard
                   :big-road="previewRoadData"
-                  :cols="bigEyeRoadCols"
+                  :cols="bigRoadCols"
                   :rows="ROADMAP_BOARD_ROWS"
-                  :cell-size="derivedCellSize"
+                  :cell-size="bigRoadCellSize"
+                  :token-size="Math.max(7, Math.round(bigRoadCellSize * 0.58))"
                   :preview-index="previewRoadIndex"
                 />
               </div>
             </div>
           </div>
 
-          <div v-if="visibleRoads.smallRoad" class="derived-card">
-            <div class="board-surface compact-surface">
-              <div class="board-track" :style="{ width: smallRoadTrackWidth, height: smallRoadTrackHeight }">
-                <SmallRoadBoard
-                  :big-road="previewRoadData"
-                  :cols="smallRoadCols"
-                  :rows="ROADMAP_BOARD_ROWS"
-                  :cell-size="derivedCellSize"
-                  :preview-index="previewRoadIndex"
-                />
+          <div v-if="visibleDerivedCount > 0" class="derived-zone" :style="derivedZoneStyle">
+            <div v-if="visibleRoads.bigEyeRoad" class="derived-card">
+              <div class="board-surface compact-surface">
+                <div class="board-track" :style="{ width: bigEyeTrackWidth, height: bigEyeTrackHeight }">
+                  <BigEyeRoadBoard
+                    :big-road="previewRoadData"
+                    :cols="bigEyeRoadCols"
+                    :rows="ROADMAP_BOARD_ROWS"
+                    :cell-size="derivedCellSize"
+                    :preview-index="previewRoadIndex"
+                  />
+                </div>
               </div>
             </div>
-          </div>
 
-          <div v-if="visibleRoads.cockroachRoad" class="derived-card">
-            <div class="board-surface compact-surface">
-              <div class="board-track" :style="{ width: cockroachRoadTrackWidth, height: cockroachRoadTrackHeight }">
-                <CockroachRoadBoard
-                  :big-road="previewRoadData"
-                  :cols="cockroachRoadCols"
-                  :rows="ROADMAP_BOARD_ROWS"
-                  :cell-size="derivedCellSize"
-                  :preview-index="previewRoadIndex"
-                />
+            <div v-if="visibleRoads.smallRoad" class="derived-card">
+              <div class="board-surface compact-surface">
+                <div class="board-track" :style="{ width: smallRoadTrackWidth, height: smallRoadTrackHeight }">
+                  <SmallRoadBoard
+                    :big-road="previewRoadData"
+                    :cols="smallRoadCols"
+                    :rows="ROADMAP_BOARD_ROWS"
+                    :cell-size="derivedCellSize"
+                    :preview-index="previewRoadIndex"
+                  />
+                </div>
+              </div>
+            </div>
+
+            <div v-if="visibleRoads.cockroachRoad" class="derived-card">
+              <div class="board-surface compact-surface">
+                <div class="board-track" :style="{ width: cockroachRoadTrackWidth, height: cockroachRoadTrackHeight }">
+                  <CockroachRoadBoard
+                    :big-road="previewRoadData"
+                    :cols="cockroachRoadCols"
+                    :rows="ROADMAP_BOARD_ROWS"
+                    :cell-size="derivedCellSize"
+                    :preview-index="previewRoadIndex"
+                  />
+                </div>
               </div>
             </div>
           </div>
         </div>
-      </div>
 
-      <aside class="roadmap-actions">
-        <button type="button" class="ask-road-button player" :disabled="isAskRoadLocked" @click="showAskRoad('PLAYER')">閒問路</button>
-        <button type="button" class="ask-road-button banker" :disabled="isAskRoadLocked" @click="showAskRoad('BANKER')">莊問路</button>
-      </aside>
-    </section>
+      </section>
 
-    <section v-else class="roadmap-empty">
-      <p>目前未選擇任何路圖</p>
-    </section>
-  </div>
+      <section v-else class="roadmap-empty">
+        <p>目前未選擇任何路圖</p>
+      </section>
+    </div>
+  </section>
 </template>
 
 <style scoped>
+.roadmap-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  width: 100%;
+  height: 100%;
+  min-height: 0;
+}
+
+.roadmap-stats {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  overflow-x: auto;
+  overflow-y: hidden;
+  scrollbar-width: none;
+  -webkit-overflow-scrolling: touch;
+}
+
+.roadmap-stats::-webkit-scrollbar {
+  display: none;
+}
+
+.roadmap-stat-pill {
+  flex: 0 0 auto;
+  min-width: 68px;
+  padding: 8px 10px;
+  border-radius: 12px;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.03);
+}
+
+.roadmap-stat-pill span {
+  color: rgba(247, 244, 233, 0.62);
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 0.04em;
+}
+
+.roadmap-stat-pill strong {
+  color: #f4de9b;
+  font-size: 14px;
+  font-weight: 900;
+}
+
+.roadmap-stat-pill.ask-road-inline {
+  border: 0;
+  min-width: 72px;
+  justify-content: space-between;
+  transition:
+    transform 120ms ease,
+    filter 120ms ease,
+    opacity 120ms ease;
+}
+
+.roadmap-stat-pill.ask-road-inline:disabled {
+  opacity: 0.48;
+}
+
+.roadmap-stat-pill.ask-road-inline:active:not(:disabled) {
+  transform: scale(0.98);
+  filter: brightness(1.05);
+}
+
+.roadmap-stat-pill.ask-road-inline.player {
+  background: linear-gradient(180deg, #6aa9ff, #3978f0);
+}
+
+.roadmap-stat-pill.ask-road-inline.banker {
+  background: linear-gradient(180deg, #f26e66, #d64a40);
+}
+
+.roadmap-stat-pill.ask-road-inline.player span,
+.roadmap-stat-pill.ask-road-inline.player strong,
+.roadmap-stat-pill.ask-road-inline.banker span,
+.roadmap-stat-pill.ask-road-inline.banker strong {
+  color: #fff;
+}
+
 .roadmap-scroll {
+  flex: 1 1 auto;
   width: 100%;
   height: 100%;
   overflow-x: auto;
@@ -413,40 +517,6 @@ onUnmounted(() => {
 
 .bead-track {
   height: auto;
-}
-
-.roadmap-actions {
-  width: 88px;
-  padding: 10px 10px 10px 0;
-  display: flex;
-  flex-direction: column;
-  justify-content: flex-end;
-  gap: 8px;
-}
-
-.ask-road-button {
-  width: 100%;
-  border: 0;
-  border-radius: 10px;
-  padding: 10px 8px;
-  font-size: 12px;
-  font-weight: 800;
-  letter-spacing: 0.02em;
-  color: #fff;
-  box-shadow: 0 6px 16px rgba(0, 0, 0, 0.12);
-}
-
-.ask-road-button:disabled {
-  opacity: 0.48;
-  box-shadow: none;
-}
-
-.ask-road-button.player {
-  background: linear-gradient(180deg, #6aa9ff, #3978f0);
-}
-
-.ask-road-button.banker {
-  background: linear-gradient(180deg, #f26e66, #d64a40);
 }
 
 .roadmap-empty {

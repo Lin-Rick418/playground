@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, ref } from "vue";
+import { computed, onMounted, ref } from "vue";
 import { useRouter } from "vue-router";
 import BigRoadBoard from "../components/BigRoadBoard.vue";
 import { BET_TYPE_LABELS, WINNER_LABELS } from "../const/game";
@@ -14,6 +14,7 @@ const router = useRouter();
 
 const tables = computed(() => gameStore.tables);
 const isHistoryOpen = ref(false);
+const isLobbyLoading = ref(true);
 
 function openTable(tableId: string) {
   router.push(`/game/${tableId}`);
@@ -38,8 +39,19 @@ useLiveChannel({
   onMessage: (message) => {
     if (message.type === "lobby_snapshot") {
       gameStore.applyLobbySnapshot(message.data);
+      isLobbyLoading.value = false;
     }
   },
+});
+
+onMounted(async () => {
+  isLobbyLoading.value = true;
+
+  try {
+    await gameStore.fetchLobby();
+  } finally {
+    isLobbyLoading.value = false;
+  }
 });
 
 function toBaccaratPairType(round: { playerPair: boolean; bankerPair: boolean }): BaccaratPairType {
@@ -116,6 +128,17 @@ function historyBetSummary(item: Pick<RoundHistoryItem, "bets">) {
 
 <template>
   <main class="page-shell lobby-page">
+    <transition name="lobby-loading-fade">
+      <div v-if="isLobbyLoading" class="lobby-loading-overlay">
+        <div class="lobby-loading-panel panel">
+          <div class="lobby-loading-spinner" aria-hidden="true" />
+          <p class="topbar-label">Loading Lobby</p>
+          <strong>載入大廳中</strong>
+          <span>正在同步最新桌況與路圖</span>
+        </div>
+      </div>
+    </transition>
+
     <button class="back-button" @click="logout" aria-label="返回登入">
       ←
     </button>
@@ -178,6 +201,78 @@ function historyBetSummary(item: Pick<RoundHistoryItem, "bets">) {
   display: flex;
   flex-direction: column;
   gap: 24px;
+}
+
+.lobby-loading-overlay {
+  position: fixed;
+  top: 0;
+  bottom: 0;
+  left: 50%;
+  width: 100%;
+  max-width: 430px;
+  transform: translateX(-50%);
+  z-index: 90;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  background:
+    linear-gradient(180deg, rgba(2, 8, 6, 0.88), rgba(2, 8, 6, 0.74) 48%, rgba(2, 8, 6, 0.88));
+  backdrop-filter: blur(8px);
+}
+
+.lobby-loading-panel {
+  width: 100%;
+  max-width: 280px;
+  padding: 26px 20px 22px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  text-align: center;
+}
+
+.lobby-loading-spinner {
+  width: 42px;
+  height: 42px;
+  border-radius: 999px;
+  border: 3px solid rgba(244, 222, 155, 0.2);
+  border-top-color: #f4de9b;
+  border-right-color: rgba(244, 222, 155, 0.64);
+  animation: lobby-loading-spin 0.82s linear infinite;
+  box-shadow: 0 0 18px rgba(244, 222, 155, 0.12);
+}
+
+.lobby-loading-panel strong {
+  color: #f7f4e9;
+  font-size: 22px;
+  font-weight: 900;
+  letter-spacing: 0.04em;
+}
+
+.lobby-loading-panel span {
+  color: rgba(247, 244, 233, 0.68);
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.lobby-loading-fade-enter-active,
+.lobby-loading-fade-leave-active {
+  transition: opacity 220ms ease;
+}
+
+.lobby-loading-fade-enter-from,
+.lobby-loading-fade-leave-to {
+  opacity: 0;
+}
+
+@keyframes lobby-loading-spin {
+  from {
+    transform: rotate(0deg);
+  }
+  to {
+    transform: rotate(360deg);
+  }
 }
 
 .topbar-label {

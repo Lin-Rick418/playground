@@ -19,19 +19,19 @@ export const WINNER_LABELS: Record<RoundWinner, string> = {
 
 export const BET_OPTIONS = [
   { key: "PLAYER", label: BET_TYPE_LABELS.PLAYER, payout: "1:1", accent: "player", gridClass: "grid-player" },
-  { key: "TIE", label: BET_TYPE_LABELS.TIE, payout: "8:1", accent: "tie", gridClass: "grid-tie" },
-  { key: "BANKER", label: BET_TYPE_LABELS.BANKER, payout: "0.95:1", accent: "banker", gridClass: "grid-banker" },
+  { key: "TIE", label: BET_TYPE_LABELS.TIE, payout: "1:8", accent: "tie", gridClass: "grid-tie" },
+  { key: "BANKER", label: BET_TYPE_LABELS.BANKER, payout: "1:0.95", accent: "banker", gridClass: "grid-banker" },
   {
     key: "PLAYER_PAIR",
     label: BET_TYPE_LABELS.PLAYER_PAIR,
-    payout: "11:1",
+    payout: "1:11",
     accent: "pair-player",
     gridClass: "grid-player-pair",
   },
   {
     key: "BANKER_PAIR",
     label: BET_TYPE_LABELS.BANKER_PAIR,
-    payout: "11:1",
+    payout: "1:11",
     accent: "pair-banker",
     gridClass: "grid-banker-pair",
   },

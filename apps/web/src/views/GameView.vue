@@ -25,6 +25,7 @@ const betOptions = BET_OPTIONS;
 const selectedChip = ref<(typeof CHIP_VALUES)[number]>(DEFAULT_CHIP_VALUE);
 const isPlacingBet = ref(false);
 const isRoadSettingsOpen = ref(false);
+const isTableLoading = ref(true);
 const betGridRef = ref<HTMLElement | null>(null);
 
 const displayedPlayerCards = ref<DisplayCard[]>([]);
@@ -40,6 +41,7 @@ const settlementPopup = ref<null | { amount: number }>(null);
 const settlementPopupTimer = ref<number | null>(null);
 const pendingSettlementAmount = ref<number | null>(null);
 const lastResolvedRoundId = ref("");
+const lastAnnouncedRoundId = ref("");
 const latestParticipatedRoundId = ref("");
 const pendingBetAmounts = ref<PendingBetAmounts>({
   PLAYER: 0,
@@ -249,6 +251,19 @@ async function refreshGameData() {
   }
 }
 
+async function loadTableState() {
+  isTableLoading.value = true;
+
+  try {
+    await refreshGameData();
+  } catch (error) {
+    const message = axios.isAxiosError(error) ? (error.response?.data?.message ?? "載入桌況失敗") : "載入桌況失敗";
+    gameStore.message = message;
+  } finally {
+    isTableLoading.value = false;
+  }
+}
+
 function currentBetAmount(target: BetKey) {
   const actualAmount = gameStore.currentBets
     .filter((bet) => bet.betType === target)
@@ -362,6 +377,29 @@ function visibleHandTotal(cards: DisplayCard[]) {
   };
 
   return cards.reduce((sum, card) => sum + (values[card.rank] ?? 0), 0) % 10;
+}
+
+function speakRoundTotals(round: NonNullable<typeof presentationRound.value>) {
+  if (typeof window === "undefined" || !("speechSynthesis" in window)) {
+    return;
+  }
+
+  const synth = window.speechSynthesis;
+  synth.cancel();
+
+  const winnerText =
+    round.winner === "PLAYER" ? "閒贏" : round.winner === "BANKER" ? "莊贏" : "和局";
+  const lines = [`閒${round.playerTotal}點`, `莊${round.bankerTotal}點`, winnerText];
+
+  lines.forEach((text) => {
+    const utterance = new SpeechSynthesisUtterance(text);
+    utterance.lang = "zh-TW";
+    utterance.rate = 0.92;
+    utterance.pitch = 1;
+    utterance.volume = 1;
+
+    synth.speak(utterance);
+  });
 }
 
 function isOverlayCardFaceUp(side: "player" | "banker", index: number) {
@@ -671,6 +709,7 @@ async function applyTableSnapshotMessage(message: TableSnapshotMessage) {
   gameStore.applyTableSnapshot(message.data);
   serverTimeOffsetMs.value = new Date(message.data.serverTime).getTime() - Date.now();
   syncPresentationWindow(message.data.serverTime);
+  isTableLoading.value = false;
 
   const settledRound = message.data.previousRound;
   if (
@@ -734,6 +773,7 @@ onMounted(async () => {
     clockNow.value = Date.now();
   }, 250);
   betGridRef.value?.addEventListener("touchend", preventBetGridDoubleTapZoom, { passive: false });
+  await loadTableState();
 });
 
 onUnmounted(() => {
@@ -741,6 +781,9 @@ onUnmounted(() => {
   stopSettlementPopupTimer();
   stopMessageTimer();
   pendingSettlementAmount.value = null;
+  if (typeof window !== "undefined" && "speechSynthesis" in window) {
+    window.speechSynthesis.cancel();
+  }
   if (clockTimer) {
     window.clearInterval(clockTimer);
   }
@@ -749,7 +792,9 @@ onUnmounted(() => {
 
 watch(tableId, async () => {
   gameStore.currentBets = [];
+  isTableLoading.value = true;
   liveChannel.reconnect();
+  await loadTableState();
 });
 
 watch(
@@ -768,10 +813,37 @@ watch(
     }, 2200);
   },
 );
+
+watch(
+  [() => showDealOverlay.value, () => dealingPhase.value, () => presentationRound.value?.id ?? ""],
+  ([overlayVisible, phase, roundId]) => {
+    if (!overlayVisible || phase !== "revealed" || !presentationRound.value || !roundId) {
+      return;
+    }
+
+    if (lastAnnouncedRoundId.value === roundId) {
+      return;
+    }
+
+    lastAnnouncedRoundId.value = roundId;
+    speakRoundTotals(presentationRound.value);
+  },
+);
 </script>
 
 <template>
   <main class="page-shell game-page">
+    <transition name="table-loading-fade">
+      <div v-if="isTableLoading" class="table-loading-overlay">
+        <div class="table-loading-panel panel">
+          <div class="table-loading-spinner" aria-hidden="true" />
+          <p class="topbar-label">Loading Table</p>
+          <strong>進入牌桌中</strong>
+          <span>正在同步最新桌況與路圖</span>
+        </div>
+      </div>
+    </transition>
+
     <button class="corner-button back-button" @click="backToLobby" aria-label="返回大廳">
       ←
     </button>
@@ -785,14 +857,6 @@ watch(
     <div class="floating-balance" aria-label="玩家餘額">
       <span class="coin-symbol">$</span>
       <strong>{{ authStore.user?.balance?.toLocaleString() ?? "--" }}</strong>
-    </div>
-    <div
-      class="countdown-chip floating-countdown"
-      :class="countdownTone"
-      :style="countdownStyle"
-      :aria-label="countdownDisplay ? `封盤倒數 ${countdownDisplay} 秒` : '封盤中'"
-    >
-      <span v-if="countdownDisplay">{{ countdownDisplay }}</span>
     </div>
     <transition name="last-hand-fade">
       <div v-if="isLastHandRound" class="last-hand-banner">
@@ -879,6 +943,16 @@ watch(
     </p>
 
     <section class="panel table-panel">
+      <div class="table-panel-head-row">
+        <div
+          class="countdown-chip table-panel-countdown"
+          :class="countdownTone"
+          :style="countdownStyle"
+          :aria-label="countdownDisplay ? `封盤倒數 ${countdownDisplay} 秒` : '封盤中'"
+        >
+          <span v-if="countdownDisplay">{{ countdownDisplay }}</span>
+        </div>
+      </div>
 
       <div ref="betGridRef" class="bet-grid">
         <article
@@ -947,9 +1021,10 @@ watch(
 
 <style scoped>
 .game-page {
-  --top-ui-clearance: 108px;
-  display: flex;
-  flex-direction: column;
+  --top-ui-clearance: 98px;
+  display: grid;
+  grid-template-rows: auto auto minmax(0, 1fr);
+  align-content: start;
   gap: 16px;
   overflow-x: clip;
   height: 100vh;
@@ -1019,6 +1094,78 @@ watch(
   overflow-x: hidden;
 }
 
+.table-loading-overlay {
+  position: fixed;
+  top: 0;
+  bottom: 0;
+  left: 50%;
+  width: 100%;
+  max-width: 430px;
+  transform: translateX(-50%);
+  z-index: 90;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  background:
+    linear-gradient(180deg, rgba(2, 8, 6, 0.88), rgba(2, 8, 6, 0.74) 48%, rgba(2, 8, 6, 0.88));
+  backdrop-filter: blur(8px);
+}
+
+.table-loading-panel {
+  width: 100%;
+  max-width: 280px;
+  padding: 26px 20px 22px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  text-align: center;
+}
+
+.table-loading-spinner {
+  width: 42px;
+  height: 42px;
+  border-radius: 999px;
+  border: 3px solid rgba(244, 222, 155, 0.2);
+  border-top-color: #f4de9b;
+  border-right-color: rgba(244, 222, 155, 0.64);
+  animation: table-loading-spin 0.82s linear infinite;
+  box-shadow: 0 0 18px rgba(244, 222, 155, 0.12);
+}
+
+.table-loading-panel strong {
+  color: #f7f4e9;
+  font-size: 22px;
+  font-weight: 900;
+  letter-spacing: 0.04em;
+}
+
+.table-loading-panel span {
+  color: rgba(247, 244, 233, 0.68);
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.table-loading-fade-enter-active,
+.table-loading-fade-leave-active {
+  transition: opacity 220ms ease;
+}
+
+.table-loading-fade-enter-from,
+.table-loading-fade-leave-to {
+  opacity: 0;
+}
+
+@keyframes table-loading-spin {
+  from {
+    transform: rotate(0deg);
+  }
+  to {
+    transform: rotate(360deg);
+  }
+}
+
 .deal-overlay-panel {
   width: 100%;
   max-width: 100%;
@@ -1029,14 +1176,16 @@ watch(
 .floating-balance {
   position: fixed;
   top: 22px;
-  right: 86px;
+  right: 22px;
   z-index: 20;
-  height: 52px;
-  padding: 0 16px 0 12px;
+  min-width: 126px;
+  height: 44px;
+  padding: 0 18px 0 10px;
   border-radius: 999px;
   display: inline-flex;
   align-items: center;
   gap: 10px;
+  justify-content: space-around;
   background: rgba(8, 18, 14, 0.88);
   border: 1px solid rgba(244, 222, 155, 0.2);
   box-shadow: 0 12px 24px rgba(0, 0, 0, 0.2);
@@ -1058,19 +1207,9 @@ watch(
 
 .floating-balance strong {
   color: #f4de9b;
-  font-size: 18px;
+  font-size: 17px;
   font-weight: 900;
   line-height: 1;
-}
-
-.floating-countdown {
-  position: fixed;
-  top: 22px;
-  left: auto;
-  right: 22px;
-  bottom: auto;
-  z-index: 20;
-  pointer-events: none;
 }
 
 .last-hand-banner {
@@ -1159,7 +1298,7 @@ watch(
   text-align: center;
   line-height: 1.08;
   font-family: "Cormorant Garamond", "Times New Roman", serif;
-  font-size: 16px;
+  font-size: 18px;
   font-weight: 800;
   letter-spacing: 0.03em;
   color: #f7e9b7;
@@ -1174,19 +1313,21 @@ watch(
 .table-panel,
 .road-panel {
   min-height: 0;
-  display: flex;
-  flex-direction: column;
 }
 
 .table-panel {
-  flex: 7 1 0;
-  overflow: auto;
-  justify-content: space-around ;
+  overflow: visible;
 }
 
 .road-panel {
-  flex: 3 1 0;
   overflow: hidden;
+}
+
+.table-panel-head-row {
+  display: flex;
+  justify-content: flex-end;
+  align-items: center;
+  margin-bottom: 10px;
 }
 
 .deal-table {
@@ -1253,24 +1394,28 @@ watch(
 }
 
 .countdown-chip {
-  width: 52px;
-  height: 52px;
+  width: 28px;
+  height: 28px;
   border-radius: 999px;
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  position: fixed;
   background:
     radial-gradient(circle at 30% 30%, rgba(255, 255, 255, 0.5), transparent 34%),
     linear-gradient(180deg, #7cf3a4, #3ec870);
   color: #f7f4e9;
-  font-size: 18px;
+  font-size: 14px;
   font-weight: 900;
   box-shadow:
     inset 0 0 0 3px rgba(255, 255, 255, 0.22),
     0 10px 20px rgba(0, 0, 0, 0.18),
     0 0 24px rgba(83, 219, 132, 0.28);
   animation: countdown-pulse var(--countdown-pulse-duration, 1.4s) ease-in-out infinite;
+}
+
+.table-panel-countdown {
+  position: relative;
+  flex: 0 0 auto;
 }
 
 .countdown-chip.warning {
@@ -1347,15 +1492,19 @@ watch(
 .bet-grid {
   display: grid;
   grid-template-columns: repeat(6, minmax(0, 1fr));
-  gap: 12px;
-  margin: 10px 0 10px;
+  gap: clamp(12px, 3vw, 16px);
+  margin: 10px 0 12px;
 }
 
 .bet-card {
   border-radius: 18px;
-  padding: 10px;
+  min-height: clamp(104px, 29vw, 128px);
+  padding: clamp(12px, 3.2vw, 16px);
   border: 1px solid rgba(255, 255, 255, 0.12);
   cursor: pointer;
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
   touch-action: manipulation;
   -webkit-tap-highlight-color: transparent;
   user-select: none;
@@ -1413,20 +1562,32 @@ watch(
 
 .bet-card-top h3 {
   margin: 0 0 6px;
+  font-family: "Noto Serif TC", "PingFang TC", "Microsoft JhengHei", serif;
+  font-size: clamp(18px, 5.2vw, 23px);
+  font-weight: 900;
+  line-height: 1.08;
+  letter-spacing: 0.03em;
 }
 
 .bet-amount {
-  font-size: 20px;
+  font-family: "Manrope", "Noto Sans TC", sans-serif;
+  font-size: clamp(21px, 6vw, 26px);
   font-weight: 800;
+  line-height: 1;
 }
 
 .bet-payout {
-  margin: 10px 0 0;
-  color: #f4de9b;
-  font-size: 16px;
+  margin: 12px 0 0;
+  font-size: clamp(18px, 5vw, 22px);
   font-weight: 800;
   letter-spacing: 0.04em;
   text-align: center;
+  text-shadow:
+    0 0 18px rgba(244, 222, 155, 0.18),
+    0 10px 24px rgba(0, 0, 0, 0.22);
+  background: linear-gradient(180deg, #fff7da 0%, #f4de9b 38%, #d7a74c 100%);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
 }
 
 .chip-rack {
