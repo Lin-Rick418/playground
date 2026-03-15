@@ -6,6 +6,7 @@ import RoadmapPanel from "../components/RoadmapPanel.vue";
 import { BET_OPTIONS, CHIP_VALUES, DEAL_ANIMATION_TIMINGS, DEFAULT_CHIP_VALUE, WINNER_LABELS } from "../const/game";
 import { useLiveChannel } from "../composables/useLiveChannel";
 import { useRoadVisibilitySettings } from "../composables/useRoadVisibilitySettings";
+import { loadVoiceAnnouncementEnabled, saveVoiceAnnouncementEnabled } from "../lib/settings";
 import type { TableSnapshotMessage, TableUserSnapshotMessage } from "../lib/live";
 import { useAuthStore } from "../stores/auth";
 import { useGameStore } from "../stores/game";
@@ -26,6 +27,7 @@ const selectedChip = ref<(typeof CHIP_VALUES)[number]>(DEFAULT_CHIP_VALUE);
 const isPlacingBet = ref(false);
 const isRoadSettingsOpen = ref(false);
 const isTableLoading = ref(true);
+const isVoiceAnnouncementEnabled = ref(loadVoiceAnnouncementEnabled());
 const betGridRef = ref<HTMLElement | null>(null);
 
 const displayedPlayerCards = ref<DisplayCard[]>([]);
@@ -380,7 +382,7 @@ function visibleHandTotal(cards: DisplayCard[]) {
 }
 
 function speakRoundTotals(round: NonNullable<typeof presentationRound.value>) {
-  if (typeof window === "undefined" || !("speechSynthesis" in window)) {
+  if (!isVoiceAnnouncementEnabled.value || typeof window === "undefined" || !("speechSynthesis" in window)) {
     return;
   }
 
@@ -814,6 +816,10 @@ watch(
   },
 );
 
+watch(isVoiceAnnouncementEnabled, (value) => {
+  saveVoiceAnnouncementEnabled(value);
+});
+
 watch(
   [() => showDealOverlay.value, () => dealingPhase.value, () => presentationRound.value?.id ?? ""],
   ([overlayVisible, phase, roundId]) => {
@@ -847,7 +853,7 @@ watch(
     <button class="corner-button back-button" @click="backToLobby" aria-label="返回大廳">
       ←
     </button>
-    <button class="corner-button settings-button" @click="openRoadSettings" aria-label="路圖設定">
+    <button class="corner-button settings-button" @click="openRoadSettings" aria-label="開啟設定">
       <svg viewBox="0 0 24 24" aria-hidden="true">
         <path
           d="M21.67 18.17 13.9 10.4a6 6 0 0 1-7.67-7.67l3.2 3.2 2.34-.67.67-2.34-3.2-3.2A6 6 0 0 1 16.9 7.4l7.77 7.77a1.8 1.8 0 0 1 0 2.54l-1.46 1.46a1.8 1.8 0 0 1-2.54 0Zm-4.7-5.46 3.72 3.72.9-.9-3.72-3.72-.9.9Zm-11.3 7.96a2.7 2.7 0 1 1 3.82-3.82 2.7 2.7 0 0 1-3.82 3.82Z"
@@ -992,40 +998,58 @@ watch(
 
     <div v-if="isRoadSettingsOpen" class="modal-backdrop">
       <section class="settings-modal panel" role="dialog" aria-modal="true" aria-labelledby="road-settings-title">
-        <button class="settings-close-button" type="button" @click="closeRoadSettings" aria-label="關閉路圖設定">
+        <button class="settings-close-button" type="button" @click="closeRoadSettings" aria-label="關閉設定">
           ✕
         </button>
 
         <div class="settings-modal-head">
-          <p class="topbar-label">Roadmap Settings</p>
-          <h2 id="road-settings-title">路圖設定</h2>
+          <p class="topbar-label">Settings</p>
+          <h2 id="road-settings-title">設定</h2>
         </div>
 
-        <div class="settings-list">
-          <button
-            v-for="option in roadVisibilityOptions"
-            :key="option.key"
-            type="button"
-            class="settings-item"
-            :class="{ active: roadVisibility[option.key] }"
-            @click="toggleRoadVisibility(option.key)"
-          >
-            <span>{{ option.label }}</span>
-            <strong>{{ roadVisibility[option.key] ? "顯示中" : "已隱藏" }}</strong>
-          </button>
+        <div class="settings-section">
+          <p class="settings-section-label">路圖顯示</p>
+          <div class="settings-list">
+            <button
+              v-for="option in roadVisibilityOptions"
+              :key="option.key"
+              type="button"
+              class="settings-item"
+              :class="{ active: roadVisibility[option.key] }"
+              @click="toggleRoadVisibility(option.key)"
+            >
+              <span>{{ option.label }}</span>
+              <strong>{{ roadVisibility[option.key] ? "顯示中" : "已隱藏" }}</strong>
+            </button>
+          </div>
+        </div>
+
+        <div class="settings-section">
+          <p class="settings-section-label">語音播報</p>
+          <div class="settings-list">
+            <button
+              type="button"
+              class="settings-item"
+              :class="{ active: isVoiceAnnouncementEnabled }"
+              @click="isVoiceAnnouncementEnabled = !isVoiceAnnouncementEnabled"
+            >
+              <span>點數播報</span>
+              <strong>{{ isVoiceAnnouncementEnabled ? "已開啟" : "已關閉" }}</strong>
+            </button>
+          </div>
         </div>
       </section>
     </div>
   </main>
 </template>
 
-<style scoped>
+<style scoped lang="scss">
 .game-page {
-  --top-ui-clearance: 98px;
+  --top-ui-clearance: 96px;
   display: grid;
   grid-template-rows: auto auto minmax(0, 1fr);
   align-content: start;
-  gap: 16px;
+  gap: $space-4;
   overflow-x: clip;
   height: 100vh;
   max-height: 100vh;
@@ -1035,11 +1059,10 @@ watch(
 .corner-button {
   width: 48px;
   height: 48px;
+  @include floating-shell();
   border: 0;
   border-radius: 999px;
-  background: rgba(8, 18, 14, 0.88);
-  color: #f7f4e9;
-  box-shadow: 0 12px 24px rgba(0, 0, 0, 0.2);
+  color: $color-text-primary;
   touch-action: manipulation;
   -webkit-tap-highlight-color: transparent;
   user-select: none;
@@ -1047,8 +1070,8 @@ watch(
 
 .back-button {
   position: fixed;
-  top: 22px;
-  left: 22px;
+  top: $space-6;
+  left: $space-6;
   z-index: 20;
   font-size: 26px;
   line-height: 1;
@@ -1056,8 +1079,8 @@ watch(
 
 .settings-button {
   position: fixed;
-  top: 22px;
-  left: 78px;
+  top: $space-6;
+  left: 80px;
   z-index: 20;
   display: inline-flex;
   align-items: center;
@@ -1067,12 +1090,12 @@ watch(
 .settings-button svg {
   width: 24px;
   height: 24px;
-  fill: #f4de9b;
+  fill: $color-gold;
 }
 
 .table-panel,
 .road-panel {
-  padding: 10px;
+  padding: $space-3;
 }
 
 .deal-overlay {
@@ -1087,7 +1110,7 @@ watch(
   display: flex;
   align-items: center;
   justify-content: center;
-  padding: 16px;
+  padding: $space-4;
   background:
     linear-gradient(180deg, rgba(2, 8, 6, 0.78), rgba(2, 8, 6, 0.46) 45%, rgba(2, 8, 6, 0.78));
   backdrop-filter: blur(6px);
@@ -1095,31 +1118,17 @@ watch(
 }
 
 .table-loading-overlay {
-  position: fixed;
-  top: 0;
-  bottom: 0;
-  left: 50%;
-  width: 100%;
-  max-width: 430px;
-  transform: translateX(-50%);
-  z-index: 90;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  padding: 24px;
-  background:
-    linear-gradient(180deg, rgba(2, 8, 6, 0.88), rgba(2, 8, 6, 0.74) 48%, rgba(2, 8, 6, 0.88));
-  backdrop-filter: blur(8px);
+  @include loading-overlay();
 }
 
 .table-loading-panel {
   width: 100%;
   max-width: 280px;
-  padding: 26px 20px 22px;
+  padding: $space-6 $space-5;
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 8px;
+  gap: $space-2;
   text-align: center;
 }
 
@@ -1128,21 +1137,21 @@ watch(
   height: 42px;
   border-radius: 999px;
   border: 3px solid rgba(244, 222, 155, 0.2);
-  border-top-color: #f4de9b;
+  border-top-color: $color-gold;
   border-right-color: rgba(244, 222, 155, 0.64);
   animation: table-loading-spin 0.82s linear infinite;
   box-shadow: 0 0 18px rgba(244, 222, 155, 0.12);
 }
 
 .table-loading-panel strong {
-  color: #f7f4e9;
+  color: $color-text-primary;
   font-size: 22px;
   font-weight: 900;
   letter-spacing: 0.04em;
 }
 
 .table-loading-panel span {
-  color: rgba(247, 244, 233, 0.68);
+  color: $color-text-muted;
   font-size: 13px;
   line-height: 1.5;
 }
@@ -1169,26 +1178,24 @@ watch(
 .deal-overlay-panel {
   width: 100%;
   max-width: 100%;
-  padding: 22px 18px;
+  padding: $space-6 $space-5;
   overflow: hidden;
 }
 
 .floating-balance {
   position: fixed;
-  top: 22px;
-  right: 22px;
+  top: $space-6;
+  right: $space-6;
   z-index: 20;
   min-width: 126px;
   height: 44px;
-  padding: 0 18px 0 10px;
+  padding: 0 $space-5 0 $space-3;
   border-radius: 999px;
   display: inline-flex;
   align-items: center;
-  gap: 10px;
+  gap: $space-3;
   justify-content: space-around;
-  background: rgba(8, 18, 14, 0.88);
-  border: 1px solid rgba(244, 222, 155, 0.2);
-  box-shadow: 0 12px 24px rgba(0, 0, 0, 0.2);
+  @include floating-shell();
 }
 
 .coin-symbol {
@@ -1206,7 +1213,7 @@ watch(
 }
 
 .floating-balance strong {
-  color: #f4de9b;
+  color: $color-gold;
   font-size: 17px;
   font-weight: 900;
   line-height: 1;
@@ -1219,12 +1226,12 @@ watch(
   z-index: 20;
   transform: translateX(-50%);
   min-width: 180px;
-  padding: 10px 16px;
+  padding: $space-3 $space-4;
   border-radius: 18px;
   display: inline-flex;
   flex-direction: column;
   align-items: center;
-  gap: 2px;
+  gap: $space-1;
   background:
     linear-gradient(180deg, rgba(117, 18, 18, 0.96), rgba(77, 8, 8, 0.92)),
     linear-gradient(135deg, rgba(255, 215, 140, 0.22), transparent 60%);
@@ -1260,17 +1267,9 @@ watch(
   transform: translateX(-50%) translateY(-6px);
 }
 
-.topbar-label {
-  margin: 0;
-  font-size: 12px;
-  letter-spacing: 0.16em;
-  text-transform: uppercase;
-  color: rgba(247, 244, 233, 0.6);
-}
-
 .status-chip.neutral {
   background: rgba(255, 255, 255, 0.12);
-  color: #f7f4e9;
+  color: $color-text-primary;
 }
 
 .deal-head,
@@ -1280,7 +1279,7 @@ watch(
   display: flex;
   justify-content: space-between;
   align-items: center;
-  gap: 16px;
+  gap: $space-4;
 }
 
 .deal-head h2,
@@ -1290,7 +1289,7 @@ watch(
 
 .table-limit-banner {
   margin: 0;
-  padding: 0 16px;
+  padding: 0 $space-4;
   min-height: 44px;
   display: flex;
   align-items: center;
@@ -1301,13 +1300,7 @@ watch(
   font-size: 18px;
   font-weight: 800;
   letter-spacing: 0.03em;
-  color: #f7e9b7;
-  text-shadow:
-    0 0 18px rgba(244, 222, 155, 0.18),
-    0 10px 24px rgba(0, 0, 0, 0.22);
-  background: linear-gradient(180deg, #fff7da 0%, #f4de9b 38%, #d7a74c 100%);
-  -webkit-background-clip: text;
-  -webkit-text-fill-color: transparent;
+  @include gold-gradient-text();
 }
 
 .table-panel,
@@ -1327,27 +1320,27 @@ watch(
   display: flex;
   justify-content: flex-end;
   align-items: center;
-  margin-bottom: 10px;
+  margin-bottom: $space-3;
 }
 
 .deal-table {
   display: grid;
   grid-template-columns: 1fr;
-  gap: 14px;
-  margin-top: 18px;
+  gap: $space-4;
+  margin-top: $space-5;
   width: 100%;
 }
 
 .hand-lane {
-  padding: 18px;
+  padding: $space-5;
   border-radius: 16px;
   background: rgba(255, 255, 255, 0.04);
 }
 
 .card-line {
   display: flex;
-  gap: clamp(8px, 2.5vw, 10px);
-  margin-top: 14px;
+  gap: clamp(8px, 2.5vw, 12px);
+  margin-top: $space-4;
   min-height: clamp(82px, 28vw, 112px);
   justify-content: center;
   width: 100%;
@@ -1390,7 +1383,7 @@ watch(
 
 .playing-card small {
   font-size: clamp(16px, 4.8vw, 20px);
-  margin-top: 6px;
+  margin-top: $space-2;
 }
 
 .countdown-chip {
@@ -1493,7 +1486,7 @@ watch(
   display: grid;
   grid-template-columns: repeat(6, minmax(0, 1fr));
   gap: clamp(12px, 3vw, 16px);
-  margin: 10px 0 12px;
+  margin: $space-3 0;
 }
 
 .bet-card {
@@ -1557,11 +1550,11 @@ watch(
   display: flex;
   justify-content: space-between;
   align-items: flex-start;
-  gap: 12px;
+  gap: $space-3;
 }
 
 .bet-card-top h3 {
-  margin: 0 0 6px;
+  margin: 0 0 $space-2;
   font-family: "Noto Serif TC", "PingFang TC", "Microsoft JhengHei", serif;
   font-size: clamp(18px, 5.2vw, 23px);
   font-weight: 900;
@@ -1582,18 +1575,13 @@ watch(
   font-weight: 800;
   letter-spacing: 0.04em;
   text-align: center;
-  text-shadow:
-    0 0 18px rgba(244, 222, 155, 0.18),
-    0 10px 24px rgba(0, 0, 0, 0.22);
-  background: linear-gradient(180deg, #fff7da 0%, #f4de9b 38%, #d7a74c 100%);
-  -webkit-background-clip: text;
-  -webkit-text-fill-color: transparent;
+  @include gold-gradient-text();
 }
 
 .chip-rack {
   display: flex;
   align-items: center;
-  gap: 12px;
+  gap: $space-3;
   flex-wrap: wrap;
 }
 
@@ -1634,12 +1622,12 @@ watch(
   transform: translateX(-50%);
   z-index: 90;
   min-width: 240px;
-  padding: 18px 28px;
+  padding: $space-5 $space-7;
   border-radius: 18px;
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 6px;
+  gap: $space-2;
   background: rgba(8, 18, 14, 0.94);
   border: 1px solid rgba(255, 255, 255, 0.16);
   box-shadow: 0 18px 40px rgba(0, 0, 0, 0.28);
@@ -1680,7 +1668,7 @@ watch(
   transform: translateX(-50%);
   z-index: 85;
   max-width: min(80vw, 320px);
-  padding: 10px 16px;
+  padding: $space-3 $space-4;
   border-radius: 14px;
   background: rgba(8, 18, 14, 0.94);
   border: 1px solid rgba(244, 222, 155, 0.22);
@@ -1710,7 +1698,7 @@ watch(
   display: flex;
   align-items: center;
   justify-content: center;
-  padding: 20px;
+  padding: $space-5;
   background: rgba(3, 9, 7, 0.66);
   backdrop-filter: blur(6px);
 }
@@ -1718,7 +1706,7 @@ watch(
 .settings-modal {
   position: relative;
   width: min(100%, 360px);
-  padding: 24px 18px 18px;
+  padding: $space-6 $space-5 $space-5;
 }
 
 .settings-modal-head h2 {
@@ -1727,8 +1715,8 @@ watch(
 
 .settings-close-button {
   position: absolute;
-  top: 14px;
-  right: 14px;
+  top: $space-4;
+  right: $space-4;
   width: 34px;
   height: 34px;
   border: 0;
@@ -1743,8 +1731,23 @@ watch(
 .settings-list {
   display: flex;
   flex-direction: column;
-  gap: 10px;
-  margin-top: 18px;
+  gap: $space-3;
+}
+
+.settings-section {
+  margin-top: $space-5;
+}
+
+.settings-section:first-of-type {
+  margin-top: $space-5;
+}
+
+.settings-section-label {
+  margin: 0 0 $space-3;
+  color: rgba(247, 244, 233, 0.62);
+  font-size: 12px;
+  font-weight: 800;
+  letter-spacing: 0.08em;
 }
 
 .settings-item {
@@ -1752,11 +1755,11 @@ watch(
   border: 1px solid rgba(255, 255, 255, 0.14);
   border-radius: 16px;
   background: rgba(255, 255, 255, 0.05);
-  padding: 14px 16px;
+  padding: $space-4;
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 12px;
+  gap: $space-3;
   color: #f7f4e9;
   text-align: left;
   touch-action: manipulation;

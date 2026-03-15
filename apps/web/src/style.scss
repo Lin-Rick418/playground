@@ -2,10 +2,8 @@
 
 :root {
   font-family: "Segoe UI", "Noto Sans TC", sans-serif;
-  color: #f7f4e9;
-  background:
-    radial-gradient(circle at top, rgba(244, 194, 66, 0.18), transparent 35%),
-    linear-gradient(180deg, #0c3027 0%, #071712 100%);
+  color: $color-text-primary;
+  background: $gradient-page-bg;
   font-synthesis: none;
   text-rendering: optimizeLegibility;
   -webkit-font-smoothing: antialiased;
@@ -53,38 +51,38 @@ a {
 .page-shell {
   min-height: 100vh;
   width: 100%;
-  padding: 16px;
+  padding: $space-4;
 }
 
 .panel {
-  background: rgba(8, 25, 20, 0.82);
-  border: 1px solid rgba(255, 219, 127, 0.18);
+  background: $color-panel-surface;
+  border: 1px solid $color-gold-border;
   border-radius: 20px;
-  box-shadow: 0 16px 40px rgba(0, 0, 0, 0.25);
+  box-shadow: $shadow-panel;
   backdrop-filter: blur(10px);
 }
 
 .button-primary {
-  background: linear-gradient(135deg, #dfb95d 0%, #f4de9b 100%);
+  background: $gradient-button-gold;
   color: #102019;
   border: none;
   border-radius: 12px;
-  padding: 12px 18px;
+  padding: $space-3 $space-5;
   font-weight: 700;
 }
 
 .button-secondary {
   background: transparent;
-  color: #f7f4e9;
+  color: $color-text-primary;
   border: 1px solid rgba(247, 244, 233, 0.28);
   border-radius: 12px;
-  padding: 12px 18px;
+  padding: $space-3 $space-5;
 }
 
 .field {
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: $space-2;
 }
 
 .field input,
@@ -93,15 +91,15 @@ a {
   border: 1px solid rgba(247, 244, 233, 0.18);
   border-radius: 12px;
   background: rgba(255, 255, 255, 0.06);
-  color: #f7f4e9;
-  padding: 12px 14px;
+  color: $color-text-primary;
+  padding: $space-3 $space-4;
 }
 
 .status-chip {
   display: inline-flex;
   align-items: center;
   border-radius: 999px;
-  padding: 6px 10px;
+  padding: $space-2 $space-3;
   font-size: 12px;
   font-weight: 700;
 }
@@ -119,4 +117,12 @@ a {
 .status-chip.tie {
   background: rgba(90, 168, 255, 0.18);
   color: #a7d1ff;
+}
+
+.topbar-label {
+  margin: 0;
+  font-size: 12px;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: $color-text-subtle;
 }

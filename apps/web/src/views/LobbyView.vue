@@ -196,39 +196,25 @@ function historyBetSummary(item: Pick<RoundHistoryItem, "bets">) {
   </main>
 </template>
 
-<style scoped>
+<style scoped lang="scss">
 .lobby-page {
   display: flex;
   flex-direction: column;
-  gap: 24px;
+  gap: $space-6;
 }
 
 .lobby-loading-overlay {
-  position: fixed;
-  top: 0;
-  bottom: 0;
-  left: 50%;
-  width: 100%;
-  max-width: 430px;
-  transform: translateX(-50%);
-  z-index: 90;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  padding: 24px;
-  background:
-    linear-gradient(180deg, rgba(2, 8, 6, 0.88), rgba(2, 8, 6, 0.74) 48%, rgba(2, 8, 6, 0.88));
-  backdrop-filter: blur(8px);
+  @include loading-overlay();
 }
 
 .lobby-loading-panel {
   width: 100%;
   max-width: 280px;
-  padding: 26px 20px 22px;
+  padding: $space-6 $space-5;
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 8px;
+  gap: $space-2;
   text-align: center;
 }
 
@@ -237,21 +223,21 @@ function historyBetSummary(item: Pick<RoundHistoryItem, "bets">) {
   height: 42px;
   border-radius: 999px;
   border: 3px solid rgba(244, 222, 155, 0.2);
-  border-top-color: #f4de9b;
+  border-top-color: $color-gold;
   border-right-color: rgba(244, 222, 155, 0.64);
   animation: lobby-loading-spin 0.82s linear infinite;
   box-shadow: 0 0 18px rgba(244, 222, 155, 0.12);
 }
 
 .lobby-loading-panel strong {
-  color: #f7f4e9;
+  color: $color-text-primary;
   font-size: 22px;
   font-weight: 900;
   letter-spacing: 0.04em;
 }
 
 .lobby-loading-panel span {
-  color: rgba(247, 244, 233, 0.68);
+  color: $color-text-muted;
   font-size: 13px;
   line-height: 1.5;
 }
@@ -275,92 +261,82 @@ function historyBetSummary(item: Pick<RoundHistoryItem, "bets">) {
   }
 }
 
-.topbar-label {
-  margin: 0;
-  font-size: 12px;
-  letter-spacing: 0.16em;
-  text-transform: uppercase;
-  color: rgba(247, 244, 233, 0.6);
-}
-
 .table-cards {
   display: grid;
   grid-template-columns: 1fr;
-  gap: 16px;
-  margin-top: 28px;
+  gap: $space-4;
+  margin-top: $space-7;
 }
 
 .back-button {
   position: fixed;
-  top: 22px;
-  left: 22px;
+  top: $space-6;
+  left: $space-6;
   z-index: 20;
   width: 48px;
   height: 48px;
+  @include floating-shell();
   border: 0;
   border-radius: 999px;
-  background: rgba(8, 18, 14, 0.88);
-  color: #f7f4e9;
+  color: $color-text-primary;
   font-size: 26px;
   line-height: 1;
-  box-shadow: 0 12px 24px rgba(0, 0, 0, 0.2);
 }
 
 .history-button {
   position: fixed;
-  top: 78px;
-  left: 22px;
+  top: 80px;
+  left: $space-6;
   z-index: 20;
   width: 48px;
   height: 48px;
+  @include floating-shell();
   border: 0;
   border-radius: 999px;
-  background: rgba(8, 18, 14, 0.88);
-  color: #f7f4e9;
+  color: $color-text-primary;
   font-size: 22px;
   line-height: 1;
-  box-shadow: 0 12px 24px rgba(0, 0, 0, 0.2);
 }
 
 .table-card {
-  padding: 18px;
+  padding: $space-5;
   cursor: pointer;
 }
 
 .card-head {
   display: flex;
   justify-content: space-between;
-  gap: 16px;
+  gap: $space-4;
 }
 
 .card-head h2 {
-  margin: 6px 0 0;
+  margin: $space-2 0 0;
 }
 
 .table-meta {
-  margin: 8px 0 0;
-  color: rgba(247, 244, 233, 0.68);
+  margin: $space-2 0 0;
+  color: $color-text-muted;
   font-size: 13px;
 }
 
 .lobby-road {
-  margin-top: 20px;
+  margin-top: $space-5;
 }
 
 .table-status-dot {
   width: 14px;
   height: 14px;
-  margin-top: 6px;
+  margin-top: $space-2;
   border-radius: 999px;
   box-shadow: 0 0 0 4px rgba(255, 255, 255, 0.06);
 }
 
 .table-status-dot.open {
-  background: #53db84;
+  background: $color-open;
 }
 
 .table-status-dot.locked {
-  background: #f26d6d;
+  background: $color-lock;
 }
 
 .modal-backdrop {
@@ -370,14 +346,14 @@ function historyBetSummary(item: Pick<RoundHistoryItem, "bets">) {
   display: flex;
   align-items: center;
   justify-content: center;
-  padding: 16px;
+  padding: $space-4;
   z-index: 50;
 }
 
 .history-modal {
   width: 100%;
   max-height: 80vh;
-  padding: 18px;
+  padding: $space-5;
 }
 
 .history-close-button {
@@ -394,8 +370,8 @@ function historyBetSummary(item: Pick<RoundHistoryItem, "bets">) {
 .history-list {
   display: flex;
   flex-direction: column;
-  gap: 12px;
-  margin-top: 20px;
+  gap: $space-3;
+  margin-top: $space-5;
   max-height: calc(80vh - 140px);
   overflow: auto;
 }
@@ -403,19 +379,19 @@ function historyBetSummary(item: Pick<RoundHistoryItem, "bets">) {
 .history-item {
   border-radius: 14px;
   background: rgba(255, 255, 255, 0.04);
-  padding: 14px;
+  padding: $space-4;
 }
 
 .history-main,
 .history-sub {
   display: flex;
   justify-content: space-between;
-  gap: 16px;
+  gap: $space-4;
   flex-wrap: wrap;
 }
 
 .history-sub {
-  margin-top: 8px;
+  margin-top: $space-2;
   color: rgba(247, 244, 233, 0.65);
   font-size: 14px;
 }

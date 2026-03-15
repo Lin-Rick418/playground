@@ -3,6 +3,7 @@ import type { RoadVisibilitySettings } from "../types/domain";
 
 const TOKEN_STORAGE_KEY = "baccarat_token";
 const ROAD_VISIBILITY_STORAGE_KEY = "baccarat-road-visibility";
+const VOICE_ANNOUNCEMENT_STORAGE_KEY = "baccarat-voice-announcement";
 
 export function getStoredToken() {
   return localStorage.getItem(TOKEN_STORAGE_KEY) ?? "";
@@ -48,4 +49,22 @@ export function loadRoadVisibilitySettings() {
 
 export function saveRoadVisibilitySettings(value: RoadVisibilitySettings) {
   localStorage.setItem(ROAD_VISIBILITY_STORAGE_KEY, JSON.stringify(value));
+}
+
+export function loadVoiceAnnouncementEnabled() {
+  try {
+    const rawValue = localStorage.getItem(VOICE_ANNOUNCEMENT_STORAGE_KEY);
+
+    if (rawValue === null) {
+      return true;
+    }
+
+    return rawValue === "true";
+  } catch {
+    return true;
+  }
+}
+
+export function saveVoiceAnnouncementEnabled(value: boolean) {
+  localStorage.setItem(VOICE_ANNOUNCEMENT_STORAGE_KEY, String(value));
 }

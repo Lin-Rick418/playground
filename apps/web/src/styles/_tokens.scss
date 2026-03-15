@@ -1,0 +1,50 @@
+$color-text-primary: #f7f4e9;
+$color-text-muted: rgba(247, 244, 233, 0.68);
+$color-text-subtle: rgba(247, 244, 233, 0.6);
+$color-text-faint: rgba(247, 244, 233, 0.45);
+
+$color-gold: #f4de9b;
+$color-gold-strong: #dfb95d;
+$color-gold-deep: #d7a74c;
+$color-gold-border: rgba(255, 219, 127, 0.18);
+$color-gold-border-strong: rgba(244, 222, 155, 0.38);
+
+$color-panel-surface: rgba(8, 25, 20, 0.82);
+$color-floating-surface: rgba(8, 18, 14, 0.88);
+$color-floating-surface-strong: rgba(8, 18, 14, 0.94);
+$color-overlay-start: rgba(2, 8, 6, 0.88);
+$color-overlay-mid: rgba(2, 8, 6, 0.74);
+$color-overlay-end: rgba(2, 8, 6, 0.88);
+
+$color-open: #53db84;
+$color-lock: #f26d6d;
+$color-player: #5a9bff;
+$color-banker: #ff5f57;
+$color-tie: #3bb35f;
+
+$space-0: 0;
+$space-1: 4px;
+$space-2: 8px;
+$space-3: 12px;
+$space-4: 16px;
+$space-5: 20px;
+$space-6: 24px;
+$space-7: 28px;
+$space-8: 32px;
+$space-9: 36px;
+$space-10: 40px;
+$space-11: 44px;
+$space-12: 48px;
+$space-13: 52px;
+$space-14: 56px;
+$space-15: 60px;
+
+$gradient-page-bg:
+  radial-gradient(circle at top, rgba(244, 194, 66, 0.18), transparent 35%),
+  linear-gradient(180deg, #0c3027 0%, #071712 100%);
+$gradient-gold-text: linear-gradient(180deg, #fff7da 0%, $color-gold 38%, $color-gold-deep 100%);
+$gradient-button-gold: linear-gradient(135deg, $color-gold-strong 0%, $color-gold 100%);
+
+$shadow-panel: 0 16px 40px rgba(0, 0, 0, 0.25);
+$shadow-floating: 0 12px 24px rgba(0, 0, 0, 0.2);
+$shadow-overlay: 0 18px 40px rgba(0, 0, 0, 0.28);

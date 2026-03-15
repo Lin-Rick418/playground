@@ -9,6 +9,11 @@ export default defineConfig(({ mode }) => {
   return {
     plugins: [vue()],
     css: {
+      preprocessorOptions: {
+        scss: {
+          additionalData: '@use "/src/styles/tokens" as *; @use "/src/styles/mixins" as *;',
+        },
+      },
       postcss: {
         plugins: [
           mobile({

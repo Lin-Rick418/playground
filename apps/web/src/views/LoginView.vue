@@ -58,7 +58,7 @@ async function onSubmit() {
   </main>
 </template>
 
-<style scoped>
+<style scoped lang="scss">
 .login-layout {
   position: relative;
   display: flex;
@@ -70,7 +70,7 @@ async function onSubmit() {
   overflow: hidden;
   overflow-x: clip;
   overscroll-behavior-x: none;
-  padding-top: clamp(44px, 10vh, 96px);
+  padding-top: clamp(48px, 10vh, 96px);
 }
 
 .login-layout::before,
@@ -93,7 +93,7 @@ async function onSubmit() {
 .login-layout::after {
   width: 260px;
   height: 260px;
-  left: -86px;
+  left: -88px;
   bottom: 10%;
   background: radial-gradient(circle, rgba(97, 182, 144, 0.18), transparent 70%);
 }
@@ -108,7 +108,7 @@ async function onSubmit() {
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  gap: 20px;
+  gap: $space-5;
   transform: translateY(clamp(-34px, -5vh, -18px));
 }
 
@@ -116,7 +116,7 @@ async function onSubmit() {
   margin: 0;
   text-transform: uppercase;
   letter-spacing: 0.3em;
-  color: #dfb95d;
+  color: $color-gold-strong;
   font-size: 12px;
   font-family: "Manrope", "Noto Sans TC", sans-serif;
   text-align: center;
@@ -126,12 +126,12 @@ async function onSubmit() {
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 6px;
+  gap: $space-2;
   text-align: center;
 }
 
 .login-copy h1 {
-  margin: 4px 0 6px;
+  margin: $space-1 0 $space-2;
   line-height: 0.9;
   font-family: "Cormorant Garamond", "Times New Roman", serif;
 }
@@ -141,30 +141,24 @@ async function onSubmit() {
   font-size: clamp(58px, 19vw, 96px);
   font-weight: 800;
   letter-spacing: 0.03em;
-  color: #f7e9b7;
-  text-shadow:
-    0 0 18px rgba(244, 222, 155, 0.18),
-    0 10px 24px rgba(0, 0, 0, 0.22);
-  background: linear-gradient(180deg, #fff7da 0%, #f4de9b 38%, #d7a74c 100%);
-  -webkit-background-clip: text;
-  -webkit-text-fill-color: transparent;
+  @include gold-gradient-text();
 }
 
 .login-card {
   position: relative;
   width: 100%;
   max-width: 100%;
-  padding: 0 22px 22px;
+  padding: 0 $space-6 $space-6;
   background:
     linear-gradient(180deg, rgba(11, 33, 26, 0.92), rgba(7, 22, 17, 0.92)),
-    rgba(8, 25, 20, 0.82);
+    $color-panel-surface;
 }
 
 .login-card-head {
   position: absolute;
   top: 0;
   left: 50%;
-  width: calc(100% - 44px);
+  width: calc(100% - 48px);
   display: flex;
   justify-content: center;
   transform: translateX(-50%);
@@ -173,24 +167,24 @@ async function onSubmit() {
 
 .login-card-title {
   position: relative;
-  top: 38px;
+  top: $space-10;
   min-width: 180px;
-  padding: 0 18px;
+  padding: 0 $space-5;
   display: flex;
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  gap: 6px;
+  gap: $space-2;
   text-align: center;
 }
 
 .login-card-body {
-  padding-top: 138px;
+  padding-top: 136px;
 }
 
 .card-label {
   margin: 0;
-  color: rgba(247, 244, 233, 0.45);
+  color: $color-text-faint;
   font-size: 11px;
   letter-spacing: 0.24em;
   text-transform: uppercase;
@@ -207,7 +201,7 @@ async function onSubmit() {
 .login-form {
   display: flex;
   flex-direction: column;
-  gap: 16px;
+  gap: $space-4;
 }
 
 .field span {

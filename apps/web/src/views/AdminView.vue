@@ -229,18 +229,18 @@ onMounted(async () => {
   </main>
 </template>
 
-<style scoped>
+<style scoped lang="scss">
 .admin-page {
   display: flex;
   flex-direction: column;
-  gap: 24px;
+  gap: $space-6;
 }
 
 .topbar,
 .adjust-panel,
 .users-panel,
 .logs-panel {
-  padding: 18px;
+  padding: $space-5;
 }
 
 .topbar {
@@ -248,7 +248,7 @@ onMounted(async () => {
   justify-content: space-between;
   align-items: center;
   flex-wrap: wrap;
-  gap: 12px;
+  gap: $space-3;
 }
 
 .topbar-label {
@@ -267,23 +267,23 @@ onMounted(async () => {
 .admin-grid {
   display: grid;
   grid-template-columns: 1fr;
-  gap: 16px;
+  gap: $space-4;
 }
 
 .adjust-form,
 .table-list {
   display: flex;
   flex-direction: column;
-  gap: 14px;
-  margin-top: 20px;
+  gap: $space-4;
+  margin-top: $space-5;
 }
 
 .sub-block {
   display: flex;
   flex-direction: column;
-  gap: 12px;
-  margin-bottom: 20px;
-  padding-bottom: 20px;
+  gap: $space-3;
+  margin-bottom: $space-5;
+  padding-bottom: $space-5;
   border-bottom: 1px solid rgba(255, 255, 255, 0.08);
 }
 
@@ -293,15 +293,15 @@ onMounted(async () => {
   border-radius: 12px;
   background: rgba(255, 255, 255, 0.06);
   color: #f7f4e9;
-  padding: 12px 14px;
+  padding: $space-3 $space-4;
 }
 
 .list-row {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 12px;
-  padding: 14px;
+  gap: $space-3;
+  padding: $space-4;
   border-radius: 14px;
   background: rgba(255, 255, 255, 0.04);
 }
@@ -310,11 +310,11 @@ onMounted(async () => {
   display: flex;
   align-items: flex-end;
   flex-direction: column;
-  gap: 12px;
+  gap: $space-3;
 }
 
 .compact-button {
-  padding: 8px 12px;
+  padding: $space-2 $space-3;
 }
 
 .clickable {
@@ -327,7 +327,7 @@ onMounted(async () => {
 
 .list-row p,
 .adjustment-side small {
-  margin: 6px 0 0;
+  margin: $space-2 0 0;
   color: rgba(247, 244, 233, 0.65);
 }
 
@@ -337,7 +337,7 @@ onMounted(async () => {
 
 .empty-text {
   color: rgba(247, 244, 233, 0.65);
-  margin-top: 20px;
+  margin-top: $space-5;
 }
 
 </style>

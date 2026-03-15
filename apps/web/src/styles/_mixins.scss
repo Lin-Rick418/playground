@@ -1,0 +1,38 @@
+@use "./tokens" as *;
+
+@mixin gold-gradient-text {
+  color: $color-gold;
+  text-shadow:
+    0 0 18px rgba(244, 222, 155, 0.18),
+    0 10px 24px rgba(0, 0, 0, 0.22);
+  background: $gradient-gold-text;
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+}
+
+@mixin floating-shell(
+  $background: $color-floating-surface,
+  $border: rgba(244, 222, 155, 0.2),
+  $shadow: $shadow-floating
+) {
+  background: $background;
+  border: 1px solid $border;
+  box-shadow: $shadow;
+}
+
+@mixin loading-overlay($z-index: 90, $max-width: 430px) {
+  position: fixed;
+  top: 0;
+  bottom: 0;
+  left: 50%;
+  width: 100%;
+  max-width: $max-width;
+  transform: translateX(-50%);
+  z-index: $z-index;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: $space-6;
+  background: linear-gradient(180deg, $color-overlay-start, $color-overlay-mid 48%, $color-overlay-end);
+  backdrop-filter: blur(8px);
+}

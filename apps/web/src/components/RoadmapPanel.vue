@@ -374,11 +374,11 @@ onUnmounted(() => {
   </section>
 </template>
 
-<style scoped>
+<style scoped lang="scss">
 .roadmap-panel {
   display: flex;
   flex-direction: column;
-  gap: 10px;
+  gap: $space-2;
   width: 100%;
   height: 100%;
   min-height: 0;
@@ -387,7 +387,7 @@ onUnmounted(() => {
 .roadmap-stats {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: $space-2;
   overflow-x: auto;
   overflow-y: hidden;
   scrollbar-width: none;
@@ -401,23 +401,23 @@ onUnmounted(() => {
 .roadmap-stat-pill {
   flex: 0 0 auto;
   min-width: 68px;
-  padding: 8px 10px;
+  padding: $space-2 $space-3;
   border-radius: 12px;
   display: inline-flex;
   align-items: center;
-  gap: 6px;
+  gap: $space-2;
   box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.03);
 }
 
 .roadmap-stat-pill span {
-  color: rgba(247, 244, 233, 0.62);
+  color: $color-text-subtle;
   font-size: 11px;
   font-weight: 800;
   letter-spacing: 0.04em;
 }
 
 .roadmap-stat-pill strong {
-  color: #f4de9b;
+  color: $color-gold;
   font-size: 14px;
   font-weight: 900;
 }
@@ -468,7 +468,7 @@ onUnmounted(() => {
 
 .roadmap-shell {
   display: grid;
-  gap: 10px;
+  gap: $space-2;
   min-width: max-content;
   height: 100%;
   border-radius: 18px;
@@ -490,13 +490,13 @@ onUnmounted(() => {
 .center-column {
   display: grid;
   grid-template-rows: minmax(0, 1.45fr) minmax(0, 1fr);
-  gap: 10px;
+  gap: $space-2;
 }
 
 .derived-zone {
   display: grid;
   grid-template-columns: repeat(3, max-content);
-  gap: 10px;
+  gap: $space-2;
 }
 
 .board-surface {
