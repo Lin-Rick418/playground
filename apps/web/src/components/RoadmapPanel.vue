@@ -5,6 +5,7 @@ import BigRoadBoard from "./BigRoadBoard.vue";
 import BigEyeRoadBoard from "./BigEyeRoadBoard.vue";
 import CockroachRoadBoard from "./CockroachRoadBoard.vue";
 import SmallRoadBoard from "./SmallRoadBoard.vue";
+import { toBaccaratPairType } from "../const/game";
 import {
   DEFAULT_ROAD_VISIBILITY_SETTINGS,
   ROADMAP_BEAD_CELL_PX,
@@ -44,22 +45,6 @@ const roadmapViewportHeight = ref(0);
 const beadViewportHeight = ref(0);
 let roadmapViewportObserver: ResizeObserver | null = null;
 let beadViewportObserver: ResizeObserver | null = null;
-
-function toBaccaratPairType(round: { playerPair: boolean; bankerPair: boolean }): BaccaratPairType {
-  if (round.playerPair && round.bankerPair) {
-    return "BOTH_PAIR";
-  }
-
-  if (round.playerPair) {
-    return "PLAYER_PAIR";
-  }
-
-  if (round.bankerPair) {
-    return "BANKER_PAIR";
-  }
-
-  return "NO_PAIR";
-}
 
 const bigRoadData = computed(() =>
   chronologicalRounds.value.map((round) => ({

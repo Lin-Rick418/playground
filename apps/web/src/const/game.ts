@@ -1,4 +1,20 @@
-import type { BetType, RoundWinner } from "../types/domain";
+import type { BaccaratPairType, BetType, RoundWinner } from "../types/domain";
+
+export function toBaccaratPairType(round: { playerPair: boolean; bankerPair: boolean }): BaccaratPairType {
+  if (round.playerPair && round.bankerPair) {
+    return "BOTH_PAIR";
+  }
+
+  if (round.playerPair) {
+    return "PLAYER_PAIR";
+  }
+
+  if (round.bankerPair) {
+    return "BANKER_PAIR";
+  }
+
+  return "NO_PAIR";
+}
 
 export const CHIP_VALUES = [100, 500, 1000, 10000, 50000] as const;
 export const DEFAULT_CHIP_VALUE = CHIP_VALUES[1];

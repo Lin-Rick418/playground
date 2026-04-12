@@ -2,11 +2,11 @@
 import { computed, onMounted, ref } from "vue";
 import { useRouter } from "vue-router";
 import BigRoadBoard from "../components/BigRoadBoard.vue";
-import { BET_TYPE_LABELS, WINNER_LABELS } from "../const/game";
+import { BET_TYPE_LABELS, WINNER_LABELS, toBaccaratPairType } from "../const/game";
 import { useLiveChannel } from "../composables/useLiveChannel";
 import { useAuthStore } from "../stores/auth";
 import { useGameStore } from "../stores/game";
-import type { ActiveRound, BaccaratPairType, BetType, RoundHistoryItem } from "../types/domain";
+import type { ActiveRound, BetType, RoundHistoryItem } from "../types/domain";
 
 const authStore = useAuthStore();
 const gameStore = useGameStore();
@@ -53,22 +53,6 @@ onMounted(async () => {
     isLobbyLoading.value = false;
   }
 });
-
-function toBaccaratPairType(round: { playerPair: boolean; bankerPair: boolean }): BaccaratPairType {
-  if (round.playerPair && round.bankerPair) {
-    return "BOTH_PAIR";
-  }
-
-  if (round.playerPair) {
-    return "PLAYER_PAIR";
-  }
-
-  if (round.bankerPair) {
-    return "BANKER_PAIR";
-  }
-
-  return "NO_PAIR";
-}
 
 function toBigRoad(rounds: Pick<ActiveRound, "winner" | "playerPair" | "bankerPair">[]) {
   return [...rounds]
