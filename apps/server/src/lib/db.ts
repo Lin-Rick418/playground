@@ -364,18 +364,17 @@ export async function listUserHistory(userId: string, executor: DbExecutor = poo
       COALESCE(
         json_agg(
           json_build_object(
-            'id', b2.id,
-            'betType', b2.bet_type,
-            'amount', b2.amount,
-            'payout', b2.payout,
-            'createdAt', b2.created_at
-          ) ORDER BY b2.created_at ASC
-        ) FILTER (WHERE b2.id IS NOT NULL),
+            'id', b.id,
+            'betType', b.bet_type,
+            'amount', b.amount,
+            'payout', b.payout,
+            'createdAt', b.created_at
+          ) ORDER BY b.created_at ASC
+        ),
         '[]'::json
       ) AS bets
     FROM game_rounds g
     JOIN bets b ON b.round_id = g.id AND b.user_id = $1
-    LEFT JOIN bets b2 ON b2.round_id = g.id AND b2.user_id = $1
     WHERE g.status = 'SETTLED'
     GROUP BY g.id
     ORDER BY g.settled_at DESC, g.created_at DESC
@@ -860,9 +859,11 @@ export async function buildTablePublicState(tableId: string, executor: DbExecuto
 }
 
 export async function buildTableUserState(userId: string, tableId: string, executor: DbExecutor = pool) {
-  const user = await findUserById(userId, executor);
-  const tableState = await buildTablePublicState(tableId, executor);
-  const roundId = tableState?.round?.id ?? "";
+  const [user, activeRound] = await Promise.all([
+    findUserById(userId, executor),
+    getActiveRound(tableId, executor),
+  ]);
+  const roundId = activeRound?.id ?? "";
   const myBets = roundId ? await listUserRoundBets(userId, roundId, executor) : [];
 
   return {
@@ -928,6 +929,7 @@ async function seedDemoUsers(executor: DbExecutor) {
 }
 
 export async function ensureSeedData(options?: { seedDemoUsers?: boolean }) {
+  const shouldSeedDemoUsers = options?.seedDemoUsers ?? !env.isProduction;
   const configuredTables = [
     { code: "A01", name: "極速廳 A01", displayOrder: 1, roundDurationMs: 15000, minBet: 100, maxBet: 10000 },
     { code: "A02", name: "極速廳 A02", displayOrder: 2, roundDurationMs: 15000, minBet: 100, maxBet: 10000 },
@@ -938,7 +940,7 @@ export async function ensureSeedData(options?: { seedDemoUsers?: boolean }) {
   await withAdvisoryLock(INIT_LOCK_KEY, async (client) => {
     await initializeDatabase();
 
-    if (options?.seedDemoUsers) {
+    if (shouldSeedDemoUsers) {
       await seedDemoUsers(client);
     }
 
