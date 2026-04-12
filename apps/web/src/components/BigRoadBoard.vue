@@ -280,59 +280,8 @@ const getStrokeColor = (cell: GridCellData): string => {
   }
 };
 
-const getInnerContent = (cell: GridCellData): string => {
-  if (cell.directKilling === "YES") {
-    return `<circle cx="5" cy="5" r="2" fill="${COLORS.DIRECT_KILL}" />`;
-  }
-
-  if (cell.winType === "BANKER_SIX") {
-    return `<text x="5" y="7" text-anchor="middle" font-size="6" fill="${COLORS.BANKER_SIX}" font-family="sans-serif">6</text>`;
-  }
-
-  return "";
-};
-
-const getTieLines = (cell: GridCellData): string => {
-  const tieCount = (cell.tieCount ?? getFourBitNumber(cell.fourBit)) || 0;
-
-  if (!tieCount) {
-    return "";
-  }
-
-  if (tieCount === 1) {
-    return `<line x1="8.5" y1="1.5" x2="1.5" y2="8.5" stroke="${COLORS.TIE_LINE}" stroke-width="1" />`;
-  }
-
-  return `
-    <line x1="9.5" y1="2.5" x2="2.5" y2="9.5" stroke="${COLORS.TIE_LINE}" stroke-width="1" />
-    <line x1="7.5" y1="0.5" x2="0.5" y2="7.5" stroke="${COLORS.TIE_LINE}" stroke-width="1" />
-  `;
-};
-
-const getPairDots = (cell: GridCellData): string => {
-  switch (cell.baccaratPair) {
-    case "PLAYER_PAIR":
-      return `<circle cx="8" cy="8" r="2" fill="${COLORS.PLAYER}" />`;
-    case "BANKER_PAIR":
-      return `<circle cx="2" cy="2" r="2" fill="${COLORS.BANKER}" />`;
-    case "BOTH_PAIR":
-      return `
-        <circle cx="2" cy="2" r="2" fill="${COLORS.BANKER}" />
-        <circle cx="8" cy="8" r="2" fill="${COLORS.PLAYER}" />
-      `;
-    default:
-      return "";
-  }
-};
-
-const getCircleSvg = (cell: GridCellData): string => `
-  <svg width="10" height="10" viewBox="0 0 10 10" xmlns="http://www.w3.org/2000/svg">
-    <circle cx="5" cy="5" r="4" fill="none" stroke="${getStrokeColor(cell)}" stroke-width="1" />
-    ${getInnerContent(cell)}
-    ${getTieLines(cell)}
-    ${getPairDots(cell)}
-  </svg>
-`;
+const getCellTieCount = (cell: GridCellData): number =>
+  (cell.tieCount ?? getFourBitNumber(cell.fourBit)) || 0;
 </script>
 
 <template>
@@ -348,7 +297,30 @@ const getCircleSvg = (cell: GridCellData): string => `
   >
     <div v-for="(row, rowIndex) in grid" :key="rowIndex" class="big-road-row">
       <div v-for="(cell, colIndex) in row" :key="`${rowIndex}-${colIndex}`" class="big-road-cell">
-        <div v-if="cell" class="token" :class="{ preview: previewDisplayIndex === cell.originalIndex }" v-html="getCircleSvg(cell)" />
+        <div v-if="cell" class="token" :class="{ preview: previewDisplayIndex === cell.originalIndex }">
+          <svg width="10" height="10" viewBox="0 0 10 10" xmlns="http://www.w3.org/2000/svg">
+            <circle cx="5" cy="5" r="4" fill="none" :stroke="getStrokeColor(cell)" stroke-width="1" />
+            <!-- direct killing -->
+            <circle v-if="cell.directKilling === 'YES'" cx="5" cy="5" r="2" :fill="COLORS.DIRECT_KILL" />
+            <!-- banker six -->
+            <text v-else-if="cell.winType === 'BANKER_SIX'" x="5" y="7" text-anchor="middle" font-size="6" :fill="COLORS.BANKER_SIX" font-family="sans-serif">6</text>
+            <!-- tie lines -->
+            <template v-if="getCellTieCount(cell) === 1">
+              <line x1="8.5" y1="1.5" x2="1.5" y2="8.5" :stroke="COLORS.TIE_LINE" stroke-width="1" />
+            </template>
+            <template v-else-if="getCellTieCount(cell) >= 2">
+              <line x1="9.5" y1="2.5" x2="2.5" y2="9.5" :stroke="COLORS.TIE_LINE" stroke-width="1" />
+              <line x1="7.5" y1="0.5" x2="0.5" y2="7.5" :stroke="COLORS.TIE_LINE" stroke-width="1" />
+            </template>
+            <!-- pair dots -->
+            <circle v-if="cell.baccaratPair === 'PLAYER_PAIR'" cx="8" cy="8" r="2" :fill="COLORS.PLAYER" />
+            <circle v-else-if="cell.baccaratPair === 'BANKER_PAIR'" cx="2" cy="2" r="2" :fill="COLORS.BANKER" />
+            <template v-else-if="cell.baccaratPair === 'BOTH_PAIR'">
+              <circle cx="2" cy="2" r="2" :fill="COLORS.BANKER" />
+              <circle cx="8" cy="8" r="2" :fill="COLORS.PLAYER" />
+            </template>
+          </svg>
+        </div>
       </div>
     </div>
   </div>
