@@ -166,15 +166,22 @@ const visibleDerivedCount = computed(
     Number(visibleRoads.value.cockroachRoad),
 );
 const roadSummaryItems = computed(() => {
-  const total = chronologicalRounds.value.length;
-  const playerCount = chronologicalRounds.value.filter((round) => round.winner === "PLAYER").length;
-  const bankerCount = chronologicalRounds.value.filter((round) => round.winner === "BANKER").length;
-  const tieCount = chronologicalRounds.value.filter((round) => round.winner === "TIE").length;
-  const playerPairCount = chronologicalRounds.value.filter((round) => round.playerPair).length;
-  const bankerPairCount = chronologicalRounds.value.filter((round) => round.bankerPair).length;
+  let playerCount = 0;
+  let bankerCount = 0;
+  let tieCount = 0;
+  let playerPairCount = 0;
+  let bankerPairCount = 0;
+
+  for (const round of chronologicalRounds.value) {
+    if (round.winner === "PLAYER") playerCount++;
+    else if (round.winner === "BANKER") bankerCount++;
+    else if (round.winner === "TIE") tieCount++;
+    if (round.playerPair) playerPairCount++;
+    if (round.bankerPair) bankerPairCount++;
+  }
 
   return [
-    { label: "總局", value: total },
+    { label: "總局", value: chronologicalRounds.value.length },
     { label: "閒", value: playerCount },
     { label: "莊", value: bankerCount },
     { label: "和", value: tieCount },
