@@ -119,14 +119,16 @@ async function settleActiveRound(roundId: string, tableId: string) {
     at: new Date().toISOString(),
   });
 
-  for (const userId of affectedUserIds) {
-    await publishLiveEvent({
-      type: "user_changed",
-      userId,
-      reason: "round_settled",
-      at: new Date().toISOString(),
-    });
-  }
+  await Promise.all(
+    Array.from(affectedUserIds, (userId) =>
+      publishLiveEvent({
+        type: "user_changed",
+        userId,
+        reason: "round_settled",
+        at: new Date().toISOString(),
+      }),
+    ),
+  );
 }
 
 async function tickTable(table: GameTableRecord) {
@@ -204,8 +206,11 @@ export async function startRoundManager() {
       const now = Date.now();
       const tables = await listTables();
 
-      for (const table of tables) {
-        await tickTable(table);
+      const results = await Promise.allSettled(tables.map((table) => tickTable(table)));
+      for (const result of results) {
+        if (result.status === "rejected") {
+          console.error("Table tick failed", result.reason);
+        }
       }
 
       await runDailyCleanup(now);
