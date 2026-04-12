@@ -360,24 +360,35 @@ export async function listUserHistory(userId: string, executor: DbExecutor = poo
       g.player_pair,
       g.banker_pair,
       g.settled_at,
-      g.created_at
+      g.created_at,
+      COALESCE(
+        json_agg(
+          json_build_object(
+            'id', b2.id,
+            'betType', b2.bet_type,
+            'amount', b2.amount,
+            'payout', b2.payout,
+            'createdAt', b2.created_at
+          ) ORDER BY b2.created_at ASC
+        ) FILTER (WHERE b2.id IS NOT NULL),
+        '[]'::json
+      ) AS bets
     FROM game_rounds g
-    JOIN bets b ON b.round_id = g.id
-    WHERE b.user_id = $1
-      AND g.status = 'SETTLED'
+    JOIN bets b ON b.round_id = g.id AND b.user_id = $1
+    LEFT JOIN bets b2 ON b2.round_id = g.id AND b2.user_id = $1
+    WHERE g.status = 'SETTLED'
     GROUP BY g.id
     ORDER BY g.settled_at DESC, g.created_at DESC
     LIMIT 20`,
     [userId],
   );
 
-  const result = [];
-  for (const row of rows) {
-    const bets = await listUserRoundBets(userId, String(row.round_id), executor);
+  return rows.map((row: DbRow) => {
+    const bets = parseJsonValue<{ id: string; betType: BetType; amount: number; payout: number; createdAt: string }[]>(row.bets, []);
     const totalAmount = bets.reduce((sum: number, bet) => sum + bet.amount, 0);
     const totalPayout = bets.reduce((sum: number, bet) => sum + bet.payout, 0);
 
-    result.push({
+    return {
       id: String(row.round_id),
       createdAt: toIsoString(row.settled_at),
       totalAmount,
@@ -394,10 +405,8 @@ export async function listUserHistory(userId: string, executor: DbExecutor = poo
         playerPair: toBoolean(row.player_pair),
         bankerPair: toBoolean(row.banker_pair),
       },
-    });
-  }
-
-  return result;
+    };
+  });
 }
 
 export async function listRoundBets(roundId: string, executor: DbExecutor = pool) {
@@ -735,24 +744,70 @@ export async function listAdjustments(executor: DbExecutor = pool) {
 
 export async function buildLobbyTables(executor: DbExecutor = pool) {
   const tables = await listTables(executor);
-  const snapshots = [];
 
+  if (tables.length === 0) return [];
+
+  const tableIds = tables.map((t) => t.id);
+
+  const [allActiveRows, allRecentRows] = await Promise.all([
+    queryRows(
+      executor,
+      `SELECT * FROM game_rounds WHERE table_id = ANY($1) AND status IN ('OPEN', 'LOCKED') ORDER BY created_at DESC`,
+      [tableIds],
+    ),
+    queryRows(
+      executor,
+      `SELECT * FROM (
+        SELECT *, ROW_NUMBER() OVER (PARTITION BY table_id ORDER BY settled_at DESC) AS rn
+        FROM game_rounds WHERE table_id = ANY($1) AND status = 'SETTLED'
+      ) sub WHERE rn <= 30`,
+      [tableIds],
+    ),
+  ]);
+
+  const activeByTable = new Map<string, GameRoundRecord>();
+  for (const row of allActiveRows) {
+    const round = mapRound(row as DbRow);
+    if (!activeByTable.has(round.tableId)) {
+      activeByTable.set(round.tableId, round);
+    }
+  }
+
+  const recentByTable = new Map<string, GameRoundRecord[]>();
+  for (const row of allRecentRows) {
+    const round = mapRound(row as DbRow);
+    const list = recentByTable.get(round.tableId) ?? [];
+    list.push(round);
+    recentByTable.set(round.tableId, list);
+  }
+
+  const roadShoeQueries: Promise<{ tableId: string; rounds: GameRoundRecord[] }>[] = [];
   for (const table of tables) {
-    const recentRounds = await listRecentSettledRounds(table.id, 30, executor);
-    const activeRound = await getActiveRound(table.id, executor);
-    const previousRound = recentRounds[0] ?? null;
-    const roadRounds = activeRound ? await listRecentSettledRoundsByShoe(table.id, activeRound.shoeId, 200, executor) : [];
+    const active = activeByTable.get(table.id);
+    if (active?.shoeId) {
+      roadShoeQueries.push(
+        listRecentSettledRoundsByShoe(table.id, active.shoeId, 200, executor)
+          .then((rounds) => ({ tableId: table.id, rounds })),
+      );
+    }
+  }
+  const roadResults = await Promise.all(roadShoeQueries);
+  const roadByTable = new Map(roadResults.map((r) => [r.tableId, r.rounds]));
 
-    snapshots.push({
+  return tables.map((table) => {
+    const recentRounds = recentByTable.get(table.id) ?? [];
+    const activeRound = activeByTable.get(table.id) ?? null;
+    const previousRound = recentRounds[0] ?? null;
+    const roadRounds = roadByTable.get(table.id) ?? [];
+
+    return {
       table,
       activeRound,
       previousRound,
       recentRounds: recentRounds.slice(0, 6),
       roadRounds,
-    });
-  }
-
-  return snapshots;
+    };
+  });
 }
 
 export async function buildTablePublicState(tableId: string, executor: DbExecutor = pool) {
