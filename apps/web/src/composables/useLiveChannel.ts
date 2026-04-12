@@ -16,6 +16,7 @@ export function useLiveChannel(options: UseLiveChannelOptions) {
   const router = useRouter();
   let socket: WebSocket | null = null;
   let reconnectTimer: number | null = null;
+  let reconnectAttempts = 0;
   let disposed = false;
 
   function clearReconnectTimer() {
@@ -66,6 +67,7 @@ export function useLiveChannel(options: UseLiveChannelOptions) {
 
     socket = createLiveSocket({
       onOpen: (ws) => {
+        reconnectAttempts = 0;
         ws.send(JSON.stringify(options.getSubscribeMessage()));
       },
       onMessage: handleMessage,
@@ -75,9 +77,11 @@ export function useLiveChannel(options: UseLiveChannelOptions) {
         }
 
         clearReconnectTimer();
+        const delayMs = Math.min(1000 * 2 ** reconnectAttempts, 30000);
+        reconnectAttempts++;
         reconnectTimer = window.setTimeout(() => {
           connect();
-        }, 1000);
+        }, delayMs);
       },
     });
   }

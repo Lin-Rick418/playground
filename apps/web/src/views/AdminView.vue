@@ -102,7 +102,7 @@ onMounted(async () => {
             </label>
             <label class="field">
               <span>密碼</span>
-              <input v-model="createForm.password" type="text" />
+              <input v-model="createForm.password" type="password" />
             </label>
             <label class="field">
               <span>初始金額</span>
