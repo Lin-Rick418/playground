@@ -705,6 +705,10 @@ function preventBetGridDoubleTapZoom(event: TouchEvent) {
   lastBetGridTouchEndMs = now;
 }
 
+function resetPendingBetAmounts() {
+  pendingBetAmounts.value = { PLAYER: 0, BANKER: 0, TIE: 0, PLAYER_PAIR: 0, BANKER_PAIR: 0 };
+}
+
 async function applyTableSnapshotMessage(message: TableSnapshotMessage) {
   const previousRoundId = currentRound.value?.id ?? "";
 
@@ -712,6 +716,10 @@ async function applyTableSnapshotMessage(message: TableSnapshotMessage) {
   serverTimeOffsetMs.value = new Date(message.data.serverTime).getTime() - Date.now();
   syncPresentationWindow(message.data.serverTime);
   isTableLoading.value = false;
+
+  if (previousRoundId && previousRoundId !== (message.data.round?.id ?? "")) {
+    resetPendingBetAmounts();
+  }
 
   const settledRound = message.data.previousRound;
   if (
@@ -873,7 +881,7 @@ watch(
 
     <transition name="settlement-pop">
       <div v-if="settlementPopup" class="settlement-popup" :class="settlementPopup.amount >= 0 ? 'positive' : 'negative'">
-        <strong>您贏了</strong>
+        <strong>{{ settlementPopup.amount >= 0 ? "您贏了" : "您輸了" }}</strong>
         <span>{{ settlementPopup.amount >= 0 ? "+" : "" }}{{ settlementPopup.amount.toLocaleString() }}</span>
       </div>
     </transition>
