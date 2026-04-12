@@ -51,6 +51,9 @@ type ServerMessage =
 const connections = new Map<string, LiveSocketConnection>();
 let stopSubscriber: null | (() => Promise<void>) = null;
 
+const HEARTBEAT_INTERVAL_MS = 30_000;
+const HEARTBEAT_TIMEOUT_MS = 10_000;
+
 function sendMessage(socket: WebSocket, message: ServerMessage) {
   if (socket.readyState !== WebSocket.OPEN) {
     return;
@@ -144,10 +147,10 @@ async function handleLiveEvent(event: LiveEvent) {
       (connection) => connection.subscription.scope === "table" && connection.subscription.tableId === event.tableId,
     );
 
-    let lobbySnapshot: Awaited<ReturnType<typeof buildLobbyTables>> | null = null;
-    if (lobbyConnections.length > 0) {
-      lobbySnapshot = await buildLobbyTables();
-    }
+    const [lobbySnapshot, tableSnapshot] = await Promise.all([
+      lobbyConnections.length > 0 ? buildLobbyTables() : null,
+      tableConnections.length > 0 ? buildTablePublicState(event.tableId) : null,
+    ]);
 
     for (const connection of lobbyConnections) {
       sendMessage(connection.socket, {
@@ -160,7 +163,6 @@ async function handleLiveEvent(event: LiveEvent) {
       });
     }
 
-    const tableSnapshot = tableConnections.length > 0 ? await buildTablePublicState(event.tableId) : null;
     for (const connection of tableConnections) {
       if (tableSnapshot?.round) {
         sendMessage(connection.socket, {
@@ -171,19 +173,23 @@ async function handleLiveEvent(event: LiveEvent) {
           },
         });
       }
-
-      await pushTableUserSnapshot(connection, event.tableId);
     }
+
+    await Promise.all(
+      tableConnections.map((connection) => pushTableUserSnapshot(connection, event.tableId)),
+    );
     return;
   }
 
   const matchingConnections = Array.from(connections.values()).filter((connection) => connection.userId === event.userId);
-  for (const connection of matchingConnections) {
-    await pushUserSnapshot(connection);
-    if (connection.subscription.scope === "table") {
-      await pushTableUserSnapshot(connection, connection.subscription.tableId);
-    }
-  }
+  await Promise.all(
+    matchingConnections.map(async (connection) => {
+      await pushUserSnapshot(connection);
+      if (connection.subscription.scope === "table") {
+        await pushTableUserSnapshot(connection, connection.subscription.tableId);
+      }
+    }),
+  );
 }
 
 function parseClientMessage(data: string): ClientMessage | null {
@@ -205,10 +211,24 @@ function parseClientMessage(data: string): ClientMessage | null {
 
 export async function attachLiveWebSocketServer(server: Server) {
   const wss = new WebSocketServer({ noServer: true });
+  let heartbeatInterval: ReturnType<typeof setInterval> | null = null;
 
   if (!stopSubscriber) {
     stopSubscriber = await startLiveEventSubscriber(handleLiveEvent);
   }
+
+  heartbeatInterval = setInterval(() => {
+    for (const connection of connections.values()) {
+      const ws = connection.socket;
+      if ((ws as WebSocket & { isAlive?: boolean }).isAlive === false) {
+        connections.delete(connection.id);
+        ws.terminate();
+        continue;
+      }
+      (ws as WebSocket & { isAlive?: boolean }).isAlive = false;
+      ws.ping();
+    }
+  }, HEARTBEAT_INTERVAL_MS);
 
   server.on("upgrade", async (request, socket, head) => {
     const requestUrl = new URL(request.url ?? "/", "http://localhost");
@@ -236,9 +256,14 @@ export async function attachLiveWebSocketServer(server: Server) {
         };
 
         connections.set(connection.id, connection);
+        (ws as WebSocket & { isAlive?: boolean }).isAlive = true;
         sendMessage(ws, {
           type: "connected",
           serverTime: new Date().toISOString(),
+        });
+
+        ws.on("pong", () => {
+          (ws as WebSocket & { isAlive?: boolean }).isAlive = true;
         });
 
         ws.on("message", async (raw) => {
@@ -268,6 +293,10 @@ export async function attachLiveWebSocketServer(server: Server) {
   });
 
   return async () => {
+    if (heartbeatInterval) {
+      clearInterval(heartbeatInterval);
+      heartbeatInterval = null;
+    }
     for (const connection of connections.values()) {
       connection.socket.close();
     }
