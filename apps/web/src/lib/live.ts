@@ -63,17 +63,15 @@ function buildWebSocketUrl() {
   const normalizedBase = new URL(baseUrl, window.location.origin);
   normalizedBase.protocol = normalizedBase.protocol === "https:" ? "wss:" : "ws:";
   normalizedBase.pathname = `${normalizedBase.pathname.replace(/\/$/, "")}/ws`;
-  const token = getStoredToken();
-
-  if (token) {
-    normalizedBase.searchParams.set("token", token);
-  }
 
   return normalizedBase.toString();
 }
 
 export function createLiveSocket(callbacks: SocketCallbacks) {
-  const socket = new WebSocket(buildWebSocketUrl());
+  // The token travels in the Sec-WebSocket-Protocol header rather than the
+  // URL so it stays out of server access logs and browser history.
+  const token = getStoredToken();
+  const socket = new WebSocket(buildWebSocketUrl(), token ? ["bearer", token] : undefined);
 
   socket.addEventListener("open", () => {
     callbacks.onOpen?.(socket);

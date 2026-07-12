@@ -1,3 +1,4 @@
+import { randomInt as cryptoRandomInt } from "node:crypto";
 import type { BetType, RoundWinner } from "../types/domain.js";
 
 const suits = ["S", "H", "D", "C"] as const;
@@ -51,7 +52,7 @@ export function buildShoe(deckCount = 8): Card[] {
   }
 
   for (let i = shoe.length - 1; i > 0; i -= 1) {
-    const j = Math.floor(Math.random() * (i + 1));
+    const j = cryptoRandomInt(i + 1);
     [shoe[i], shoe[j]] = [shoe[j], shoe[i]];
   }
 
@@ -73,7 +74,7 @@ function drawCard(shoe: Card[]): Card {
 }
 
 function randomInt(min: number, max: number) {
-  return Math.floor(Math.random() * (max - min + 1)) + min;
+  return cryptoRandomInt(min, max + 1);
 }
 
 function getBurnValue(card: Card) {

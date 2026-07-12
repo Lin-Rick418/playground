@@ -10,6 +10,9 @@ import { adminRouter } from "./modules/admin/router.js";
 
 const app = express();
 
+// Trust X-Forwarded-For only from the local reverse proxy (nginx) so login
+// rate limiting sees real client IPs without letting remote clients spoof them.
+app.set("trust proxy", "loopback");
 app.use(cors({ origin: env.corsOrigin }));
 app.use(express.json());
 

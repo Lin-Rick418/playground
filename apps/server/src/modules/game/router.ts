@@ -27,7 +27,8 @@ const placeBetSchema = z.object({
         amount: z.number().int().positive(),
       }),
     )
-    .min(1),
+    .min(1)
+    .max(20),
 });
 const BETTING_OPEN_GRACE_MS = 400;
 

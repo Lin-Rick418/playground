@@ -8,11 +8,10 @@ export type AuthenticatedRequest = Request & {
 };
 
 export function authenticate(req: AuthenticatedRequest, res: Response, next: NextFunction) {
+  // Tokens are accepted from the Authorization header only: query-string
+  // tokens end up in access logs and browser history.
   const authHeader = req.headers.authorization;
-  const queryToken = typeof req.query.token === "string" ? req.query.token : null;
-  const token = authHeader?.startsWith("Bearer ")
-    ? authHeader.slice("Bearer ".length)
-    : queryToken;
+  const token = authHeader?.startsWith("Bearer ") ? authHeader.slice("Bearer ".length) : null;
 
   if (!token) {
     return res.status(401).json({ message: "Unauthorized" });

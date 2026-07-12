@@ -10,9 +10,44 @@ const loginSchema = z.object({
   password: z.string().min(1),
 });
 
+const LOGIN_WINDOW_MS = 60_000;
+const LOGIN_MAX_ATTEMPTS = 10;
+const LOGIN_ATTEMPTS_PRUNE_THRESHOLD = 10_000;
+const loginAttempts = new Map<string, { count: number; resetAt: number }>();
+
+// Equalizes bcrypt timing for unknown usernames so response time does not
+// reveal whether an account exists.
+const dummyPasswordHash = bcrypt.hashSync("login-timing-placeholder", 10);
+
+function isLoginRateLimited(key: string) {
+  const now = Date.now();
+
+  if (loginAttempts.size > LOGIN_ATTEMPTS_PRUNE_THRESHOLD) {
+    for (const [attemptKey, entry] of loginAttempts) {
+      if (now >= entry.resetAt) {
+        loginAttempts.delete(attemptKey);
+      }
+    }
+  }
+
+  const entry = loginAttempts.get(key);
+
+  if (!entry || now >= entry.resetAt) {
+    loginAttempts.set(key, { count: 1, resetAt: now + LOGIN_WINDOW_MS });
+    return false;
+  }
+
+  entry.count += 1;
+  return entry.count > LOGIN_MAX_ATTEMPTS;
+}
+
 export const authRouter = Router();
 
 authRouter.post("/login", async (req, res) => {
+  if (isLoginRateLimited(req.ip ?? "unknown")) {
+    return res.status(429).json({ message: "Too many login attempts, try again later" });
+  }
+
   const parsed = loginSchema.safeParse(req.body);
 
   if (!parsed.success) {
@@ -20,19 +55,16 @@ authRouter.post("/login", async (req, res) => {
   }
 
   const user = await findUserByUsername(parsed.data.username);
+  const isValid = await bcrypt.compare(parsed.data.password, user?.passwordHash ?? dummyPasswordHash);
 
-  if (!user) {
+  if (!user || !isValid) {
     return res.status(401).json({ message: "Invalid credentials" });
   }
 
+  // Only revealed after the password is verified, so it cannot be used to
+  // enumerate accounts.
   if (!user.isActive) {
     return res.status(403).json({ message: "Account is disabled" });
-  }
-
-  const isValid = await bcrypt.compare(parsed.data.password, user.passwordHash);
-
-  if (!isValid) {
-    return res.status(401).json({ message: "Invalid credentials" });
   }
 
   const token = signToken({
@@ -57,6 +89,10 @@ authRouter.get("/me", authenticate, async (req: AuthenticatedRequest, res) => {
 
   if (!user) {
     return res.status(404).json({ message: "User not found" });
+  }
+
+  if (!user.isActive) {
+    return res.status(403).json({ message: "Account is disabled" });
   }
 
   return res.json({

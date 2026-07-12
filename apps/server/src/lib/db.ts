@@ -16,7 +16,14 @@ import { createMassachusettsShoeState, type Card, type TableShoeState } from "./
 type DbExecutor = Pool | PoolClient;
 type DbRow = Record<string, unknown>;
 
-const sslConfig = env.databaseSsl ? { rejectUnauthorized: false } : undefined;
+// DATABASE_SSL=true verifies the server certificate; use "no-verify" to opt
+// out explicitly (e.g. self-signed certs), never as a silent default.
+const sslConfig =
+  env.databaseSsl === "true"
+    ? { rejectUnauthorized: true }
+    : env.databaseSsl === "no-verify"
+      ? { rejectUnauthorized: false }
+      : undefined;
 
 export const pool = new Pool({
   connectionString: env.databaseUrl,

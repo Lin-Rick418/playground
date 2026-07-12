@@ -2,6 +2,7 @@ import { calculatePayout, dealRoundFromShoe, getMassachusettsCutCardConfig } fro
 import {
   createRound,
   ensureTableShoe,
+  findRoundById,
   findUserById,
   getActiveRound,
   getTableShoe,
@@ -68,7 +69,15 @@ async function createOpenRound(table: GameTableRecord, startTime = Date.now()) {
 async function settleActiveRound(roundId: string, tableId: string) {
   const affectedUserIds = new Set<string>();
 
-  await withTransaction(async (client) => {
+  const settled = await withTransaction(async (client) => {
+    // Guard against concurrent settlement (e.g. two worker processes): lock
+    // the round row and bail out unless it is still awaiting settlement.
+    const round = await findRoundById(roundId, client, { forUpdate: true });
+
+    if (!round || round.status !== "LOCKED") {
+      return false;
+    }
+
     let shoe = await getTableShoe(tableId, client, { forUpdate: true });
 
     if (!shoe || !shoe.shoeId || shoe.cards.length < MIN_CARDS_TO_COMPLETE_ROUND) {
@@ -102,7 +111,7 @@ async function settleActiveRound(roundId: string, tableId: string) {
 
     if (wasLastHand) {
       await replaceTableShoe(tableId, client);
-      return;
+      return true;
     }
 
     if (result.cutCardAppeared) {
@@ -110,7 +119,12 @@ async function settleActiveRound(roundId: string, tableId: string) {
     }
 
     await saveTableShoe(tableId, shoe.shoeId, shoe, client);
+    return true;
   });
+
+  if (!settled) {
+    return;
+  }
 
   await publishLiveEvent({
     type: "table_changed",

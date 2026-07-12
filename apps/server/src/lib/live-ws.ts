@@ -9,6 +9,7 @@ import {
   buildTableUserState,
   buildUserLiveState,
   findTableById,
+  findUserById,
 } from "./db.js";
 import { startLiveEventSubscriber, type LiveEvent } from "./live-events.js";
 import { getRoundConfig } from "./round-manager.js";
@@ -209,8 +210,28 @@ function parseClientMessage(data: string): ClientMessage | null {
   }
 }
 
+const WS_AUTH_PROTOCOL = "bearer";
+
+// The client sends its JWT via Sec-WebSocket-Protocol ("bearer, <token>")
+// instead of the query string, so tokens never appear in access logs.
+function extractTokenFromProtocolHeader(header: string | string[] | undefined) {
+  if (!header) {
+    return null;
+  }
+
+  const protocols = (Array.isArray(header) ? header.join(",") : header)
+    .split(",")
+    .map((value) => value.trim())
+    .filter(Boolean);
+
+  return protocols.find((value) => value !== WS_AUTH_PROTOCOL) ?? null;
+}
+
 export async function attachLiveWebSocketServer(server: Server) {
-  const wss = new WebSocketServer({ noServer: true });
+  const wss = new WebSocketServer({
+    noServer: true,
+    handleProtocols: (protocols) => (protocols.has(WS_AUTH_PROTOCOL) ? WS_AUTH_PROTOCOL : false),
+  });
   let heartbeatInterval: ReturnType<typeof setInterval> | null = null;
 
   if (!stopSubscriber) {
@@ -238,7 +259,7 @@ export async function attachLiveWebSocketServer(server: Server) {
       return;
     }
 
-    const token = requestUrl.searchParams.get("token");
+    const token = extractTokenFromProtocolHeader(request.headers["sec-websocket-protocol"]);
     if (!token) {
       socket.destroy();
       return;
@@ -246,6 +267,12 @@ export async function attachLiveWebSocketServer(server: Server) {
 
     try {
       const payload = verifyToken(token);
+      const user = await findUserById(payload.userId);
+
+      if (!user || !user.isActive) {
+        socket.destroy();
+        return;
+      }
 
       wss.handleUpgrade(request, socket, head, (ws) => {
         const connection: LiveSocketConnection = {
