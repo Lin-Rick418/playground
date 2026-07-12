@@ -17,7 +17,7 @@ import {
   ROADMAP_MIN_BIG_ROAD_COLS,
   ROADMAP_MIN_DERIVED_COLS,
 } from "../const/roadmap";
-import type { ActiveRound, BaccaratPairType, RoadVisibilitySettings } from "../types/domain";
+import type { ActiveRound, RoadVisibilitySettings } from "../types/domain";
 import {
   getBigEyeRoadColumnCount,
   getBigRoadColumnCount,
