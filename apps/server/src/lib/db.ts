@@ -15,6 +15,7 @@ import type {
 import { ACTIVE_ROUND_UNIQUE_INDEX } from "./active-round-invariant.js";
 import { createMassachusettsShoeState, type Card, type TableShoeState } from "./baccarat.js";
 import { coreDatabaseIntegritySql } from "./database-integrity.js";
+import { assertValidRoundWindow } from "./round-schedule.js";
 
 type DbExecutor = Pool | PoolClient;
 type DbRow = Record<string, unknown>;
@@ -468,6 +469,7 @@ export async function createRound(
 ) {
   const id = randomUUID();
   const createdAt = new Date().toISOString();
+  assertValidRoundWindow(input, createdAt);
 
   await executor.query(
     `INSERT INTO game_rounds (

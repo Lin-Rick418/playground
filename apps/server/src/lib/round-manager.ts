@@ -21,9 +21,11 @@ import {
 } from "./db.js";
 import { publishLiveEvent } from "./live-events.js";
 import {
+  type Clock,
   DEAL_ANIMATION_BUFFER_MS,
-  getScheduledBettingOpensAtMs,
+  getFreshRoundWindow,
   REVEAL_WINDOW_MS,
+  systemClock,
 } from "./round-schedule.js";
 import type { GameTableRecord } from "../types/domain.js";
 
@@ -33,10 +35,6 @@ const SETTLED_ROUND_RETENTION_MS = 24 * 60 * 60 * 1000;
 const MIN_CARDS_TO_COMPLETE_ROUND = 6;
 const ROUND_SCHEDULE_VERSION = 1;
 
-function getTableRoundDurationMs(table: GameTableRecord) {
-  return table.roundDurationMs;
-}
-
 const roundManagerState = globalThis as typeof globalThis & {
   __baccaratRoundManagerInterval?: NodeJS.Timeout;
   __baccaratNextCleanupAt?: number;
@@ -45,25 +43,24 @@ const roundManagerState = globalThis as typeof globalThis & {
 
 async function createOpenRound(
   table: GameTableRecord,
-  startTime = Date.now(),
   initializePhase = false,
+  clock: Clock = systemClock,
 ) {
   const { round, created } = await createOrGetActiveRound(
     () =>
       withTransaction(async (client) => {
         const shoe = await ensureTableShoe(table.id, client);
         const shouldApplyPhase = initializePhase || table.roundScheduleVersion < ROUND_SCHEDULE_VERSION;
-        const opensAtMs = getScheduledBettingOpensAtMs(table, startTime, shouldApplyPhase);
-        const opensAt = new Date(opensAtMs).toISOString();
-        const closesAt = new Date(opensAtMs + getTableRoundDurationMs(table)).toISOString();
+        // Read the clock only after preceding DB work. createRound immediately
+        // validates this window against its own persistence timestamp.
+        const roundWindow = getFreshRoundWindow(table, clock, shouldApplyPhase);
 
         const nextRound = await createRound(
           {
             tableId: table.id,
             shoeId: shoe.shoeId,
             status: "OPEN",
-            bettingOpensAt: opensAt,
-            bettingClosesAt: closesAt,
+            ...roundWindow,
           },
           client,
         );
@@ -173,7 +170,7 @@ async function tickTable(table: GameTableRecord) {
   const now = Date.now();
 
   if (!round) {
-    await createOpenRound(table, now, true);
+    await createOpenRound(table, true);
     return;
   }
 
@@ -191,7 +188,7 @@ async function tickTable(table: GameTableRecord) {
 
   if (round.status === "LOCKED" && now >= closesAt + REVEAL_WINDOW_MS) {
     await settleActiveRound(round.id, table.id);
-    await createOpenRound(table, now);
+    await createOpenRound(table);
   }
 }
 
