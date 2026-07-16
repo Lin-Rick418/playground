@@ -68,17 +68,29 @@ sudo chmod 600 /etc/baccarat/baccarat.env
 - `JWT_SECRET`
 - `DATABASE_URL`
 
-## 6. 初始資料
+`baccarat.env` 必須是由執行服務的 `baccarat` 使用者擁有、mode 為 `0600`（唯讀部署也可用 `0400`）的 regular file。不要使用 symlink，也不要透過 command substitution 將 env file 展開成 command arguments，或把 secret 直接寫在 command line；這些方式會造成 shell word splitting，並可能讓 secret 出現在 `ps`、`/proc/*/cmdline` 或操作紀錄。
 
-```bash
-cd /opt/baccarat/current
-sudo -u baccarat env $(cat /etc/baccarat/baccarat.env | xargs) npm run db:seed
+systemd services 直接使用 `EnvironmentFile=/etc/baccarat/baccarat.env`。需要執行一次性維運指令時，使用專案提供的安全 loader；它不經 shell 展開，並會先檢查檔案型態、owner 與 mode：
+
+```text
+node deploy/bin/run-with-env-file.mjs <env-file> -- <command> [args...]
 ```
+
+env file 使用每行 `KEY=value` 的格式。含空白或需要保留前後空白時可使用單引號或雙引號；`$`、backtick、`#`、`=` 等字元只會作為值傳給 child process，不會被當成 shell 指令執行。loader 的錯誤訊息不會印出變數值。
+
+## 6. 初始資料
 
 注意：
 
-- `npm run db:seed` 只應在你確定需要建立開發/測試用 demo 帳號時執行
+- production 不可執行 `npm run db:seed`；它會建立使用公開預設密碼的 demo 帳號
 - 正式環境的 `api` 與 `worker` 啟動時只會初始化資料表、桌別與牌靴，不會自動建立 `admin/admin123` 或 `player1/player123`
+- 只有在明確隔離的 development/staging 環境需要 demo 資料時，才可使用下列安全 wrapper；完成測試後應移除 demo 帳號
+
+```bash
+sudo -u baccarat node /opt/baccarat/current/deploy/bin/run-with-env-file.mjs \
+  /etc/baccarat/baccarat.env -- \
+  npm --prefix /opt/baccarat/current run db:seed
+```
 
 ## 7. 安裝 systemd services
 
