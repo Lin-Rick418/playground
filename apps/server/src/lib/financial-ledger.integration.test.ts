@@ -12,17 +12,10 @@ test(
     process.env.DATABASE_URL = testDatabaseUrl;
 
     const setupPool = new Pool({ connectionString: testDatabaseUrl });
+    const { migrationDefinitions } = await import("../migrations/index.js");
+    const { runMigrations } = await import("./migration-runner.js");
+    await runMigrations(setupPool, migrationDefinitions.slice(0, 4));
     await setupPool.query(`
-      CREATE TABLE users (
-        id TEXT PRIMARY KEY,
-        username TEXT NOT NULL UNIQUE,
-        password_hash TEXT NOT NULL,
-        role TEXT NOT NULL,
-        is_active BOOLEAN NOT NULL DEFAULT TRUE,
-        balance INTEGER NOT NULL DEFAULT 0,
-        created_at TIMESTAMPTZ NOT NULL,
-        updated_at TIMESTAMPTZ NOT NULL
-      );
       INSERT INTO users (
         id, username, password_hash, role, is_active, balance, created_at, updated_at
       ) VALUES (
@@ -35,7 +28,6 @@ test(
       applyBalanceMutation,
       createPlayer,
       ensureSeedData,
-      initializeDatabase,
       pool,
       reconcileAllUserBalances,
       reconcileUserBalance,
@@ -43,7 +35,7 @@ test(
     } = await import("./db.js");
 
     try {
-      await initializeDatabase();
+      await runMigrations(pool);
       await ensureSeedData({ seedDemoUsers: true });
 
       const legacyLedger = await pool.query(
@@ -71,8 +63,8 @@ test(
       ]);
 
       const player = await createPlayer({
-        username: "ledger-player",
-        passwordHash: "hash",
+        username: "ledger_player",
+        passwordHash: `$2b$12$${"a".repeat(53)}`,
         balance: 1000,
         actorId: "admin-actor",
       });
@@ -152,6 +144,10 @@ test(
           "UPDATE financial_ledger_entries SET metadata = '{}'::jsonb WHERE user_id = $1",
           [player.id],
         ),
+        (error: unknown) => (error as { code?: string }).code === "55000",
+      );
+      await assert.rejects(
+        pool.query("UPDATE users SET balance = balance + 100 WHERE id = $1", [player.id]),
         (error: unknown) => (error as { code?: string }).code === "55000",
       );
       await assert.rejects(

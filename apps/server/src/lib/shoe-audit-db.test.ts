@@ -4,6 +4,7 @@ import test from "node:test";
 import { Pool } from "pg";
 import { dealRoundFromShoe } from "./baccarat.js";
 import { verifyShoeAudit } from "./shoe-audit.js";
+import { runMigrations } from "./migration-runner.js";
 
 const testDatabaseUrl = process.env.TEST_DATABASE_URL;
 
@@ -27,7 +28,7 @@ test("persists active secrets across restart and immutable proof after rotation"
   const fundingActorId = randomUUID();
 
   try {
-    await db.initializeDatabase();
+    await runMigrations(db.pool);
     const tableId = randomUUID();
     await db.pool.query(
       `INSERT INTO game_tables (id, code, name, display_order, created_at)
@@ -201,8 +202,8 @@ test("persists active secrets across restart and immutable proof after rotation"
       tableId: settlementTableId,
       shoeId: "not-the-locked-table-shoe",
       status: "LOCKED",
-      bettingOpensAt: new Date(Date.now() - 2_000).toISOString(),
-      bettingClosesAt: new Date(Date.now() - 1_000).toISOString(),
+      bettingOpensAt: new Date(Date.now() + 1_000).toISOString(),
+      bettingClosesAt: new Date(Date.now() + 2_000).toISOString(),
     });
     await db.withTransaction(async (client) => {
       const bet = await db.createBet(
@@ -246,8 +247,8 @@ test("persists active secrets across restart and immutable proof after rotation"
       tableId: settlementTableId,
       shoeId: settlementShoe.shoeId,
       status: "LOCKED",
-      bettingOpensAt: new Date(Date.now() - 2_000).toISOString(),
-      bettingClosesAt: new Date(Date.now() - 1_000).toISOString(),
+      bettingOpensAt: new Date(Date.now() + 1_000).toISOString(),
+      bettingClosesAt: new Date(Date.now() + 2_000).toISOString(),
     });
     await db.withTransaction(async (client) => {
       const bet = await db.createBet(
@@ -291,7 +292,12 @@ test("persists active secrets across restart and immutable proof after rotation"
         "Legacy table",
         50,
         "legacy-shoe",
-        JSON.stringify([{ suit: "S", rank: "A" }]),
+        JSON.stringify({
+          cards: [{ suit: "S", rank: "A" }],
+          cutCardRemaining: 1,
+          cutCardReached: true,
+          lastHandPending: true,
+        }),
         new Date().toISOString(),
       ],
     );
@@ -305,7 +311,7 @@ test("persists active secrets across restart and immutable proof after rotation"
       tableId: legacyTableId,
       shoeId: "legacy-shoe",
       status: "OPEN",
-      bettingOpensAt: new Date(Date.now() - 1_000).toISOString(),
+      bettingOpensAt: new Date(Date.now() + 1_000).toISOString(),
       bettingClosesAt: new Date(Date.now() + 30_000).toISOString(),
     });
     await db.withTransaction(async (client) => {
@@ -406,12 +412,10 @@ test("persists active secrets across restart and immutable proof after rotation"
     assert.equal((await db.getShoeAuditBundle(raceShoe.shoeId))?.reveal?.reason, "CONCURRENT_ROTATION");
 
     await db.pool.query("DELETE FROM shoe_secrets WHERE shoe_id = $1", [nextShoe.shoeId]);
-    await assert.rejects(db.ensureTableShoe(tableId), /active seed is missing/);
-    await assert.rejects(
-      db.replaceTableShoe(tableId, db.pool, "ROTATED"),
-      /active seed is missing/,
-    );
-    assert.equal((await db.getTableShoe(tableId))?.shoeId, nextShoe.shoeId);
+    const recoveredShoe = await db.ensureTableShoe(tableId);
+    assert.notEqual(recoveredShoe.shoeId, nextShoe.shoeId);
+    assert.equal((await db.getShoeAuditBundle(nextShoe.shoeId))?.reveal, null);
+    assert.equal((await db.getTableShoe(tableId))?.shoeId, recoveredShoe.shoeId);
   } finally {
     await db.pool.end();
     await admin.query(`DROP SCHEMA ${schema} CASCADE`);

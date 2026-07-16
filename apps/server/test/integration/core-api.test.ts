@@ -5,8 +5,9 @@ import type { AddressInfo } from "node:net";
 import test, { after, before } from "node:test";
 import bcrypt from "bcryptjs";
 import { createApp } from "../../src/app.js";
-import { calculatePayout, type Card, type TableShoeState } from "../../src/lib/baccarat.js";
-import { initializeDatabase, pool } from "../../src/lib/db.js";
+import { calculatePayout, type TableShoeState } from "../../src/lib/baccarat.js";
+import { applyBalanceMutation, pool, replaceTableShoe, withTransaction } from "../../src/lib/db.js";
+import { runMigrations } from "../../src/lib/migration-runner.js";
 import { settleActiveRound } from "../../src/lib/round-manager.js";
 
 type TestUser = {
@@ -20,6 +21,7 @@ type TestUser = {
 let server: Server;
 let baseUrl: string;
 const runId = randomUUID().slice(0, 8);
+let nextDisplayOrder = 100;
 
 function createTestApp() {
   return createApp();
@@ -44,17 +46,33 @@ async function insertUser(input: {
   await pool.query(
     `INSERT INTO users (
        id, username, password_hash, role, is_active, balance, created_at, updated_at
-     ) VALUES ($1, $2, $3, $4, $5, $6, $7, $7)`,
+     ) VALUES ($1, $2, $3, $4, $5, 0, $6, $6)`,
     [
       user.id,
       user.username,
       await bcrypt.hash(user.password, 4),
       user.role,
       input.isActive ?? true,
-      user.balance,
       now,
     ],
   );
+
+  if (user.balance > 0) {
+    await withTransaction(async (client) => {
+      await applyBalanceMutation(
+        {
+          userId: user.id,
+          delta: user.balance,
+          actorType: "SYSTEM",
+          source: "INITIAL_FUNDING",
+          referenceType: "USER",
+          referenceId: user.id,
+          metadata: { integrationTest: true },
+        },
+        client,
+      );
+    });
+  }
 
   return user;
 }
@@ -64,14 +82,15 @@ async function insertTable(shoe?: { shoeId: string; state: TableShoeState }) {
   const now = new Date().toISOString();
 
   await pool.query(
-    `INSERT INTO game_tables (
+     `INSERT INTO game_tables (
        id, code, name, display_order, round_duration_ms, round_phase_offset_ms,
        round_schedule_version, min_bet, max_bet, current_shoe_id, shoe_state, created_at
-     ) VALUES ($1, $2, $3, 1, 30000, 0, 1, 100, 5000, $4, $5::jsonb, $6)`,
+     ) VALUES ($1, $2, $3, $4, 30000, 0, 1, 100, 5000, $5, $6::jsonb, $7)`,
     [
       tableId,
       `T-${tableId.slice(0, 8)}`,
       "Integration Table",
+      nextDisplayOrder++,
       shoe?.shoeId ?? "",
       JSON.stringify(shoe?.state ?? {}),
       now,
@@ -149,7 +168,7 @@ async function login(user: TestUser) {
 }
 
 before(async () => {
-  await initializeDatabase();
+  await runMigrations(pool);
   server = createServer(createTestApp());
   await new Promise<void>((resolve, reject) => {
     server.once("error", reject);
@@ -169,8 +188,8 @@ after(async () => {
 });
 
 test("HTTP auth accepts players and removes the admin surface", async () => {
-  const admin = await insertUser({ username: `admin-ci-${runId}`, role: "ADMIN" });
-  const player = await insertUser({ username: `player-ci-${runId}`, balance: 1_000 });
+  const admin = await insertUser({ username: `admin_ci_${runId}`, role: "ADMIN" });
+  const player = await insertUser({ username: `player_ci_${runId}`, balance: 1_000 });
   const playerToken = await login(player);
 
   const adminLogin = await request<{ code: string; message: string }>("/auth/login", {
@@ -182,7 +201,7 @@ test("HTTP auth accepts players and removes the admin surface", async () => {
 
   const unknownLogin = await request<{ message: string }>("/auth/login", {
     method: "POST",
-    body: { username: `missing-${runId}`, password: "wrong" },
+    body: { username: `missing_${runId}`, password: "wrong" },
   });
   assert.equal(unknownLogin.status, 401);
   assert.equal(unknownLogin.body.message, "Invalid credentials");
@@ -202,7 +221,7 @@ test("HTTP auth accepts players and removes the admin surface", async () => {
 });
 
 test("bet placement debits exactly once and insufficient balance rolls back", async () => {
-  const player = await insertUser({ username: `bettor-ci-${runId}`, balance: 1_000 });
+  const player = await insertUser({ username: `bettor_ci_${runId}`, balance: 1_000 });
   const tableId = await insertTable();
   await insertRound({ tableId, status: "OPEN" });
   const token = await login(player);
@@ -251,33 +270,31 @@ test("bet placement debits exactly once and insufficient balance rolls back", as
 });
 
 test("settlement credits the calculated payout once and only once", async () => {
-  const player = await insertUser({ username: `settlement-ci-${runId}`, balance: 900 });
-  const shoeId = randomUUID();
-  const cards: Card[] = [
-    { rank: "A", suit: "S" },
-    { rank: "A", suit: "H" },
-    { rank: "3", suit: "S" },
-    { rank: "2", suit: "S" },
-    { rank: "K", suit: "S" },
-    { rank: "9", suit: "S" },
-  ];
-  const tableId = await insertTable({
-    shoeId,
-    state: {
-      cards,
-      cutCardRemaining: 1,
-      cutCardReached: false,
-      lastHandPending: false,
-    },
-  });
+  const player = await insertUser({ username: `settlement_ci_${runId}`, balance: 1_000 });
+  const tableId = await insertTable();
+  const shoeId = (await replaceTableShoe(tableId)).shoeId;
   const roundId = await insertRound({ tableId, shoeId, status: "LOCKED" });
   const betId = randomUUID();
 
-  await pool.query(
-    `INSERT INTO bets (id, user_id, round_id, bet_type, amount, payout, created_at)
-     VALUES ($1, $2, $3, 'PLAYER', 100, 0, $4)`,
-    [betId, player.id, roundId, new Date().toISOString()],
-  );
+  await withTransaction(async (client) => {
+    await client.query(
+      `INSERT INTO bets (id, user_id, round_id, bet_type, amount, payout, created_at)
+       VALUES ($1, $2, $3, 'PLAYER', 100, 0, $4)`,
+      [betId, player.id, roundId, new Date().toISOString()],
+    );
+    await applyBalanceMutation(
+      {
+        userId: player.id,
+        delta: -100,
+        actorType: "PLAYER",
+        actorId: player.id,
+        source: "BET_DEBIT",
+        referenceType: "BET",
+        referenceId: betId,
+      },
+      client,
+    );
+  });
 
   await settleActiveRound(roundId, tableId);
 

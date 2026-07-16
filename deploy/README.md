@@ -85,17 +85,29 @@ openssl rand -base64 48
 
 `BUSINESS_TIME_ZONE` 使用 IANA timezone，預設為 `Asia/Taipei`。玩家本日收益會以此 timezone 的 calendar day、依 round `settled_at` 認列，公式為 `total payout - total bet`；修改後必須重啟 API。
 
-## 6. 初始資料
+## 6. Database migration 與初始資料
 
 ```bash
-cd /opt/baccarat/current
-sudo -u baccarat env $(cat /etc/baccarat/baccarat.env | xargs) npm run db:seed
+sudo -u baccarat bash -lc '
+  set -a
+  source /etc/baccarat/baccarat.env
+  set +a
+  cd /opt/baccarat/current
+  npm run db:migrate
+  npm run db:migrate:status
+  npm run db:bootstrap
+'
 ```
 
 注意：
 
+- `api`、`worker`、bootstrap 與 seed 不會執行 DDL，schema 未升至目前版本時會直接停止
+- migration 必須在啟動服務或執行 bootstrap/seed 前完成
+- `npm run db:bootstrap` 建立服務所需桌別與牌靴；此操作可安全重跑，首次部署必須執行
 - `npm run db:seed` 只應在你確定需要建立開發/測試用 demo 帳號時執行
-- 正式環境的 `api` 與 `worker` 啟動時只會初始化資料表、桌別與牌靴，不會自動建立 demo player；player app 不提供 admin 登入或管理介面
+- 如確定需要 demo 資料，請在上述 shell 中於 migration 後手動執行 `npm run db:seed`
+- 正式環境的 `api` 與 `worker` 不會自動建立 demo player；player app 不提供 admin 登入或管理介面
+- migration 操作與故障處理請見 [database-migrations.md](database-migrations.md)
 
 ## 7. 安裝 systemd services
 
@@ -154,12 +166,25 @@ sudo certbot --nginx -d example.com
 
 ```bash
 cd /opt/baccarat/current
+sudo systemctl stop baccarat-api baccarat-worker
+pg_dump -U baccarat -Fc baccarat > /var/backups/baccarat-before-deploy-$(date +%F-%H%M%S).dump
 git pull
 npm ci
 npm run build
-sudo systemctl restart baccarat-api baccarat-worker
+sudo -u baccarat bash -lc '
+  set -a
+  source /etc/baccarat/baccarat.env
+  set +a
+  cd /opt/baccarat/current
+  npm run db:migrate
+  npm run db:migrate:status
+  npm run db:bootstrap
+'
+sudo systemctl start baccarat-api baccarat-worker
 sudo systemctl reload nginx
 ```
+
+若 migration 或狀態檢查失敗，不要啟動服務；依 [database-migrations.md](database-migrations.md) 處理後再繼續。
 
 ## 11. 備份
 

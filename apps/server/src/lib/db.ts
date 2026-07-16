@@ -1,7 +1,6 @@
 import { randomUUID } from "node:crypto";
 import bcrypt from "bcryptjs";
-import { Pool, PoolClient, type QueryResultRow } from "pg";
-import { env } from "../config/env.js";
+import type { Pool, PoolClient, QueryResultRow } from "pg";
 import type {
   BetType,
   GameRoundRecord,
@@ -45,33 +44,14 @@ import {
   type ShoeCommitmentRecord,
   type ShoeDealAuditRecord,
 } from "./shoe-audit.js";
+import { pool } from "./database.js";
+import { assertDatabaseSchemaCurrent } from "./migration-runner.js";
+
+export { pool } from "./database.js";
 
 type DbExecutor = Pool | PoolClient;
 type DbRow = Record<string, unknown>;
 type PersistedTableShoe = TableShoeState & { shoeId: string };
-
-// DATABASE_SSL=true verifies the server certificate; use "no-verify" to opt
-// out explicitly (e.g. self-signed certs), never as a silent default.
-const sslConfig =
-  env.databaseSsl === "true"
-    ? { rejectUnauthorized: true }
-    : env.databaseSsl === "no-verify"
-      ? { rejectUnauthorized: false }
-      : undefined;
-
-export const pool = new Pool({
-  connectionString: env.databaseUrl,
-  ssl: sslConfig,
-  max: env.databasePoolMax,
-  connectionTimeoutMillis: env.databaseConnectionTimeoutMs,
-  idleTimeoutMillis: env.databaseIdleTimeoutMs,
-  statement_timeout: env.databaseStatementTimeoutMs,
-  query_timeout: env.databaseStatementTimeoutMs,
-});
-
-pool.on("error", (error: Error) => {
-  console.error("Postgres pool error", error);
-});
 
 function toIsoString(value: unknown) {
   if (value instanceof Date) {
@@ -142,6 +122,8 @@ export async function withTransaction<T>(handler: (client: PoolClient) => Promis
 }
 
 export async function initializeDatabase() {
+  throw new Error("Runtime schema initialization is disabled; run npm run db:migrate explicitly");
+
   await pool.query(`
     CREATE TABLE IF NOT EXISTS game_tables (
       id TEXT PRIMARY KEY,
@@ -2242,7 +2224,7 @@ async function seedDemoUsers(executor: PoolClient) {
 }
 
 export async function ensureSeedData(options?: { seedDemoUsers?: boolean }) {
-  const shouldSeedDemoUsers = options?.seedDemoUsers ?? !env.isProduction;
+  const shouldSeedDemoUsers = options?.seedDemoUsers ?? false;
   const configuredTables = [
     { code: "A01", name: "極速廳 A01", displayOrder: 1, roundDurationMs: 15000, roundPhaseOffsetMs: 0, minBet: 100, maxBet: 10000 },
     { code: "A02", name: "極速廳 A02", displayOrder: 2, roundDurationMs: 15000, roundPhaseOffsetMs: 2000, minBet: 100, maxBet: 10000 },
@@ -2250,9 +2232,9 @@ export async function ensureSeedData(options?: { seedDemoUsers?: boolean }) {
     { code: "H01", name: "高額廳 H01", displayOrder: 4, roundDurationMs: 30000, roundPhaseOffsetMs: 6000, minBet: 1000, maxBet: 50000 },
   ] as const;
 
-  await withAdvisoryLock(INIT_LOCK_KEY, async (client) => {
-    await initializeDatabase();
+  await assertDatabaseSchemaCurrent(pool);
 
+  await withAdvisoryLock(INIT_LOCK_KEY, async (client) => {
     if (shouldSeedDemoUsers) {
       await withTransaction((tx) => seedDemoUsers(tx));
     }

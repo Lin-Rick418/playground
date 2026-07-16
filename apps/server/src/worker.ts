@@ -1,8 +1,10 @@
 import { hostname } from "node:os";
 import { randomUUID } from "node:crypto";
-import { ensureSeedData, recordServiceHeartbeat } from "./lib/db.js";
+import { ensureSeedData, pool, recordServiceHeartbeat } from "./lib/db.js";
+import { assertDatabaseSchemaCurrent } from "./lib/migration-runner.js";
 import { startRoundManager } from "./lib/round-manager.js";
 
+await assertDatabaseSchemaCurrent(pool);
 await ensureSeedData();
 const workerInstanceId = `${hostname()}:${process.pid}:${randomUUID()}`;
 const HEARTBEAT_INTERVAL_MS = 5_000;

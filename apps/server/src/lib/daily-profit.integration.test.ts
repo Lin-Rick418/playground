@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { after, before, describe, it } from "node:test";
 import { getBusinessDayWindow } from "./business-day.js";
+import { runMigrations } from "./migration-runner.js";
 
 const shouldRun = process.env.RUN_DAILY_PROFIT_INTEGRATION_TESTS === "true";
 
@@ -31,7 +32,7 @@ describe("daily profit PostgreSQL aggregation", { skip: !shouldRun }, () => {
     );
     assert.equal(existingTables.rows[0]?.count, "0", "Integration test database must start empty");
 
-    await database.initializeDatabase();
+    await runMigrations(database.pool);
 
     const createdAt = new Date("2026-07-01T00:00:00.000Z");
     await database.pool.query(

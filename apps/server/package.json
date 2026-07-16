@@ -17,7 +17,11 @@
     "start": "node dist/index.js",
     "start:worker": "node dist/worker.js",
     "db:seed": "NODE_ENV=development tsx src/scripts/seed.ts",
-    "audit:verify": "tsx src/scripts/verify-shoe-audit.ts"
+    "audit:verify": "tsx src/scripts/verify-shoe-audit.ts",
+    "test:migrations-db": "NODE_ENV=test RUN_MIGRATION_INTEGRATION_TESTS=true tsx --test src/lib/migration-runner.integration.test.ts",
+    "db:migrate": "tsx src/scripts/migrate.ts",
+    "db:migrate:status": "tsx src/scripts/migration-status.ts",
+    "db:bootstrap": "tsx src/scripts/bootstrap.ts"
   },
   "dependencies": {
     "@baccarat/contracts": "*",
