@@ -2,7 +2,9 @@
 
 本目錄提供 production env、nginx、systemd、atomic deployment、rollback 與 PostgreSQL backup 工具。正式服務只有 player app；本 repository 不提供 admin 頁面或 admin API。
 
-## 1. Host 與 runtime
+部署安全邊界如下：deployer 只能在 root 建立的 staging 內 build；只有 root 可以 promote release、修改 `current`／`previous` symlink；API、worker、backup 使用不同 UID，不能修改 code、env 或其他 service 的 runtime data。
+
+## 1. Host、runtime 與身份
 
 以下範例以 Ubuntu 24.04、PostgreSQL 16、nginx 為基礎：
 
@@ -11,43 +13,53 @@ sudo apt update
 sudo apt install -y nginx postgresql postgresql-contrib curl
 ```
 
-安裝 `.nvmrc` 指定的 Node `22.19.0` 與 npm `10.9.3`，部署前確認：
+安裝 `.nvmrc` 指定的 Node `22.19.0` 與 npm `10.9.3`，固定於 `/usr/bin/node` 可取得的位置，然後確認：
 
 ```bash
 node --version
 npm --version
 npm run verify:runtime
+systemd-analyze --version
 ```
 
-建立 runtime user 與目錄。`/opt/baccarat`、`releases`、`current` 與 `previous` 必須由 root 控制，runtime service 不得修改 release 或 symlink：
+建立 deploy group、共用唯讀 config group 與三個獨立 runtime account。runtime account 不得加入 `deployer`：
 
 ```bash
-sudo useradd --system --create-home --shell /usr/sbin/nologin baccarat
-sudo install -d -o root -g root -m 0755 /opt/baccarat /opt/baccarat/releases
-sudo install -d -o baccarat -g baccarat -m 0700 /etc/baccarat /var/backups/baccarat
+sudo groupadd --force deployer
+sudo groupadd --system --force baccarat
+for service in api worker backup; do
+  sudo useradd --system --gid baccarat --no-create-home --home-dir /nonexistent \
+    --shell /usr/sbin/nologin "baccarat-$service"
+done
+sudo usermod -aG deployer <deploy-user>
+
+sudo install -d -o root -g deployer -m 0755 /opt/baccarat /opt/baccarat/releases
+sudo install -d -o root -g baccarat -m 0750 /etc/baccarat
+sudo install -d -o baccarat-backup -g baccarat -m 0700 /var/backups/baccarat
 ```
 
 建立 PostgreSQL role/database 後安裝 env：
 
 ```bash
-sudo install -o baccarat -g baccarat -m 0600 \
+sudo install -o root -g baccarat -m 0640 \
   deploy/env/baccarat.env.example /etc/baccarat/baccarat.env
 sudoedit /etc/baccarat/baccarat.env
 ```
 
-必須替換 `JWT_SECRET` 與 `DATABASE_URL`。建議用 `openssl rand -base64 48` 產生每個環境獨立的 JWT secret。`BUSINESS_TIME_ZONE` 必須是 IANA timezone，預設 `Asia/Taipei`。env parser 不使用 `eval`、`xargs` 或 command substitution；database URL 只透過 process environment 傳給 PostgreSQL tools，不會出現在 argv。
+必須替換 `JWT_SECRET` 與 `DATABASE_URL`。建議用 `openssl rand -base64 48` 產生每個環境獨立的 JWT secret。`BUSINESS_TIME_ZONE` 必須是 IANA timezone，預設 `Asia/Taipei`。env 不得可由 group 寫入或由 other 讀取；parser 不使用 `eval`、`xargs` 或 command substitution，database URL 只透過 process environment 傳給 PostgreSQL tools，不會出現在 argv。
 
-## 2. 安裝 services 與 nginx
+## 2. 安裝與驗證 services／nginx
 
 ```bash
-sudo install -m 0644 deploy/systemd/baccarat-api.service /etc/systemd/system/
-sudo install -m 0644 deploy/systemd/baccarat-worker.service /etc/systemd/system/
-sudo install -m 0644 deploy/systemd/baccarat-backup.service /etc/systemd/system/
-sudo install -m 0644 deploy/systemd/baccarat-backup.timer /etc/systemd/system/
+sudo install -o root -g root -m 0644 deploy/systemd/baccarat-api.service /etc/systemd/system/
+sudo install -o root -g root -m 0644 deploy/systemd/baccarat-worker.service /etc/systemd/system/
+sudo install -o root -g root -m 0644 deploy/systemd/baccarat-backup.service /etc/systemd/system/
+sudo install -o root -g root -m 0644 deploy/systemd/baccarat-backup.timer /etc/systemd/system/
+sudo systemd-analyze verify /etc/systemd/system/baccarat-*.service
 sudo systemctl daemon-reload
 sudo systemctl enable baccarat-api baccarat-worker baccarat-backup.timer
 
-sudo install -m 0644 deploy/nginx/baccarat.conf /etc/nginx/sites-available/baccarat.conf
+sudo install -o root -g root -m 0644 deploy/nginx/baccarat.conf /etc/nginx/sites-available/baccarat.conf
 sudo ln -s /etc/nginx/sites-available/baccarat.conf /etc/nginx/sites-enabled/baccarat.conf
 sudo nginx -t
 sudo systemctl reload nginx
@@ -68,6 +80,7 @@ npm run check:static
 npm test
 npm run test:release
 npm run test:ops
+npm run test:deploy
 npm run release:preflight
 ```
 
@@ -75,7 +88,7 @@ npm run release:preflight
 
 ## 4. Atomic deployment
 
-第一次永遠先 dry-run：
+用 deploy user 的乾淨 checkout 執行，第一次永遠先 dry-run。`sudo` 時腳本以 `SUDO_USER` 執行 build/hook，之後由 root freeze 與 promote；也可明確傳入 `--build-user`：
 
 ```bash
 sha="$(git rev-parse HEAD)"
@@ -83,7 +96,7 @@ sudo deploy/scripts/deploy.sh --source "$(pwd)" --sha "$sha" --dry-run
 sudo deploy/scripts/deploy.sh --source "$(pwd)" --sha "$sha" --apply
 ```
 
-流程依序：驗證 source/SHA/env/lock、建立 staging、執行 `npm ci` 與 build、檢查 migration rollback compatibility、執行 migration、將 release 設為唯讀、原子切換 `current`、restart API/worker 並檢查 readiness。失敗時會切回已驗證相容的 previous release；deploy command 仍回傳 non-zero。
+流程依序：驗證 source/SHA/env/lock、建立 staging、執行 `npm ci` 與 build、檢查 migration rollback compatibility、執行 migration、把完整 tree freeze 成 root-owned immutable release、原子切換 `current`、restart API/worker 並檢查 readiness。失敗時會切回已驗證相容的 previous release；deploy command 仍回傳 non-zero。
 
 Release 存在且 marker 完整時不會重跑 build/migration。相同 SHA 已 active 時只做 readiness。腳本不會自動刪除 `.staging`，因 migration 狀態可能未知；先檢查 log 與 `.migration-started` 再人工處理。部署鎖位於 `/opt/baccarat/.deploy.lock`，只有確認沒有 deploy/rollback process 時才可移除 stale lock。
 
@@ -105,18 +118,23 @@ Optional executable hooks 位於 `deploy/hooks/`：
 
 首次部署在 migration 後執行 `npm run db:bootstrap` 建立必要桌別與牌靴。`npm run db:seed` 僅供明確需要 demo player 的開發或測試環境，production 不會自動建立帳號。
 
-## 5. 驗證與 rollback
+## 5. 驗證、sandbox 與 rollback
 
 ```bash
 readlink -f /opt/baccarat/current
 curl --fail http://127.0.0.1:4000/health
 sudo systemctl status baccarat-api baccarat-worker
+sudo systemd-analyze security --no-pager baccarat-api.service
+sudo systemd-analyze security --no-pager baccarat-worker.service
+sudo /opt/baccarat/current/deploy/scripts/validate-install-permissions.sh
 sudo journalctl -u baccarat-api -u baccarat-worker --since '-10 minutes'
 curl --fail https://example.com/api/build-metadata
 curl --fail https://example.com/build-metadata.json
 ```
 
 `/health/live` 只確認 process；`/health/ready` 與相容路徑 `/health` 會檢查 PostgreSQL 與 worker heartbeat。nginx 對外路徑加上 `/api`。
+
+API／worker 只有自己的 `/run/baccarat-*` 與 private `/tmp` 可寫。`ProtectSystem=strict`、空 capability set、namespace/kernel protection 與 syscall allow-list 阻止修改 release/env。`MemoryDenyWriteExecute=false` 是 Node/V8 JIT 的相容例外；除非先完成 `node --jitless` 功能與效能驗證，不得改為 `true`。
 
 Rollback 預設也是 dry-run：
 
@@ -126,18 +144,18 @@ sudo deploy/scripts/rollback.sh --apply
 sudo deploy/scripts/rollback.sh --target-sha <sha> --dry-run
 ```
 
-執行過 migration 的 release 只能 rollback 到 marker 中已驗證相容的 SHA。rollback readiness 失敗時會恢復原 active symlink 並 restart，之後必須人工確認服務。
+執行過 migration 的 release 只能 rollback 到 marker 中已驗證相容的 SHA。rollback readiness 失敗時會恢復原 active symlink 並 restart。完整事故流程見 [ROLLBACK.md](ROLLBACK.md)。
 
 ## 6. Backup、restore 與 retention
 
 ```bash
-sudo -u baccarat /opt/baccarat/current/deploy/scripts/backup.sh create \
+sudo -u baccarat-backup /opt/baccarat/current/deploy/scripts/backup.sh create \
   --env-file /etc/baccarat/baccarat.env --backup-dir /var/backups/baccarat
 
-sudo -u baccarat /opt/baccarat/current/deploy/scripts/backup.sh verify \
+sudo -u baccarat-backup /opt/baccarat/current/deploy/scripts/backup.sh verify \
   /var/backups/baccarat/<backup>.dump
 
-sudo -u baccarat /opt/baccarat/current/deploy/scripts/backup.sh prune \
+sudo -u baccarat-backup /opt/baccarat/current/deploy/scripts/backup.sh prune \
   --backup-dir /var/backups/baccarat --keep 14
 ```
 
@@ -154,9 +172,3 @@ SELECT * FROM financial_balance_reconciliation WHERE NOT is_reconciled;
 ```
 
 Access JWT 只存 browser memory；refresh token 使用 `HttpOnly`、`SameSite=Strict` cookie，資料庫只保存 hash 並於每次 refresh rotation。logout 或改密碼會 revoke server session。DB pool、API 與 worker instance 數必須一併納入 PostgreSQL `max_connections` 規劃。
-
-本機驗證 operations tooling：
-
-```bash
-npm run test:ops
-```

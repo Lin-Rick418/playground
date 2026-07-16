@@ -26,8 +26,11 @@ assert_private_file() {
     die "cannot inspect permissions for $file"
   fi
 
-  if (( (8#$mode & 077) != 0 )); then
-    die "environment file must not be group/world accessible: $file (mode $mode)"
+  # Production env files are root-owned and may be group-readable by the
+  # dedicated runtime config group. They must never be group-writable or
+  # accessible by other users.
+  if (( (8#$mode & 027) != 0 )); then
+    die "environment file must not be group-writable or world-accessible: $file (mode $mode)"
   fi
 }
 

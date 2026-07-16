@@ -48,15 +48,42 @@ export function createBuildMetadata({ branch, builtAt, commitSha, dirty }) {
   };
 }
 
+export function readBuildMetadataEnvironment(environment = process.env) {
+  const commitSha = environment.BUILD_COMMIT_SHA;
+  const branch = environment.BUILD_BRANCH;
+  const dirtyValue = environment.BUILD_DIRTY;
+  const hasAnyValue = commitSha !== undefined || branch !== undefined || dirtyValue !== undefined;
+
+  if (!hasAnyValue) return null;
+  if (commitSha === undefined || branch === undefined || dirtyValue === undefined) {
+    throw new Error("BUILD_COMMIT_SHA, BUILD_BRANCH, and BUILD_DIRTY must be provided together");
+  }
+  if (dirtyValue !== "true" && dirtyValue !== "false") {
+    throw new Error("BUILD_DIRTY must be true or false");
+  }
+
+  return {
+    commitSha,
+    branch,
+    dirty: dirtyValue === "true",
+  };
+}
+
 export async function writeBuildMetadata({
   repositoryRoot = defaultRepositoryRoot,
   runGit = createGitRunner(repositoryRoot),
   now = () => Date.now(),
+  sourceMetadata,
 } = {}) {
-  const metadata = createBuildMetadata({
+  const source = sourceMetadata ?? {
     commitSha: runGit(["rev-parse", "HEAD"]),
     branch: runGit(["symbolic-ref", "--quiet", "--short", "HEAD"]),
     dirty: runGit(["status", "--porcelain=v1", "--untracked-files=all"]) !== "",
+  };
+  const metadata = createBuildMetadata({
+    commitSha: source.commitSha,
+    branch: source.branch,
+    dirty: source.dirty,
     builtAt: new Date(now()).toISOString(),
   });
   const serialized = `${JSON.stringify(metadata, null, 2)}\n`;
@@ -137,7 +164,8 @@ async function main() {
   const command = process.argv[2];
 
   if (command === "write") {
-    const metadata = await writeBuildMetadata();
+    const sourceMetadata = readBuildMetadataEnvironment();
+    const metadata = await writeBuildMetadata({ sourceMetadata: sourceMetadata ?? undefined });
     console.log(
       `Build metadata written for ${metadata.commitSha}${metadata.dirty ? " (dirty)" : ""}`,
     );

@@ -22,6 +22,8 @@ grep -q '^set -euo pipefail$' "$ROOT/deploy/scripts/deploy.sh" || fail "deploy.s
 grep -q '^set -euo pipefail$' "$ROOT/deploy/scripts/backup.sh" || fail "backup.sh must use strict mode"
 grep -q '^set -euo pipefail$' "$ROOT/deploy/scripts/rollback.sh" || fail "rollback.sh must use strict mode"
 grep -q 'atomic_symlink "$RELEASE_DIR" "$CURRENT_LINK"' "$ROOT/deploy/scripts/deploy.sh" || fail "missing atomic activation"
+grep -q 'chown -R "root:$DEPLOY_GROUP"' "$ROOT/deploy/scripts/deploy.sh" || fail "release is not frozen as root-owned"
+grep -q 'BUILD_COMMIT_SHA' "$ROOT/deploy/scripts/deploy.sh" || fail "deploy does not preserve verified build metadata"
 grep -q 'verify-rollback-compatibility' "$ROOT/deploy/scripts/deploy.sh" || fail "missing rollback compatibility gate"
 grep -q 'db:migrate' "$ROOT/deploy/scripts/deploy.sh" || fail "missing migration feature detection"
 grep -q 'PGDATABASE="$DATABASE_URL"' "$ROOT/deploy/scripts/backup.sh" || fail "database URL must be passed via environment"

@@ -37,7 +37,8 @@
     "release:verify": "node scripts/build-metadata.mjs verify",
     "release:build": "npm run release:preflight && npm run build && npm run release:verify",
     "test:ops": "bash deploy/tests/run.sh",
-    "db:seed": "npm run db:seed --workspace server"
+    "db:seed": "npm run db:seed --workspace server",
+    "test:deploy": "node deploy/scripts/test-systemd-hardening.mjs"
   },
   "devDependencies": {
     "concurrently": "^9.2.1"

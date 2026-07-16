@@ -9,7 +9,8 @@ DEPLOY_ROOT="${DEPLOY_ROOT:-/opt/baccarat}"
 ENV_FILE="${ENV_FILE:-/etc/baccarat/baccarat.env}"
 SOURCE_DIR="${SOURCE_DIR:-$(pwd -P)}"
 RELEASE_SHA="${RELEASE_SHA:-}"
-RELEASE_USER="${RELEASE_USER:-baccarat}"
+BUILD_USER="${BUILD_USER:-${SUDO_USER:-$(id -un)}}"
+DEPLOY_GROUP="${DEPLOY_GROUP:-deployer}"
 HEALTH_URL="${HEALTH_URL:-http://127.0.0.1:4000/health}"
 READINESS_ATTEMPTS="${READINESS_ATTEMPTS:-10}"
 READINESS_INTERVAL="${READINESS_INTERVAL:-2}"
@@ -31,7 +32,8 @@ Options:
   --sha SHA              7-64 lowercase hexadecimal release identifier
   --deploy-root PATH     Deployment root (default: /opt/baccarat)
   --env-file PATH        Protected production env file
-  --release-user USER    User that runs build and hooks (default: baccarat)
+  --build-user USER      Non-runtime user that runs build and hooks (default: SUDO_USER)
+  --release-user USER    Deprecated alias for --build-user
   --health-url URL       API readiness URL
   --apply                Perform the deployment
   --dry-run              Print the plan without changing state (default)
@@ -68,8 +70,8 @@ while [[ $# -gt 0 ]]; do
       ENV_FILE="$2"
       shift 2
       ;;
-    --release-user)
-      RELEASE_USER="$2"
+    --build-user|--release-user)
+      BUILD_USER="$2"
       shift 2
       ;;
     --health-url)
@@ -105,7 +107,12 @@ if [[ -z "$RELEASE_SHA" ]]; then
 fi
 
 [[ "$RELEASE_SHA" =~ ^[0-9a-f]{7,64}$ ]] || die "release SHA must be 7-64 lowercase hexadecimal characters"
-[[ -n "$RELEASE_USER" ]] || die "release user cannot be empty"
+[[ -n "$BUILD_USER" ]] || die "build user cannot be empty"
+case "$BUILD_USER" in
+  baccarat|baccarat-api|baccarat-worker|baccarat-backup)
+    die "build user must not be a runtime service account: $BUILD_USER"
+    ;;
+esac
 [[ "$READINESS_ATTEMPTS" =~ ^[1-9][0-9]*$ ]] || die "READINESS_ATTEMPTS must be a positive integer"
 [[ "$READINESS_INTERVAL" =~ ^[0-9]+([.][0-9]+)?$ ]] || die "READINESS_INTERVAL must be non-negative"
 
@@ -138,7 +145,17 @@ require_command "$CURL_BIN"
 )
 unset DATABASE_URL JWT_SECRET PGPASSWORD PGDATABASE RESTORE_VERIFY_DATABASE_URL
 
-mkdir -p "$RELEASES_DIR"
+if [[ "$DEPLOY_ROOT" == "/opt/baccarat" ]]; then
+  [[ "$(id -u)" == "0" ]] || die "production deployment must run as root"
+  getent group "$DEPLOY_GROUP" >/dev/null || die "deployment group not found: $DEPLOY_GROUP"
+  id "$BUILD_USER" >/dev/null 2>&1 || die "build user not found: $BUILD_USER"
+  [[ "$(id -u "$BUILD_USER")" != "0" ]] || die "production build must not run as root; use --build-user"
+  id -nG "$BUILD_USER" | tr ' ' '\n' | grep -Fxq "$DEPLOY_GROUP" ||
+    die "build user $BUILD_USER is not a member of $DEPLOY_GROUP"
+  install -d -o root -g "$DEPLOY_GROUP" -m 0755 "$DEPLOY_ROOT" "$RELEASES_DIR"
+else
+  mkdir -p "$RELEASES_DIR"
+fi
 DEPLOY_ROOT="$(cd "$DEPLOY_ROOT" && pwd -P)"
 RELEASES_DIR="$DEPLOY_ROOT/releases"
 RELEASE_DIR="$RELEASES_DIR/$RELEASE_SHA"
@@ -161,14 +178,14 @@ cleanup() {
 trap cleanup EXIT INT TERM
 
 run_as_release_user() {
-  if [[ "$(id -un)" == "$RELEASE_USER" ]]; then
+  if [[ "$(id -un)" == "$BUILD_USER" ]]; then
     "$@"
     return
   fi
 
-  [[ "$(id -u)" == "0" ]] || die "run as $RELEASE_USER or root"
+  [[ "$(id -u)" == "0" ]] || die "run as $BUILD_USER or root"
   require_command runuser
-  runuser --preserve-environment -u "$RELEASE_USER" -- "$@"
+  runuser -u "$BUILD_USER" -- "$@"
 }
 
 run_in_release() {
@@ -178,8 +195,25 @@ run_in_release() {
 }
 
 own_staging_directory() {
-  if [[ "$(id -un)" != "$RELEASE_USER" ]]; then
-    chown -R "$RELEASE_USER:$RELEASE_USER" "$STAGING_DIR"
+  if [[ "$(id -un)" != "$BUILD_USER" ]]; then
+    chown -R "$BUILD_USER" "$STAGING_DIR"
+  fi
+}
+
+freeze_release() {
+  local release="$1"
+  if [[ "$(id -u)" == "0" ]]; then
+    chown -R "root:$DEPLOY_GROUP" "$release"
+    chmod -R u=rwX,go=rX "$release"
+  else
+    chmod -R a-w "$release"
+  fi
+}
+
+secure_release_link() {
+  local link="$1"
+  if [[ "$(id -u)" == "0" ]]; then
+    chown -h "root:$DEPLOY_GROUP" "$link"
   fi
 }
 
@@ -190,6 +224,18 @@ const fs = require("node:fs");
 const packageFile = process.argv[2];
 const packageJson = JSON.parse(fs.readFileSync(packageFile, "utf8"));
 process.exit(packageJson.scripts?.["db:migrate"] ? 0 : 1);
+NODE
+}
+
+package_has_script() {
+  local package_file="$1"
+  local script_name="$2"
+  node - "$package_file" "$script_name" <<'NODE'
+const fs = require("node:fs");
+const packageFile = process.argv[2];
+const scriptName = process.argv[3];
+const packageJson = JSON.parse(fs.readFileSync(packageFile, "utf8"));
+process.exit(packageJson.scripts?.[scriptName] ? 0 : 1);
 NODE
 }
 
@@ -236,6 +282,29 @@ wait_until_ready() {
 }
 
 previous_release=""
+
+if git -C "$SOURCE_DIR" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+  require_command git
+  source_commit_sha="$(git -C "$SOURCE_DIR" rev-parse HEAD)"
+  source_branch="$(git -C "$SOURCE_DIR" symbolic-ref --quiet --short HEAD)" ||
+    die "source HEAD must be attached to a branch"
+  [[ "$source_commit_sha" == "$RELEASE_SHA" ]] ||
+    die "release SHA $RELEASE_SHA does not match source HEAD $source_commit_sha"
+  [[ -z "$(git -C "$SOURCE_DIR" status --porcelain=v1 --untracked-files=all)" ]] ||
+    die "source worktree must be clean"
+
+  export BUILD_COMMIT_SHA="$source_commit_sha"
+  export BUILD_BRANCH="$source_branch"
+  export BUILD_DIRTY=false
+
+  if package_has_script "$SOURCE_DIR/package.json" "release:preflight"; then
+    log "running authoritative release preflight in source checkout"
+    (cd "$SOURCE_DIR" && run_as_release_user "$NPM_BIN" run release:preflight)
+  fi
+elif [[ "$DEPLOY_ROOT" == "/opt/baccarat" ]]; then
+  die "production source must be a Git checkout so SHA and branch can be verified"
+fi
+
 if [[ -e "$CURRENT_LINK" && ! -L "$CURRENT_LINK" ]]; then
   die "$CURRENT_LINK must be a symlink, not a file or directory"
 fi
@@ -266,7 +335,7 @@ if [[ -d "$RELEASE_DIR" ]]; then
     [[ "$(<"$RELEASE_DIR/.rollback-compatible-from")" == "$(basename "$previous_release")" ]] ||
       die "release was not verified against the active rollback target"
   fi
-  chmod -R a-w "$RELEASE_DIR"
+  freeze_release "$RELEASE_DIR"
   log "reusing prepared immutable release $RELEASE_DIR"
 else
   [[ ! -e "$STAGING_DIR" ]] ||
@@ -337,8 +406,15 @@ else
   printf '%s\n' "$migration_mode" > "$STAGING_DIR/.migration-mode"
   printf '%s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" > "$STAGING_DIR/.migration-complete"
   rm -f "$STAGING_DIR/.migration-started"
-  mv "$STAGING_DIR" "$RELEASE_DIR"
-  chmod -R a-w "$RELEASE_DIR"
+  if [[ "$(id -u)" == "0" ]]; then
+    freeze_release "$STAGING_DIR"
+    mv "$STAGING_DIR" "$RELEASE_DIR"
+  else
+    # The portable test path runs without root. Some platforms refuse to
+    # rename a directory after its owner write bit is removed.
+    mv "$STAGING_DIR" "$RELEASE_DIR"
+    freeze_release "$RELEASE_DIR"
+  fi
   log "prepared immutable release $RELEASE_DIR"
 fi
 
@@ -349,6 +425,7 @@ fi
 
 log "atomically activating release $RELEASE_SHA"
 atomic_symlink "$RELEASE_DIR" "$CURRENT_LINK"
+secure_release_link "$CURRENT_LINK"
 
 activation_ok=true
 if ! restart_services; then
@@ -363,6 +440,7 @@ if [[ "$activation_ok" != true ]]; then
   if [[ -n "$previous_release" ]]; then
     log "rolling back current symlink to $(basename "$previous_release")"
     atomic_symlink "$previous_release" "$CURRENT_LINK"
+    secure_release_link "$CURRENT_LINK"
     if restart_services && wait_until_ready "$previous_release"; then
       log "rollback completed and previous release is ready"
       die "deployment failed; previous compatible release restored"
@@ -377,5 +455,6 @@ fi
 
 if [[ -n "$previous_release" ]]; then
   atomic_symlink "$previous_release" "$PREVIOUS_LINK"
+  secure_release_link "$PREVIOUS_LINK"
 fi
 log "release $RELEASE_SHA is active and ready"

@@ -7,7 +7,8 @@ source "$SCRIPT_DIR/lib/common.sh"
 
 DEPLOY_ROOT="${DEPLOY_ROOT:-/opt/baccarat}"
 ENV_FILE="${ENV_FILE:-/etc/baccarat/baccarat.env}"
-RELEASE_USER="${RELEASE_USER:-baccarat}"
+BUILD_USER="${BUILD_USER:-${SUDO_USER:-$(id -un)}}"
+DEPLOY_GROUP="${DEPLOY_GROUP:-deployer}"
 TARGET_SHA=""
 HEALTH_URL="${HEALTH_URL:-http://127.0.0.1:4000/health}"
 READINESS_ATTEMPTS="${READINESS_ATTEMPTS:-10}"
@@ -28,7 +29,8 @@ Options:
   --target-sha SHA      Immutable release to reactivate (default: previous)
   --deploy-root PATH    Deployment root (default: /opt/baccarat)
   --env-file PATH       Protected production env file
-  --release-user USER   Service user (default: baccarat)
+  --build-user USER     User that runs optional readiness hook (default: SUDO_USER)
+  --release-user USER   Deprecated alias for --build-user
   --health-url URL      API readiness URL
   --apply               Perform rollback
   --dry-run             Validate and print the rollback plan (default)
@@ -49,8 +51,8 @@ while [[ $# -gt 0 ]]; do
       ENV_FILE="$2"
       shift 2
       ;;
-    --release-user)
-      RELEASE_USER="$2"
+    --build-user|--release-user)
+      BUILD_USER="$2"
       shift 2
       ;;
     --health-url)
@@ -75,7 +77,12 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
-[[ -n "$RELEASE_USER" ]] || die "release user cannot be empty"
+[[ -n "$BUILD_USER" ]] || die "build user cannot be empty"
+case "$BUILD_USER" in
+  baccarat|baccarat-api|baccarat-worker|baccarat-backup)
+    die "build user must not be a runtime service account: $BUILD_USER"
+    ;;
+esac
 [[ "$READINESS_ATTEMPTS" =~ ^[1-9][0-9]*$ ]] || die "READINESS_ATTEMPTS must be a positive integer"
 [[ "$READINESS_INTERVAL" =~ ^[0-9]+([.][0-9]+)?$ ]] || die "READINESS_INTERVAL must be non-negative"
 
@@ -140,13 +147,20 @@ cleanup() {
 trap cleanup EXIT INT TERM
 
 run_as_release_user() {
-  if [[ "$(id -un)" == "$RELEASE_USER" ]]; then
+  if [[ "$(id -un)" == "$BUILD_USER" ]]; then
     "$@"
     return
   fi
-  [[ "$(id -u)" == "0" ]] || die "run as $RELEASE_USER or root"
+  [[ "$(id -u)" == "0" ]] || die "run as $BUILD_USER or root"
   require_command runuser
-  runuser --preserve-environment -u "$RELEASE_USER" -- "$@"
+  runuser -u "$BUILD_USER" -- "$@"
+}
+
+secure_release_link() {
+  local link="$1"
+  if [[ "$(id -u)" == "0" ]]; then
+    chown -h "root:$DEPLOY_GROUP" "$link"
+  fi
 }
 
 readiness_once() {
@@ -172,13 +186,16 @@ wait_until_ready() {
 
 log "atomically rolling back to $TARGET_SHA"
 atomic_symlink "$target_release" "$CURRENT_LINK"
+secure_release_link "$CURRENT_LINK"
 if "$SYSTEMCTL_BIN" restart baccarat-api baccarat-worker && wait_until_ready; then
   atomic_symlink "$active_release" "$PREVIOUS_LINK"
+  secure_release_link "$PREVIOUS_LINK"
   log "rollback to $TARGET_SHA is active and ready"
   exit 0
 fi
 
 log "rollback readiness failed; restoring $(basename "$active_release")"
 atomic_symlink "$active_release" "$CURRENT_LINK"
+secure_release_link "$CURRENT_LINK"
 "$SYSTEMCTL_BIN" restart baccarat-api baccarat-worker || true
 die "rollback failed and the original release was reactivated; verify service health manually"

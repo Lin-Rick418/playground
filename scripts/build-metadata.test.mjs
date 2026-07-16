@@ -5,6 +5,7 @@ import { resolve } from "node:path";
 import test from "node:test";
 import {
   createBuildMetadata,
+  readBuildMetadataEnvironment,
   verifyBuildMetadata,
   writeBuildMetadata,
 } from "./build-metadata.mjs";
@@ -41,6 +42,34 @@ test("requires an exact commit SHA", () => {
     () => createBuildMetadata({ branch: "main", builtAt, commitSha: "abcdef", dirty: false }),
     /exact 40- or 64-character commit SHA/,
   );
+});
+
+test("accepts complete trusted source metadata and rejects partial build environment", () => {
+  assert.deepEqual(
+    readBuildMetadataEnvironment({
+      BUILD_COMMIT_SHA: commitSha,
+      BUILD_BRANCH: "main",
+      BUILD_DIRTY: "false",
+    }),
+    { commitSha, branch: "main", dirty: false },
+  );
+  assert.throws(
+    () => readBuildMetadataEnvironment({ BUILD_COMMIT_SHA: commitSha }),
+    /must be provided together/,
+  );
+});
+
+test("writes metadata without a Git checkout when source metadata was verified by deploy", async () => {
+  await withTemporaryRepository(async (repositoryRoot) => {
+    const metadata = await writeBuildMetadata({
+      repositoryRoot,
+      sourceMetadata: { commitSha, branch: "main", dirty: false },
+      now: () => Date.parse(builtAt),
+    });
+    assert.equal(metadata.commitSha, commitSha);
+    assert.equal(metadata.branch, "main");
+    assert.equal(metadata.dirty, false);
+  });
 });
 
 test("writes identical server and web metadata from injectable Git output", async () => {

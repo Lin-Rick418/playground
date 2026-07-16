@@ -34,7 +34,7 @@ RESTORE_VERIFY_DATABASE_URL=postgres://other-user:other-secret@127.0.0.1:5432/ba
 RESTORE_VERIFY_EXPECTED_DATABASE=baccarat
 ENV
 cp "$ENV_FILE" "$INSECURE_ENV_FILE"
-chmod 0600 "$ENV_FILE" "$RESTORE_ENV_FILE" "$UNSAFE_RESTORE_ENV_FILE"
+chmod 0640 "$ENV_FILE" "$RESTORE_ENV_FILE" "$UNSAFE_RESTORE_ENV_FILE"
 chmod 0644 "$INSECURE_ENV_FILE"
 
 cat > "$FAKE_BIN/pg_dump" <<'SH'
@@ -92,7 +92,7 @@ fi
 backup verify "$backup_file" --env-file "$ENV_FILE" --restore-env-file "$RESTORE_ENV_FILE"
 
 if backup create --env-file "$INSECURE_ENV_FILE" --backup-dir "$TMP_DIR/insecure-backups"; then
-  fail "backup accepted a group/world-readable credentials file"
+  fail "backup accepted a world-readable credentials file"
 fi
 
 if grep -q 'super-secret-password\|another-secret' "$ARGV_LOG"; then
