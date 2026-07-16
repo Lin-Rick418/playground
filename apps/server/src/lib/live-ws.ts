@@ -5,6 +5,10 @@ import type { Duplex } from "node:stream";
 import { WebSocket, WebSocketServer } from "ws";
 import { verifyToken } from "./auth.js";
 import {
+  validateWebSocketSession,
+  type AuthorizationRevocationReason,
+} from "./authorization-state.js";
+import {
   buildLobbyTables,
   buildTablePublicState,
   buildTableUserState,
@@ -29,12 +33,14 @@ import {
   type WebSocketClientMessage,
 } from "./live-ws-policy.js";
 import { getRoundConfig } from "./round-manager.js";
+import type { UserRole } from "../types/domain.js";
 
 type LiveSocketConnection = {
   id: string;
   userId: string;
   clientIp: string;
   sessionId: string;
+  role: UserRole;
   socket: WebSocket;
   lastPongAt: number;
   messageWindow: RateWindow;
@@ -44,6 +50,7 @@ type LiveSocketConnection = {
 type ServerMessage =
   | { type: "connected"; serverTime: string }
   | { type: "error"; message: string }
+  | { type: "auth_revoked"; reason: AuthorizationRevocationReason }
   | {
       type: "lobby_snapshot";
       data: {
@@ -73,6 +80,8 @@ let stopSubscriber: null | (() => Promise<void>) = null;
 
 const HEARTBEAT_INTERVAL_MS = 30_000;
 const HEARTBEAT_TIMEOUT_MS = 10_000;
+const WS_UNAUTHORIZED_CLOSE_CODE = 4401;
+const WS_FORBIDDEN_CLOSE_CODE = 4403;
 
 function sendMessage(socket: WebSocket, message: ServerMessage) {
   if (socket.readyState !== WebSocket.OPEN) {
@@ -92,6 +101,32 @@ function sendMessage(socket: WebSocket, message: ServerMessage) {
   }
 }
 
+function revokeLiveConnection(
+  connection: LiveSocketConnection,
+  reason: AuthorizationRevocationReason,
+) {
+  connections.delete(connection.id);
+  sendMessage(connection.socket, { type: "auth_revoked", reason });
+  connection.socket.close(
+    reason === "user_deleted" ? WS_UNAUTHORIZED_CLOSE_CODE : WS_FORBIDDEN_CLOSE_CODE,
+    reason,
+  );
+}
+
+async function revalidateLiveConnection(connection: LiveSocketConnection) {
+  const decision = validateWebSocketSession(
+    connection.role,
+    await buildUserLiveState(connection.userId),
+  );
+
+  if (!decision.authorized) {
+    revokeLiveConnection(connection, decision.reason);
+    return null;
+  }
+
+  return decision.user;
+}
+
 async function pushLobbySnapshot(connection: LiveSocketConnection) {
   const tables = await buildLobbyTables();
   sendMessage(connection.socket, {
@@ -105,21 +140,17 @@ async function pushLobbySnapshot(connection: LiveSocketConnection) {
 }
 
 async function pushUserSnapshot(connection: LiveSocketConnection) {
-  const user = await buildUserLiveState(connection.userId);
+  const user = await revalidateLiveConnection(connection);
 
   if (!user) {
-    sendMessage(connection.socket, {
-      type: "error",
-      message: "User not found",
-    });
-    connection.socket.close();
-    return;
+    return false;
   }
 
   sendMessage(connection.socket, {
     type: "user_snapshot",
     data: user,
   });
+  return true;
 }
 
 async function pushTableSnapshot(connection: LiveSocketConnection, tableId: string) {
@@ -151,9 +182,13 @@ async function pushTableUserSnapshot(connection: LiveSocketConnection, tableId: 
 }
 
 async function handleSubscriptionMessage(connection: LiveSocketConnection, message: WebSocketClientMessage) {
+  if (!(await pushUserSnapshot(connection))) {
+    return;
+  }
+
   if (message.type === "subscribe_lobby") {
     connection.subscription = { scope: "lobby" };
-    await Promise.all([pushLobbySnapshot(connection), pushUserSnapshot(connection)]);
+    await pushLobbySnapshot(connection);
     return;
   }
 
@@ -167,7 +202,7 @@ async function handleSubscriptionMessage(connection: LiveSocketConnection, messa
   }
 
   connection.subscription = { scope: "table", tableId: table.id };
-  await Promise.all([pushTableSnapshot(connection, table.id), pushTableUserSnapshot(connection, table.id), pushUserSnapshot(connection)]);
+  await Promise.all([pushTableSnapshot(connection, table.id), pushTableUserSnapshot(connection, table.id)]);
 }
 
 async function handleLiveEvent(event: LiveEvent) {
@@ -224,8 +259,8 @@ async function handleLiveEvent(event: LiveEvent) {
   const matchingConnections = Array.from(connections.values()).filter((connection) => connection.userId === event.userId);
   await Promise.all(
     matchingConnections.map(async (connection) => {
-      await pushUserSnapshot(connection);
-      if (connection.subscription.scope === "table") {
+      const authorized = await pushUserSnapshot(connection);
+      if (authorized && connection.subscription.scope === "table") {
         await pushTableUserSnapshot(connection, connection.subscription.tableId);
       }
     }),
@@ -302,6 +337,9 @@ export async function attachLiveWebSocketServer(server: Server) {
         continue;
       }
       ws.ping();
+      void revalidateLiveConnection(connection).catch((error) => {
+        console.error("Live WebSocket authorization revalidation failed", error);
+      });
     }
   }, HEARTBEAT_INTERVAL_MS);
 
@@ -373,6 +411,7 @@ export async function attachLiveWebSocketServer(server: Server) {
         userId: payload.userId,
         clientIp,
         sessionId: payload.sessionId,
+        role: user.role,
         socket: ws,
         lastPongAt: Date.now(),
         messageWindow: { timestamps: [] },

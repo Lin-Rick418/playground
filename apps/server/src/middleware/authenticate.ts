@@ -1,6 +1,7 @@
 import type { NextFunction, Request, Response } from "express";
 import { verifyToken, type JwtPayload } from "../lib/auth.js";
-import { isAuthSessionActive } from "../lib/db.js";
+import { validatePersistedSession } from "../lib/authorization-state.js";
+import { findUserById, isAuthSessionActive } from "../lib/db.js";
 import type { UserRecord } from "../types/domain.js";
 
 export type AuthenticatedRequest = Request & {
@@ -8,7 +9,7 @@ export type AuthenticatedRequest = Request & {
   currentUser?: UserRecord;
 };
 
-export function authenticate(req: AuthenticatedRequest, res: Response, next: NextFunction) {
+export async function authenticate(req: AuthenticatedRequest, res: Response, next: NextFunction) {
   // Tokens are accepted from the Authorization header only: query-string
   // tokens end up in access logs and browser history.
   const authHeader = req.headers.authorization;
@@ -18,19 +19,36 @@ export function authenticate(req: AuthenticatedRequest, res: Response, next: Nex
     return res.status(401).json({ message: "Unauthorized" });
   }
 
-  try {
-    const payload = verifyToken(token);
-    return isAuthSessionActive(payload.sessionId)
-      .then((isActive) => {
-        if (!isActive) {
-          return res.status(401).json({ message: "Session expired" });
-        }
+  let payload: JwtPayload;
 
-        req.user = payload;
-        next();
-      })
-      .catch(next);
+  try {
+    payload = verifyToken(token);
   } catch {
     return res.status(401).json({ message: "Invalid token" });
+  }
+
+  try {
+    const [sessionActive, persistedUser] = await Promise.all([
+      isAuthSessionActive(payload.sessionId),
+      findUserById(payload.userId),
+    ]);
+
+    if (!sessionActive) {
+      return res.status(401).json({ message: "Session expired" });
+    }
+
+    const decision = validatePersistedSession(persistedUser);
+
+    if (!decision.authorized) {
+      return res.status(decision.httpStatus).json({ message: decision.message });
+    }
+
+    // Canonicalize both request identities from the database. The JWT role is
+    // a login-time claim and must never authorize the current request.
+    req.user = { userId: decision.user.id, role: decision.user.role, sessionId: payload.sessionId };
+    req.currentUser = decision.user;
+    return next();
+  } catch (error) {
+    return next(error);
   }
 }

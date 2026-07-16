@@ -34,9 +34,15 @@ export type UserSnapshotMessage = {
   };
 };
 
+export type AuthRevokedMessage = {
+  type: "auth_revoked";
+  reason: "user_deleted" | "account_disabled" | "role_changed";
+};
+
 export type LiveMessage =
   | { type: "connected"; serverTime: string }
   | { type: "error"; message: string }
+  | AuthRevokedMessage
   | LobbySnapshotMessage
   | TableSnapshotMessage
   | TableUserSnapshotMessage

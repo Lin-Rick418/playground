@@ -174,14 +174,10 @@ authRouter.post("/logout", async (req, res) => {
 });
 
 authRouter.get("/me", authenticate, async (req: AuthenticatedRequest, res) => {
-  const user = req.user ? await findUserById(req.user.userId) : null;
+  const user = req.currentUser;
 
   if (!user) {
-    return res.status(404).json({ message: "User not found" });
-  }
-
-  if (!user.isActive) {
-    return res.status(403).json({ message: "Account is disabled" });
+    return res.status(401).json({ message: "Unauthorized" });
   }
 
   return res.json({
