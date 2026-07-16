@@ -12,6 +12,7 @@ import type {
   UserRole,
 } from "../types/domain.js";
 import { createMassachusettsShoeState, type Card, type TableShoeState } from "./baccarat.js";
+import { coreDatabaseIntegritySql } from "./database-integrity.js";
 
 type DbExecutor = Pool | PoolClient;
 type DbRow = Record<string, unknown>;
@@ -165,6 +166,8 @@ export async function initializeDatabase() {
       ADD COLUMN IF NOT EXISTS round_phase_offset_ms INTEGER NOT NULL DEFAULT 0;
     ALTER TABLE game_tables
       ADD COLUMN IF NOT EXISTS round_schedule_version INTEGER NOT NULL DEFAULT 0;
+
+    ${coreDatabaseIntegritySql}
 
     CREATE INDEX IF NOT EXISTS idx_game_rounds_active
       ON game_rounds (table_id, status, created_at DESC);

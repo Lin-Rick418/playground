@@ -148,6 +148,7 @@ pg_dump -U baccarat baccarat > /var/backups/baccarat-$(date +%F).sql
 ## 12. 重要說明
 
 - 前端是同網域部署，預設走 `/api`
+- Database integrity constraints 的 production preflight、驗證與 rollback 步驟見 [`database-integrity.md`](./database-integrity.md)。
 - WebSocket 透過 `/api/ws` 經 nginx 轉發到後端
 - API 和 worker 是兩個獨立服務，都必須常駐
 - 不要同時啟多個 worker，否則會重複推局

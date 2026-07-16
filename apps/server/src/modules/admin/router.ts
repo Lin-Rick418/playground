@@ -20,7 +20,7 @@ import { publishLiveEvent } from "../../lib/live-events.js";
 
 const adjustBalanceSchema = z.object({
   userId: z.string().min(1),
-  amount: z.number().int(),
+  amount: z.number().int().refine((amount) => amount !== 0),
   note: z.string().max(200).optional(),
 });
 
