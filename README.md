@@ -82,5 +82,6 @@ VITE_API_BASE_URL=https://your-api-host.example.com
   - `api server`
   - `round worker`
 - 桌況同步改成 WebSocket snapshot 推送，前端不再依賴收到事件後整包 refresh。
+- WebSocket server 限制 8 KiB message、每個 user/IP 的連線數與 message/upgrade rate，並以 heartbeat 清除失效連線；反向代理不得放寬到比 application 更寬鬆的 payload/connection policy。
 - 正式環境啟動時不會自動建立 demo 帳號；若要開發測試帳號，請手動執行 `npm run db:seed`。
 - 若未來要多人同步牌桌、路單分析、會員管理、操作審計，可在此基礎擴充。
