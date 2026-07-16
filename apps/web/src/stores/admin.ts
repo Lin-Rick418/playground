@@ -50,6 +50,9 @@ export const useAdminStore = defineStore("admin", {
       await api.post("/admin/users/set-active", { userId, isActive });
       await this.fetchDashboard();
     },
+    async resetPlayerPassword(userId: string, newPassword: string) {
+      await api.post("/admin/players/reset-password", { userId, newPassword });
+    },
     async fetchRoundDetail(roundId: string) {
       const { data } = await api.get<NonNullable<typeof this.roundDetail>>(`/admin/rounds/${roundId}/bets`);
       this.roundDetail = data;

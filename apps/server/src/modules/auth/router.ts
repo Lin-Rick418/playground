@@ -1,14 +1,16 @@
 import { Router } from "express";
 import bcrypt from "bcryptjs";
-import { z } from "zod";
 import { signToken } from "../../lib/auth.js";
 import { authenticate, type AuthenticatedRequest } from "../../middleware/authenticate.js";
-import { findUserById, findUserByUsername } from "../../lib/db.js";
-
-const loginSchema = z.object({
-  username: z.string().min(1),
-  password: z.string().min(1),
-});
+import { findUserById, findUserByUsername, updateUserPasswordHash, withTransaction } from "../../lib/db.js";
+import {
+  changePasswordSchema,
+  getPasswordPolicyViolation,
+  loginSchema,
+  PASSWORD_BCRYPT_ROUNDS,
+  toSafeUser,
+} from "../../lib/account-policy.js";
+import { publishLiveEvent } from "../../lib/live-events.js";
 
 const LOGIN_WINDOW_MS = 60_000;
 const LOGIN_MAX_ATTEMPTS = 10;
@@ -17,7 +19,7 @@ const loginAttempts = new Map<string, { count: number; resetAt: number }>();
 
 // Equalizes bcrypt timing for unknown usernames so response time does not
 // reveal whether an account exists.
-const dummyPasswordHash = bcrypt.hashSync("login-timing-placeholder", 10);
+const dummyPasswordHash = bcrypt.hashSync("Login!Timing2026", PASSWORD_BCRYPT_ROUNDS);
 
 function isLoginRateLimited(key: string) {
   const now = Date.now();
@@ -70,36 +72,51 @@ authRouter.post("/login", async (req, res) => {
   const token = signToken({
     userId: user.id,
     role: user.role,
+    authVersion: user.authVersion,
   });
 
   return res.json({
     token,
-    user: {
-      id: user.id,
-      username: user.username,
-      role: user.role,
-      isActive: user.isActive,
-      balance: user.balance,
-    },
+    user: toSafeUser(user),
   });
 });
 
-authRouter.get("/me", authenticate, async (req: AuthenticatedRequest, res) => {
-  const user = req.user ? await findUserById(req.user.userId) : null;
+authRouter.get("/me", authenticate, (req: AuthenticatedRequest, res) => {
+  return res.json(toSafeUser(req.currentUser!));
+});
 
-  if (!user) {
-    return res.status(404).json({ message: "User not found" });
+authRouter.post("/change-password", authenticate, async (req: AuthenticatedRequest, res) => {
+  const parsed = changePasswordSchema.safeParse(req.body);
+  if (!parsed.success) {
+    return res.status(400).json({ message: "Invalid password payload", issues: parsed.error.flatten().fieldErrors });
   }
 
-  if (!user.isActive) {
-    return res.status(403).json({ message: "Account is disabled" });
+  const result = await withTransaction(async (client) => {
+    const user = await findUserById(req.currentUser!.id, client, { forUpdate: true });
+    if (!user || !user.isActive || user.authVersion !== req.currentUser!.authVersion) {
+      return { error: { status: 401, message: "Session is no longer valid" } } as const;
+    }
+    const violation = getPasswordPolicyViolation(parsed.data.newPassword, user.username);
+    if (violation) {
+      return { error: { status: 400, message: violation } } as const;
+    }
+    if (!(await bcrypt.compare(parsed.data.currentPassword, user.passwordHash))) {
+      return { error: { status: 401, message: "Current password is incorrect" } } as const;
+    }
+    const passwordHash = await bcrypt.hash(parsed.data.newPassword, PASSWORD_BCRYPT_ROUNDS);
+    const updatedUser = await updateUserPasswordHash(user.id, passwordHash, client);
+    await publishLiveEvent(
+      { type: "user_changed", userId: updatedUser.id, reason: "password_changed", at: new Date().toISOString() },
+      client,
+    );
+    return { user: updatedUser } as const;
+  });
+  if ("error" in result && result.error) {
+    return res.status(result.error.status).json({ message: result.error.message });
   }
-
+  const updatedUser = result.user;
   return res.json({
-    id: user.id,
-    username: user.username,
-    role: user.role,
-    isActive: user.isActive,
-    balance: user.balance,
+    token: signToken({ userId: updatedUser.id, role: updatedUser.role, authVersion: updatedUser.authVersion }),
+    user: toSafeUser(updatedUser),
   });
 });

@@ -15,8 +15,10 @@ Vue 3 + Pinia 前端，Node.js + Express 後端，PostgreSQL 資料庫。
 ## 開發用預設帳號
 
 執行 `npm run db:seed` 後才會建立：
-- `admin / admin123`
-- `player1 / player123`
+- `admin / Croupier!2026`
+- `player1 / LuckyShoes!2026`
+
+已存在的開發資料不會自動覆寫密碼；若資料庫曾建立舊帳號，請由帳號安全頁或 Admin reset password 流程更新。
 
 ## 開發
 

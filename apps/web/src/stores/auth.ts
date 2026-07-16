@@ -33,6 +33,13 @@ export const useAuthStore = defineStore("auth", {
       this.user = data;
       return data;
     },
+    async changePassword(currentPassword: string, newPassword: string) {
+      const { data } = await api.post<LoginResponse>("/auth/change-password", { currentPassword, newPassword });
+      this.token = data.token;
+      this.user = data.user;
+      setStoredToken(data.token);
+      return data.user;
+    },
     logout() {
       this.token = "";
       this.user = null;

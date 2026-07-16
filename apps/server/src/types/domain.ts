@@ -19,6 +19,7 @@ export type UserRecord = {
   id: string;
   username: string;
   passwordHash: string;
+  authVersion: number;
   role: UserRole;
   isActive: boolean;
   balance: number;

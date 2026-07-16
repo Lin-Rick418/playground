@@ -1,5 +1,4 @@
 import { Router } from "express";
-import { z } from "zod";
 import { authenticate, type AuthenticatedRequest } from "../../middleware/authenticate.js";
 import { requireRole } from "../../lib/auth.js";
 import {
@@ -17,19 +16,15 @@ import {
 } from "../../lib/db.js";
 import { publishLiveEvent } from "../../lib/live-events.js";
 import { getRoundConfig } from "../../lib/round-manager.js";
-import { betTypes } from "../../types/domain.js";
-
-const placeBetSchema = z.object({
-  bets: z
-    .array(
-      z.object({
-        betType: z.enum(betTypes),
-        amount: z.number().int().positive(),
-      }),
-    )
-    .min(1)
-    .max(20),
-});
+import {
+  getMaximumPayout,
+  getSafeBalanceAfterChange,
+  isValidBetForTable,
+  isValidTableMoneyPolicy,
+  MAX_ACCOUNT_BALANCE,
+  placeBetSchema,
+  tableIdParamsSchema,
+} from "../../lib/account-policy.js";
 const BETTING_OPEN_GRACE_MS = 400;
 
 export const gameRouter = Router();
@@ -48,7 +43,11 @@ gameRouter.get("/lobby", async (_req, res) => {
 });
 
 gameRouter.get("/tables/:tableId/state", async (req: AuthenticatedRequest, res) => {
-  const tableId = String(req.params.tableId);
+  const params = tableIdParamsSchema.safeParse(req.params);
+  if (!params.success) {
+    return res.status(400).json({ message: "Invalid table id" });
+  }
+  const tableId = params.data.tableId;
   const publicState = await buildTablePublicState(tableId);
 
   if (!publicState) {
@@ -74,6 +73,10 @@ gameRouter.get("/history", async (req: AuthenticatedRequest, res) => {
 });
 
 gameRouter.post("/tables/:tableId/bet", async (req: AuthenticatedRequest, res) => {
+  const params = tableIdParamsSchema.safeParse(req.params);
+  if (!params.success) {
+    return res.status(400).json({ message: "Invalid table id" });
+  }
   const parsed = placeBetSchema.safeParse(req.body);
 
   if (!parsed.success) {
@@ -82,7 +85,7 @@ gameRouter.post("/tables/:tableId/bet", async (req: AuthenticatedRequest, res) =
 
   const result = await withTransaction(async (client) => {
     const totalBet = parsed.data.bets.reduce((sum, bet) => sum + bet.amount, 0);
-    const tableId = String(req.params.tableId);
+    const tableId = params.data.tableId;
     const table = await findTableById(tableId, client);
 
     if (!table) {
@@ -104,13 +107,25 @@ gameRouter.post("/tables/:tableId/bet", async (req: AuthenticatedRequest, res) =
       return { error: { status: 400, message: "Betting is closed" } } as const;
     }
 
-    if (parsed.data.bets.some((bet) => bet.amount < table.minBet)) {
-      return { error: { status: 400, message: `Minimum bet is ${table.minBet}` } } as const;
+    if (!isValidTableMoneyPolicy(table.minBet, table.maxBet)) {
+      return { error: { status: 503, message: "Table betting policy is invalid" } } as const;
+    }
+
+    if (parsed.data.bets.some((bet) => !isValidBetForTable(bet.amount, table.minBet, table.maxBet))) {
+      return {
+        error: {
+          status: 400,
+          message: `Each bet must be between ${table.minBet} and ${table.maxBet} in supported denominations`,
+        },
+      } as const;
     }
 
     const user = await findUserById(req.currentUser!.id, client, { forUpdate: true });
     if (!user) {
       return { error: { status: 404, message: "User not found" } } as const;
+    }
+    if (!user.isActive || user.role !== "PLAYER") {
+      return { error: { status: 403, message: "Account is not allowed to bet" } } as const;
     }
 
     const existingRoundBets = await listUserRoundBets(user.id, activeRound.id, client);
@@ -135,7 +150,19 @@ gameRouter.post("/tables/:tableId/bet", async (req: AuthenticatedRequest, res) =
       return { error: { status: 400, message: "Insufficient balance" } } as const;
     }
 
-    const updatedUser = await updateUserBalance(user.id, user.balance - totalBet, client);
+    const balanceAfterStake = getSafeBalanceAfterChange(user.balance, -totalBet);
+    if (balanceAfterStake === null) {
+      return { error: { status: 400, message: "Bet would make balance invalid" } } as const;
+    }
+    const maximumPayout = [...existingRoundBets, ...parsed.data.bets].reduce(
+      (sum, bet) => sum + getMaximumPayout(bet.betType, bet.amount),
+      0,
+    );
+    if (!Number.isSafeInteger(maximumPayout) || balanceAfterStake + maximumPayout > MAX_ACCOUNT_BALANCE) {
+      return { error: { status: 400, message: "Bet could exceed the supported account balance" } } as const;
+    }
+
+    const updatedUser = await updateUserBalance(user.id, balanceAfterStake, client);
     const bets = [];
 
     for (const bet of parsed.data.bets) {

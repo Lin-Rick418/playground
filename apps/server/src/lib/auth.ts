@@ -1,21 +1,30 @@
 import jwt from "jsonwebtoken";
+import { z } from "zod";
 import type { Response, NextFunction } from "express";
 import { env } from "../config/env.js";
 import type { AuthenticatedRequest } from "../middleware/authenticate.js";
-import { findUserById } from "./db.js";
-import type { UserRole } from "../types/domain.js";
+import { userRoles, type UserRole } from "../types/domain.js";
 
 export type JwtPayload = {
   userId: string;
   role: UserRole;
+  authVersion: number;
 };
+
+const jwtPayloadSchema = z
+  .object({
+    userId: z.string().uuid(),
+    role: z.enum(userRoles),
+    authVersion: z.number().int().nonnegative().refine(Number.isSafeInteger),
+  })
+  .passthrough();
 
 export function signToken(payload: JwtPayload) {
   return jwt.sign(payload, env.jwtSecret, { expiresIn: "7d" });
 }
 
 export function verifyToken(token: string) {
-  return jwt.verify(token, env.jwtSecret) as JwtPayload;
+  return jwtPayloadSchema.parse(jwt.verify(token, env.jwtSecret)) as JwtPayload;
 }
 
 export function requireRole(
@@ -24,22 +33,8 @@ export function requireRole(
   next: NextFunction,
   role: UserRole,
 ) {
-  if (!req.user || req.user.role !== role) {
+  if (!req.currentUser || req.currentUser.role !== role) {
     return res.status(403).json({ message: "Forbidden" });
   }
-
-  return findUserById(req.user.userId)
-    .then((freshUser) => {
-      if (!freshUser) {
-        return res.status(401).json({ message: "User not found" });
-      }
-
-      if (!freshUser.isActive) {
-        return res.status(403).json({ message: "Account is disabled" });
-      }
-
-      req.currentUser = freshUser;
-      next();
-    })
-    .catch(next);
+  next();
 }

@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, reactive } from "vue";
+import { computed, onMounted, reactive, ref } from "vue";
 import { useRouter } from "vue-router";
 import { useAdminStore } from "../stores/admin";
 import { useGameStore } from "../stores/game";
@@ -21,6 +21,8 @@ const createForm = reactive({
   password: "",
   balance: 1000,
 });
+const resetForm = reactive({ userId: "", newPassword: "" });
+const resetStatus = ref("");
 
 const playerUsers = computed(() => adminStore.users.filter((user) => user.role === "PLAYER"));
 const recentRoundItems = computed(() =>
@@ -53,6 +55,14 @@ async function submitCreatePlayer() {
   createForm.balance = 1000;
 }
 
+async function submitPasswordReset() {
+  if (!resetForm.userId || !resetForm.newPassword) return;
+  resetStatus.value = "";
+  await adminStore.resetPlayerPassword(resetForm.userId, resetForm.newPassword);
+  resetForm.newPassword = "";
+  resetStatus.value = "玩家密碼已重設，既有登入階段已失效。";
+}
+
 async function togglePlayer(userId: string, isActive: boolean) {
   await adminStore.setUserActive(userId, !isActive);
 }
@@ -70,6 +80,7 @@ onMounted(async () => {
   await Promise.all([adminStore.fetchDashboard(), gameStore.fetchLobby()]);
   if (playerUsers.value[0]) {
     form.userId = playerUsers.value[0].id;
+    resetForm.userId = playerUsers.value[0].id;
   }
 });
 </script>
@@ -81,7 +92,10 @@ onMounted(async () => {
         <p class="topbar-label">Admin Console</p>
         <h1>{{ authStore.user?.username }}</h1>
       </div>
-      <button class="button-secondary" @click="logout">登出</button>
+      <div class="topbar-actions">
+        <button class="button-secondary" type="button" @click="router.push('/account')">帳號安全</button>
+        <button class="button-secondary" @click="logout">登出</button>
+      </div>
     </header>
 
     <section class="admin-grid">
@@ -98,17 +112,34 @@ onMounted(async () => {
             <p class="topbar-label">Create Player</p>
             <label class="field">
               <span>帳號</span>
-              <input v-model="createForm.username" placeholder="例如 player2" />
+              <input v-model="createForm.username" placeholder="例如 player2" minlength="3" maxlength="24" pattern="[a-z][a-z0-9_]*" required />
             </label>
             <label class="field">
               <span>密碼</span>
-              <input v-model="createForm.password" type="password" />
+              <input v-model="createForm.password" type="password" minlength="12" maxlength="72" autocomplete="new-password" required />
             </label>
             <label class="field">
               <span>初始金額</span>
-              <input v-model.number="createForm.balance" type="number" step="100" />
+              <input v-model.number="createForm.balance" type="number" min="0" max="100000000" step="100" required />
             </label>
+            <p class="policy-hint">帳號限小寫英文開頭；密碼需 12–72 字元，包含大小寫、數字與符號；金額以 100 為單位。</p>
             <button class="button-primary" @click="submitCreatePlayer">建立玩家</button>
+          </div>
+
+          <div class="sub-block">
+            <p class="topbar-label">Reset Player Password</p>
+            <label class="field">
+              <span>玩家</span>
+              <select v-model="resetForm.userId">
+                <option v-for="user in playerUsers" :key="user.id" :value="user.id">{{ user.username }}</option>
+              </select>
+            </label>
+            <label class="field">
+              <span>新密碼</span>
+              <input v-model="resetForm.newPassword" type="password" minlength="12" maxlength="72" autocomplete="new-password" />
+            </label>
+            <p v-if="resetStatus" class="success-text">{{ resetStatus }}</p>
+            <button class="button-primary" type="button" @click="submitPasswordReset">重設密碼</button>
           </div>
 
           <label class="field">
@@ -122,7 +153,7 @@ onMounted(async () => {
 
           <label class="field">
             <span>調整金額</span>
-            <input v-model.number="form.amount" type="number" step="100" />
+            <input v-model.number="form.amount" type="number" min="-100000000" max="100000000" step="100" />
           </label>
 
           <label class="field">
@@ -250,6 +281,10 @@ onMounted(async () => {
   flex-wrap: wrap;
   gap: $space-3;
 }
+
+.topbar-actions { display: flex; flex-wrap: wrap; gap: $space-3; }
+.policy-hint { margin: 0; color: rgba(247, 244, 233, 0.65); font-size: 13px; line-height: 1.5; }
+.success-text { margin: 0; color: #8ce6a8; }
 
 .topbar-label {
   margin: 0;

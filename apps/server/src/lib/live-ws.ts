@@ -13,10 +13,12 @@ import {
 } from "./db.js";
 import { startLiveEventSubscriber, type LiveEvent } from "./live-events.js";
 import { getRoundConfig } from "./round-manager.js";
+import { liveClientMessageSchema } from "./account-policy.js";
 
 type LiveSocketConnection = {
   id: string;
   userId: string;
+  authVersion: number;
   socket: WebSocket;
   subscription: { scope: "none" } | { scope: "lobby" } | { scope: "table"; tableId: string };
 };
@@ -76,6 +78,12 @@ async function pushLobbySnapshot(connection: LiveSocketConnection) {
 }
 
 async function pushUserSnapshot(connection: LiveSocketConnection) {
+  const freshUser = await findUserById(connection.userId);
+  if (!freshUser || !freshUser.isActive || freshUser.authVersion !== connection.authVersion) {
+    sendMessage(connection.socket, { type: "error", message: "Session is no longer valid" });
+    connection.socket.close();
+    return;
+  }
   const user = await buildUserLiveState(connection.userId);
 
   if (!user) {
@@ -195,16 +203,8 @@ async function handleLiveEvent(event: LiveEvent) {
 
 function parseClientMessage(data: string): ClientMessage | null {
   try {
-    const message = JSON.parse(data) as ClientMessage;
-    if (message.type === "subscribe_lobby") {
-      return message;
-    }
-
-    if (message.type === "subscribe_table" && typeof message.tableId === "string") {
-      return message;
-    }
-
-    return null;
+    const result = liveClientMessageSchema.safeParse(JSON.parse(data));
+    return result.success ? result.data : null;
   } catch {
     return null;
   }
@@ -269,7 +269,7 @@ export async function attachLiveWebSocketServer(server: Server) {
       const payload = verifyToken(token);
       const user = await findUserById(payload.userId);
 
-      if (!user || !user.isActive) {
+      if (!user || !user.isActive || user.authVersion !== payload.authVersion) {
         socket.destroy();
         return;
       }
@@ -278,6 +278,7 @@ export async function attachLiveWebSocketServer(server: Server) {
         const connection: LiveSocketConnection = {
           id: randomUUID(),
           userId: payload.userId,
+          authVersion: payload.authVersion,
           socket: ws,
           subscription: { scope: "none" },
         };

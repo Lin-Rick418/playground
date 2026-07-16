@@ -4,6 +4,7 @@ import LoginView from "../views/LoginView.vue";
 import LobbyView from "../views/LobbyView.vue";
 import GameView from "../views/GameView.vue";
 import AdminView from "../views/AdminView.vue";
+import AccountView from "../views/AccountView.vue";
 
 const router = createRouter({
   history: createWebHistory(),
@@ -13,6 +14,7 @@ const router = createRouter({
     { path: "/lobby", component: LobbyView, meta: { requiresAuth: true, role: "PLAYER" } },
     { path: "/game/:tableId", component: GameView, meta: { requiresAuth: true, role: "PLAYER" } },
     { path: "/admin", component: AdminView, meta: { requiresAuth: true, role: "ADMIN" } },
+    { path: "/account", component: AccountView, meta: { requiresAuth: true } },
   ],
 });
 
