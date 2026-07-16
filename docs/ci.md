@@ -1,13 +1,13 @@
 # CI 與必要檢查
 
-Pull request 與 `master` push 會執行 `.github/workflows/pull-request-ci.yml`。Repository 的 branch
+Pull request 與 `main` push 會執行 `.github/workflows/pull-request-ci.yml`。Repository 的 branch
 protection 應將下列兩個 job 設為 required checks：
 
 - `quality`
 - `dependency-audit`
 
 `quality` 使用 Node.js `22.19.0`、`npm ci` 與 ephemeral PostgreSQL 16，依序執行 repository
-static checks、server/web typecheck、production build、unit tests，以及真實 HTTP＋PostgreSQL
+static checks、server/web typecheck、production build、server/web unit tests、release/deploy safety tests，以及真實 HTTP＋PostgreSQL
 integration tests。`dependency-audit` 分別檢查 production dependencies 與包含 dev tooling 的完整
 dependency tree；任一 high/critical vulnerability 都會讓 check 失敗。
 
@@ -18,6 +18,10 @@ npm ci
 npm run check:static
 npm run build
 npm test
+npm test --workspace web
+npm run test:release
+npm run test:ops
+npm run test:deploy
 npm run audit:prod
 npm run audit:full
 ```

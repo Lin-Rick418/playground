@@ -51,8 +51,16 @@ jobs:
         run: npm run check:static
       - name: Production build
         run: npm run build
+        env:
+          BUILD_COMMIT_SHA: ${{ github.sha }}
+          BUILD_BRANCH: ${{ github.head_ref || github.ref_name }}
+          BUILD_DIRTY: "false"
       - name: Unit tests
         run: npm test
+      - name: Web tests
+        run: npm test --workspace web
+      - name: Release and deployment safety tests
+        run: npm run test:release && npm run test:ops && npm run test:deploy
       - name: HTTP and PostgreSQL integration tests
         run: npm run test:integration
 
