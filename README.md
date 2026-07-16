@@ -7,10 +7,8 @@ Vue 3 + Pinia 前端，Node.js + Express 後端，PostgreSQL 資料庫。
 - 玩家登入
 - 百家樂自動輪局、封盤、開牌、結算
 - 玩家歷史下注紀錄
-- Admin 登入
-- Admin 查詢玩家列表
-- Admin 手動調整玩家餘額
-- 最近餘額異動紀錄
+- 玩家本日收益與帳號密碼管理
+- WebSocket 即時桌況與可驗證牌靴公平性
 
 ## 開發用預設帳號
 
@@ -70,7 +68,7 @@ npm run dev:web
 VITE_API_BASE_URL=https://your-api-host.example.com
 ```
 
-預設範例可參考 [apps/web/.env.example](/Users/k/Documents/Playground/apps/web/.env.example)。
+預設範例可參考 [apps/web/.env.example](apps/web/.env.example)。
 
 ## 技術選擇
 

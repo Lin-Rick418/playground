@@ -28,3 +28,18 @@ test("access token verification rejects a different audience", () => {
 
   assert.throws(() => jwt.verify(token, env.jwtSecret, { audience: "another-app" }));
 });
+
+test("player application rejects legacy admin access tokens", () => {
+  const token = jwt.sign(
+    { userId: "admin-1", role: "ADMIN", sessionId: "session-1" },
+    env.jwtSecret,
+    {
+      algorithm: "HS256",
+      audience: "baccarat-web",
+      issuer: "baccarat-api",
+      expiresIn: ACCESS_TOKEN_TTL_SECONDS,
+    },
+  );
+
+  assert.throws(() => verifyToken(token), /Invalid player token payload/);
+});

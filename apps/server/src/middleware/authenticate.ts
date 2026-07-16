@@ -41,11 +41,17 @@ export async function authenticate(req: AuthenticatedRequest, res: Response, nex
     const decision = validatePersistedSession(persistedUser);
 
     if (!decision.authorized) {
+      const code =
+        decision.reason === "account_disabled"
+          ? "ACCOUNT_DISABLED"
+          : decision.reason === "role_changed"
+            ? "FORBIDDEN"
+            : "INVALID_TOKEN";
       return sendApiError(
         req,
         res,
         decision.httpStatus,
-        decision.httpStatus === 401 ? "INVALID_TOKEN" : "ACCOUNT_DISABLED",
+        code,
         decision.message,
       );
     }

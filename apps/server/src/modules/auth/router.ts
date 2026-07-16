@@ -55,6 +55,10 @@ function clearRefreshCookie(res: Response) {
 }
 
 function buildAuthResponse(user: UserRecord, sessionId: string) {
+  if (user.role !== "PLAYER") {
+    throw new TypeError("Player authentication response requires a player account");
+  }
+
   return {
     token: signToken({ userId: user.id, role: user.role, sessionId }),
     accessTokenExpiresAt: new Date(Date.now() + ACCESS_TOKEN_TTL_SECONDS * 1000).toISOString(),

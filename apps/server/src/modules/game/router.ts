@@ -11,7 +11,6 @@ import {
   placeBetSchema,
   tableIdParamsSchema,
 } from "../../lib/account-policy.js";
-import { requireRole } from "../../lib/auth.js";
 import { getBusinessDayWindow } from "../../lib/business-day.js";
 import { sendContractResponse } from "../../lib/contracts.js";
 import {
@@ -43,7 +42,6 @@ const BETTING_OPEN_GRACE_MS = 400;
 export const gameRouter = Router();
 
 gameRouter.use(authenticate);
-gameRouter.use((req, res, next) => requireRole(req as AuthenticatedRequest, res, next, "PLAYER"));
 
 gameRouter.get("/lobby", async (_req, res) => {
   const tables = await buildLobbyTables();

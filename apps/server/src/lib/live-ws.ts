@@ -12,7 +12,7 @@ import {
 import { verifyToken } from "./auth.js";
 import { contractIssues } from "./contracts.js";
 import {
-  validateWebSocketSession,
+  validatePlayerWebSocketSession,
   type AuthorizationRevocationReason,
 } from "./authorization-state.js";
 import {
@@ -106,7 +106,7 @@ function revokeLiveConnection(
 }
 
 async function revalidateLiveConnection(connection: LiveSocketConnection) {
-  const decision = validateWebSocketSession(
+  const decision = validatePlayerWebSocketSession(
     connection.role,
     await buildUserLiveState(connection.userId),
   );
@@ -280,7 +280,7 @@ async function handleLiveEvent(event: LiveEvent) {
   const tableStateById = new Map(tableStates);
 
   for (const connection of matchingConnections) {
-    const decision = validateWebSocketSession(connection.role, user);
+    const decision = validatePlayerWebSocketSession(connection.role, user);
     if (!decision.authorized) {
       revokeLiveConnection(connection, decision.reason);
       continue;

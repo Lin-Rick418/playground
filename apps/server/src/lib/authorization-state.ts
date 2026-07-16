@@ -1,6 +1,9 @@
 import type { UserRecord, UserRole } from "../types/domain.js";
 
 export type AuthorizationUser = Pick<UserRecord, "id" | "role" | "isActive">;
+export type AuthorizedPlayer<T extends AuthorizationUser = AuthorizationUser> = T & {
+  role: "PLAYER";
+};
 export type AuthorizationRevocationReason = "user_deleted" | "account_disabled" | "role_changed";
 
 export type AuthorizationDecision<T extends AuthorizationUser = AuthorizationUser> =
@@ -14,7 +17,7 @@ export type AuthorizationDecision<T extends AuthorizationUser = AuthorizationUse
 
 export function validatePersistedSession<T extends AuthorizationUser>(
   user: T | null,
-): AuthorizationDecision<T> {
+): AuthorizationDecision<AuthorizedPlayer<T>> {
   if (!user) {
     return {
       authorized: false,
@@ -33,24 +36,29 @@ export function validatePersistedSession<T extends AuthorizationUser>(
     };
   }
 
-  return { authorized: true, user };
+  if (user.role !== "PLAYER") {
+    return {
+      authorized: false,
+      reason: "role_changed",
+      httpStatus: 403,
+      message: "Account is not available in the player application",
+    };
+  }
+
+  return { authorized: true, user: user as AuthorizedPlayer<T> };
 }
 
-export function hasRequiredRole(user: AuthorizationUser | undefined, requiredRole: UserRole) {
-  return Boolean(user?.isActive && user.role === requiredRole);
-}
-
-export function validateWebSocketSession<T extends AuthorizationUser>(
+export function validatePlayerWebSocketSession<T extends AuthorizationUser>(
   tokenRole: UserRole,
   user: T | null,
-): AuthorizationDecision<T> {
+): AuthorizationDecision<AuthorizedPlayer<T>> {
   const persistedSession = validatePersistedSession(user);
 
   if (!persistedSession.authorized) {
     return persistedSession;
   }
 
-  if (persistedSession.user.role !== tokenRole) {
+  if (tokenRole !== "PLAYER" || persistedSession.user.role !== tokenRole) {
     return {
       authorized: false,
       reason: "role_changed",
