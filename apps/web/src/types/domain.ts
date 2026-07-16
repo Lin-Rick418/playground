@@ -96,6 +96,19 @@ export type RoundHistoryItem = {
   };
 };
 
+export type DailyProfitSummary = {
+  date: string;
+  timeZone: string;
+  windowStart: string;
+  windowEnd: string;
+  formula: "TOTAL_PAYOUT_MINUS_TOTAL_BET";
+  recognitionTime: "ROUND_SETTLED_AT";
+  totalBet: number;
+  totalPayout: number;
+  netProfit: number;
+  calculatedAt: string;
+};
+
 export type AdminUser = {
   id: string;
   username: string;

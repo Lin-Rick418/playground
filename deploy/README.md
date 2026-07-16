@@ -68,6 +68,8 @@ sudo chmod 600 /etc/baccarat/baccarat.env
 - `JWT_SECRET`
 - `DATABASE_URL`
 
+`BUSINESS_TIME_ZONE` 使用 IANA timezone，預設為 `Asia/Taipei`。玩家本日收益會以此 timezone 的 calendar day、依 round `settled_at` 認列，公式為 `total payout - total bet`；修改後必須重啟 API。
+
 ## 6. 初始資料
 
 ```bash

@@ -428,6 +428,34 @@ export async function listUserHistory(userId: string, executor: DbExecutor = poo
   });
 }
 
+export async function getUserDailyProfit(
+  userId: string,
+  window: { start: Date; end: Date },
+  executor: DbExecutor = pool,
+) {
+  const row = await queryRow(
+    executor,
+    `SELECT
+       COALESCE(SUM(b.amount), 0) AS total_bet,
+       COALESCE(SUM(b.payout), 0) AS total_payout
+     FROM bets b
+     JOIN game_rounds g ON g.id = b.round_id
+     WHERE b.user_id = $1
+       AND g.status = 'SETTLED'
+       AND g.settled_at >= $2
+       AND g.settled_at < $3`,
+    [userId, window.start.toISOString(), window.end.toISOString()],
+  );
+  const totalBet = Number(row?.total_bet ?? 0);
+  const totalPayout = Number(row?.total_payout ?? 0);
+
+  return {
+    totalBet,
+    totalPayout,
+    netProfit: totalPayout - totalBet,
+  };
+}
+
 export async function listRoundBets(roundId: string, executor: DbExecutor = pool) {
   const rows = await queryRows(executor, "SELECT * FROM bets WHERE round_id = $1 ORDER BY created_at ASC", [roundId]);
 

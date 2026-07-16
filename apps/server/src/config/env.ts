@@ -1,4 +1,5 @@
 import dotenv from "dotenv";
+import { assertValidTimeZone } from "../lib/business-day.js";
 
 dotenv.config();
 
@@ -8,6 +9,9 @@ dotenv.config();
 const nodeEnv = process.env.NODE_ENV ?? "production";
 const isDevelopment = nodeEnv === "development" || nodeEnv === "test";
 const isProduction = !isDevelopment;
+const businessTimeZone = process.env.BUSINESS_TIME_ZONE ?? "Asia/Taipei";
+
+assertValidTimeZone(businessTimeZone);
 
 if (isProduction && (!process.env.JWT_SECRET || process.env.JWT_SECRET === "change-me")) {
   throw new Error("JWT_SECRET must be set to a strong secret outside development");
@@ -23,4 +27,5 @@ export const env = {
   corsOrigin: process.env.CORS_ORIGIN ?? (isProduction ? false : "*"),
   databaseUrl: process.env.DATABASE_URL ?? "postgres://postgres:postgres@127.0.0.1:5432/baccarat",
   databaseSsl: process.env.DATABASE_SSL ?? "false",
+  businessTimeZone,
 };

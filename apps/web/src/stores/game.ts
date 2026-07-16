@@ -4,6 +4,7 @@ import type {
   ActiveRound,
   BetType,
   CurrentBet,
+  DailyProfitSummary,
   GameTable,
   LobbySnapshot,
   LobbyTable,
@@ -21,6 +22,7 @@ export const useGameStore = defineStore("game", {
     tables: [] as LobbyTable[],
     currentTable: null as GameTable | null,
     history: [] as RoundHistoryItem[],
+    dailyProfit: null as DailyProfitSummary | null,
     currentRound: null as ActiveRound | null,
     previousRound: null as ActiveRound | null,
     presentation: null as PresentationWindow | null,
@@ -98,8 +100,17 @@ export const useGameStore = defineStore("game", {
       this.loading = true;
 
       try {
-        const { data } = await api.get<RoundHistoryItem[]>("/game/history");
-        this.history = data;
+        const [historyResult, dailyProfitResult] = await Promise.allSettled([
+          api.get<RoundHistoryItem[]>("/game/history"),
+          api.get<DailyProfitSummary>("/game/daily-profit"),
+        ]);
+
+        if (historyResult.status === "rejected") {
+          throw historyResult.reason;
+        }
+
+        this.history = historyResult.value.data;
+        this.dailyProfit = dailyProfitResult.status === "fulfilled" ? dailyProfitResult.value.data : null;
       } finally {
         this.loading = false;
       }
