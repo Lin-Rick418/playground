@@ -75,6 +75,14 @@ export const useAuthStore = defineStore("auth", {
 
       return (await this.refreshAccessToken()).token;
     },
+    async changePassword(currentPassword: string, newPassword: string) {
+      const { data } = await api.post<LoginResponse>("/auth/change-password", { currentPassword, newPassword });
+      this.token = data.token;
+      this.user = data.user;
+      this.accessTokenExpiresAt = data.accessTokenExpiresAt;
+      setStoredToken(data.token);
+      return data.user;
+    },
     logout() {
       void api.post("/auth/logout").catch(() => undefined);
       this.token = "";

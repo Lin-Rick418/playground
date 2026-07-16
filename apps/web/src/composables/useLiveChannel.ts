@@ -50,6 +50,12 @@ export function useLiveChannel(options: UseLiveChannelOptions) {
     }
 
     if (message.type === "error") {
+      if (message.message === "Session is no longer valid") {
+        authStore.logout();
+        disconnect();
+        router.push("/login");
+        return;
+      }
       options.onError?.(message.message);
       return;
     }

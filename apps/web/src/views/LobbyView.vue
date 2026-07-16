@@ -139,17 +139,14 @@ function historyBetSummary(item: Pick<RoundHistoryItem, "bets">) {
         <p>Live Baccarat</p>
         <h1>遊戲大廳</h1>
       </div>
-      <button
-        class="history-button"
-        type="button"
-        @click="openHistory"
-        aria-haspopup="dialog"
-        aria-label="最近 20 筆下注紀錄"
-      >
-        <svg viewBox="0 0 24 24" aria-hidden="true">
-          <path d="M12 7v5l3 2M21 12a9 9 0 1 1-2.64-6.36M21 4v5h-5" />
-        </svg>
-      </button>
+      <div class="header-actions">
+        <button class="account-button" type="button" @click="router.push('/account')" aria-label="帳號安全">⚙</button>
+        <button class="history-button" type="button" @click="openHistory" aria-haspopup="dialog" aria-label="最近 20 筆下注紀錄">
+          <svg viewBox="0 0 24 24" aria-hidden="true">
+            <path d="M12 7v5l3 2M21 12a9 9 0 1 1-2.64-6.36M21 4v5h-5" />
+          </svg>
+        </button>
+      </div>
     </header>
 
     <section class="table-cards">
@@ -307,7 +304,7 @@ function historyBetSummary(item: Pick<RoundHistoryItem, "bets">) {
   top: 0;
   z-index: 20;
   display: grid;
-  grid-template-columns: 48px minmax(0, 1fr) 48px;
+  grid-template-columns: 48px minmax(0, 1fr) 92px;
   align-items: center;
   gap: $space-2;
   min-height: 64px;
@@ -338,6 +335,7 @@ function historyBetSummary(item: Pick<RoundHistoryItem, "bets">) {
 }
 
 .back-button,
+.account-button,
 .history-button {
   width: 44px;
   height: 44px;
@@ -347,6 +345,9 @@ function historyBetSummary(item: Pick<RoundHistoryItem, "bets">) {
   -webkit-tap-highlight-color: transparent;
   transition: transform 120ms ease, filter 120ms ease;
 }
+
+.header-actions { justify-self: end; display: flex; gap: $space-2; }
+.account-button { display: grid; place-items: center; background: $color-surface-soft; color: $color-text-primary; font-size: 18px; }
 
 .back-button {
   justify-self: start;
@@ -377,6 +378,7 @@ function historyBetSummary(item: Pick<RoundHistoryItem, "bets">) {
 }
 
 .back-button:active,
+.account-button:active,
 .history-button:active {
   transform: scale(0.94);
 }

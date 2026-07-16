@@ -1393,6 +1393,15 @@ watch(
             若按「測試語音」沒有聲音，請確認手機未開靜音（iPhone 側邊靜音鍵）並將媒體音量調高。
           </p>
         </div>
+        <div class="settings-section">
+          <p class="settings-section-label">帳號安全</p>
+          <div class="settings-list">
+            <button type="button" class="settings-item" @click="router.push('/account')">
+              <span>變更密碼</span>
+              <strong>前往</strong>
+            </button>
+          </div>
+        </div>
       </section>
     </div>
   </main>

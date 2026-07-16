@@ -22,6 +22,16 @@ import {
   type FinancialLedgerReferenceType,
   type FinancialLedgerSource,
 } from "./financial-ledger.js";
+import { betTypes } from "../types/domain.js";
+import {
+  assertAccountBalance,
+  getMaximumPayout,
+  MAX_ACCOUNT_BALANCE,
+  MONEY_DENOMINATION,
+  normalizeUsername,
+  PASSWORD_BCRYPT_ROUNDS,
+  usernameSchema,
+} from "./account-policy.js";
 
 type DbExecutor = Pool | PoolClient;
 type DbRow = Record<string, unknown>;
@@ -93,6 +103,12 @@ function requireRecord<T>(record: T | null, entity: string): T {
   }
 
   return record;
+}
+
+function assertPasswordHash(passwordHash: string) {
+  if (!/^\$2[aby]\$\d{2}\$[./A-Za-z0-9]{53}$/.test(passwordHash)) {
+    throw new TypeError("Password must be stored as a bcrypt hash");
+  }
 }
 
 export async function withTransaction<T>(handler: (client: PoolClient) => Promise<T>) {
@@ -254,6 +270,38 @@ export async function initializeDatabase() {
       ADD COLUMN IF NOT EXISTS round_phase_offset_ms INTEGER NOT NULL DEFAULT 0;
     ALTER TABLE game_tables
       ADD COLUMN IF NOT EXISTS round_schedule_version INTEGER NOT NULL DEFAULT 0;
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_users_username_normalized
+      ON users ((lower(username)));
+
+    DO $$ BEGIN
+      IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'users_balance_policy') THEN
+        ALTER TABLE users ADD CONSTRAINT users_balance_policy
+          CHECK (balance BETWEEN 0 AND ${MAX_ACCOUNT_BALANCE}) NOT VALID;
+      END IF;
+      IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'users_role_policy') THEN
+        ALTER TABLE users ADD CONSTRAINT users_role_policy CHECK (role IN ('ADMIN', 'PLAYER')) NOT VALID;
+      END IF;
+      IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'game_tables_bet_policy') THEN
+        ALTER TABLE game_tables ADD CONSTRAINT game_tables_bet_policy CHECK (
+          min_bet > 0 AND min_bet <= max_bet AND
+          min_bet % ${MONEY_DENOMINATION} = 0 AND max_bet % ${MONEY_DENOMINATION} = 0 AND
+          max_bet <= ${MAX_ACCOUNT_BALANCE}
+        ) NOT VALID;
+      END IF;
+      IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'bets_amount_policy') THEN
+        ALTER TABLE bets ADD CONSTRAINT bets_amount_policy CHECK (
+          amount > 0 AND amount <= ${MAX_ACCOUNT_BALANCE} AND amount % ${MONEY_DENOMINATION} = 0 AND
+          payout BETWEEN 0 AND ${MAX_ACCOUNT_BALANCE} AND
+          bet_type IN ('PLAYER', 'BANKER', 'TIE', 'PLAYER_PAIR', 'BANKER_PAIR')
+        ) NOT VALID;
+      END IF;
+      IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'balance_adjustments_amount_policy') THEN
+        ALTER TABLE balance_adjustments ADD CONSTRAINT balance_adjustments_amount_policy CHECK (
+          amount <> 0 AND amount BETWEEN -${MAX_ACCOUNT_BALANCE} AND ${MAX_ACCOUNT_BALANCE} AND
+          amount % ${MONEY_DENOMINATION} = 0
+        ) NOT VALID;
+      END IF;
+    END $$;
 
     ${coreDatabaseIntegritySql}
 
@@ -469,7 +517,7 @@ function mapRound(row: DbRow): GameRoundRecord {
 }
 
 export async function findUserByUsername(username: string, executor: DbExecutor = pool) {
-  const row = await queryRow(executor, "SELECT * FROM users WHERE username = $1", [username]);
+  const row = await queryRow(executor, "SELECT * FROM users WHERE lower(username) = $1", [normalizeUsername(username)]);
   return row ? mapUser(row) : null;
 }
 
@@ -593,6 +641,13 @@ export async function reconcileAllUserBalances(executor: DbExecutor = pool) {
 export async function createPlayer(
   input: { username: string; passwordHash: string; balance: number; actorId: string },
 ): Promise<UserRecord> {
+  const username = usernameSchema.parse(input.username);
+  assertPasswordHash(input.passwordHash);
+  assertAccountBalance(input.balance);
+  if (input.balance % MONEY_DENOMINATION !== 0) {
+    throw new RangeError("Initial balance violates account policy");
+  }
+
   return withTransaction(async (client) => {
     const id = randomUUID();
     const now = new Date().toISOString();
@@ -600,7 +655,7 @@ export async function createPlayer(
     await client.query(
       `INSERT INTO users (id, username, password_hash, role, is_active, balance, created_at, updated_at)
        VALUES ($1, $2, $3, 'PLAYER', TRUE, 0, $4, $5)`,
-      [id, input.username, input.passwordHash, now, now],
+      [id, username, input.passwordHash, now, now],
     );
 
     const { user } = await applyBalanceMutation(
@@ -622,7 +677,27 @@ export async function createPlayer(
 
 export async function setUserActive(userId: string, isActive: boolean, executor: DbExecutor = pool) {
   const now = new Date().toISOString();
-  await executor.query("UPDATE users SET is_active = $1, updated_at = $2 WHERE id = $3", [isActive, now, userId]);
+  await executor.query(
+    `UPDATE users SET
+       is_active = $1,
+       updated_at = $2
+     WHERE id = $3`,
+    [isActive, now, userId],
+  );
+  return requireRecord(await findUserById(userId, executor), "Updated user");
+}
+
+export async function updateUserPasswordHash(
+  userId: string,
+  passwordHash: string,
+  executor: DbExecutor = pool,
+) {
+  assertPasswordHash(passwordHash);
+  const now = new Date().toISOString();
+  await executor.query(
+    "UPDATE users SET password_hash = $1, updated_at = $2 WHERE id = $3",
+    [passwordHash, now, userId],
+  );
   return requireRecord(await findUserById(userId, executor), "Updated user");
 }
 
@@ -834,6 +909,19 @@ export async function revokeAuthSessionByRefreshTokenHash(
   return row ? mapAuthSession(row) : null;
 }
 
+export async function revokeAuthSessionsByUserId(userId: string, executor: DbExecutor = pool) {
+  const revokedAt = new Date().toISOString();
+  const rows = await queryRows(
+    executor,
+    `UPDATE auth_sessions
+     SET revoked_at = $1
+     WHERE user_id = $2 AND revoked_at IS NULL
+     RETURNING id, user_id, expires_at`,
+    [revokedAt, userId],
+  );
+  return rows.map((row: DbRow) => mapAuthSession(row));
+}
+
 export async function isAuthSessionActive(sessionId: string, executor: DbExecutor = pool) {
   const row = await queryRow(
     executor,
@@ -901,6 +989,15 @@ export async function createBet(
   },
   executor: DbExecutor = pool,
 ) {
+  if (
+    !betTypes.includes(input.betType) ||
+    !Number.isSafeInteger(input.amount) ||
+    input.amount <= 0 ||
+    input.amount > MAX_ACCOUNT_BALANCE ||
+    input.amount % MONEY_DENOMINATION !== 0
+  ) {
+    throw new RangeError("Bet amount violates money policy");
+  }
   const id = randomUUID();
   const createdAt = new Date().toISOString();
 
@@ -1071,6 +1168,10 @@ export async function updateBetPayouts(
     return;
   }
 
+  if (payouts.some(({ payout }) => !Number.isSafeInteger(payout) || payout < 0 || payout > MAX_ACCOUNT_BALANCE)) {
+    throw new RangeError("Bet payout violates money policy");
+  }
+
   for (const batch of chunkItems(payouts)) {
     const values: unknown[] = [];
     const rows = batch.map((item, index) => {
@@ -1086,6 +1187,29 @@ export async function updateBetPayouts(
       values,
     );
   }
+}
+
+export async function getUserUnsettledMaximumPayout(userId: string, executor: DbExecutor = pool) {
+  const rows = await queryRows(
+    executor,
+    `SELECT b.bet_type, b.amount
+     FROM bets b
+     JOIN game_rounds g ON g.id = b.round_id
+     WHERE b.user_id = $1 AND g.status IN ('OPEN', 'LOCKED')`,
+    [userId],
+  );
+  const maximumPayout = rows.reduce((sum: number, row: DbRow) => {
+    const betType = String(row.bet_type) as BetType;
+    const amount = Number(row.amount);
+    if (!betTypes.includes(betType)) {
+      throw new RangeError("Unsettled bet type violates domain policy");
+    }
+    return sum + getMaximumPayout(betType, amount);
+  }, 0);
+  if (!Number.isSafeInteger(maximumPayout)) {
+    throw new RangeError("Unsettled payout exposure is outside the supported range");
+  }
+  return maximumPayout;
 }
 
 export async function findRoundById(
@@ -1197,6 +1321,14 @@ export async function createBalanceAdjustment(
   },
   executor: DbExecutor = pool,
 ) {
+  if (
+    !Number.isSafeInteger(input.amount) ||
+    input.amount === 0 ||
+    Math.abs(input.amount) > MAX_ACCOUNT_BALANCE ||
+    input.amount % MONEY_DENOMINATION !== 0
+  ) {
+    throw new RangeError("Balance adjustment violates money policy");
+  }
   const id = randomUUID();
   const createdAt = new Date().toISOString();
 
@@ -1533,7 +1665,7 @@ async function seedDemoUser(
 }
 
 async function seedDemoUsers(executor: PoolClient) {
-  const playerPasswordHash = await bcrypt.hash("player123", 10);
+  const playerPasswordHash = await bcrypt.hash("LuckyShoes!2026", PASSWORD_BCRYPT_ROUNDS);
   await seedDemoUser(
     { username: "player1", passwordHash: playerPasswordHash, role: "PLAYER", balance: 10000 },
     executor,

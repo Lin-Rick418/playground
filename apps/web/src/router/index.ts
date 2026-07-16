@@ -3,6 +3,7 @@ import { useAuthStore } from "../stores/auth";
 import LoginView from "../views/LoginView.vue";
 import LobbyView from "../views/LobbyView.vue";
 import GameView from "../views/GameView.vue";
+import AccountView from "../views/AccountView.vue";
 
 const router = createRouter({
   history: createWebHistory(),
@@ -11,6 +12,7 @@ const router = createRouter({
     { path: "/login", component: LoginView },
     { path: "/lobby", component: LobbyView, meta: { requiresAuth: true, role: "PLAYER" } },
     { path: "/game/:tableId", component: GameView, meta: { requiresAuth: true, role: "PLAYER" } },
+    { path: "/account", component: AccountView, meta: { requiresAuth: true, role: "PLAYER" } },
     { path: "/:pathMatch(.*)*", redirect: "/login" },
   ],
 });
