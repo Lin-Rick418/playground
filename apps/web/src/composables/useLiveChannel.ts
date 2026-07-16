@@ -3,7 +3,10 @@ import { useRouter } from "vue-router";
 import { createLiveSocket, type LiveMessage } from "../lib/live";
 import { useAuthStore } from "../stores/auth";
 
-type ChannelMessage = Exclude<LiveMessage, { type: "connected" } | { type: "error" } | { type: "user_snapshot" }>;
+type ChannelMessage = Exclude<
+  LiveMessage,
+  { type: "connected" } | { type: "error" } | { type: "auth_revoked" } | { type: "user_snapshot" }
+>;
 
 type UseLiveChannelOptions = {
   getSubscribeMessage: () => Record<string, unknown>;
@@ -32,6 +35,13 @@ export function useLiveChannel(options: UseLiveChannelOptions) {
     socket = null;
   }
 
+  function revokeSession() {
+    disposed = true;
+    disconnect();
+    authStore.logout();
+    void router.push("/login");
+  }
+
   function handleMessage(message: LiveMessage) {
     if (message.type === "connected") {
       return;
@@ -42,10 +52,14 @@ export function useLiveChannel(options: UseLiveChannelOptions) {
       return;
     }
 
+    if (message.type === "auth_revoked") {
+      revokeSession();
+      return;
+    }
+
     if (message.type === "user_snapshot") {
       if (!message.data.isActive) {
-        authStore.logout();
-        router.push("/login");
+        revokeSession();
         return;
       }
 
