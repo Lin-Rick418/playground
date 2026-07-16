@@ -116,6 +116,13 @@ journalctl -u baccarat-api -f
 journalctl -u baccarat-worker -f
 ```
 
+健康檢查分為：
+
+- `GET /api/health/live`：只確認 API process 可回應。
+- `GET /api/health/ready`（以及相容路徑 `/api/health`）：在 1.5 秒內檢查 PostgreSQL，並要求 round worker 最近 10 秒內有成功 tick；未就緒回傳 `503` 與各 dependency 狀態。
+
+部署完成後應等待 readiness 回傳 `200`，不要只使用 liveness 判定可接流量。
+
 ## 8. 安裝 nginx 設定
 
 ```bash
