@@ -1,4 +1,5 @@
 import { calculatePayout, dealRoundFromShoe, getMassachusettsCutCardConfig } from "./baccarat.js";
+import { createOrGetActiveRound } from "./active-round-invariant.js";
 import {
   createRound,
   ensureTableShoe,
@@ -47,37 +48,43 @@ async function createOpenRound(
   startTime = Date.now(),
   initializePhase = false,
 ) {
-  const round = await withTransaction(async (client) => {
-    const shoe = await ensureTableShoe(table.id, client);
-    const shouldApplyPhase = initializePhase || table.roundScheduleVersion < ROUND_SCHEDULE_VERSION;
-    const opensAtMs = getScheduledBettingOpensAtMs(table, startTime, shouldApplyPhase);
-    const opensAt = new Date(opensAtMs).toISOString();
-    const closesAt = new Date(opensAtMs + getTableRoundDurationMs(table)).toISOString();
+  const { round, created } = await createOrGetActiveRound(
+    () =>
+      withTransaction(async (client) => {
+        const shoe = await ensureTableShoe(table.id, client);
+        const shouldApplyPhase = initializePhase || table.roundScheduleVersion < ROUND_SCHEDULE_VERSION;
+        const opensAtMs = getScheduledBettingOpensAtMs(table, startTime, shouldApplyPhase);
+        const opensAt = new Date(opensAtMs).toISOString();
+        const closesAt = new Date(opensAtMs + getTableRoundDurationMs(table)).toISOString();
 
-    const nextRound = await createRound(
-      {
-        tableId: table.id,
-        shoeId: shoe.shoeId,
-        status: "OPEN",
-        bettingOpensAt: opensAt,
-        bettingClosesAt: closesAt,
-      },
-      client,
-    );
+        const nextRound = await createRound(
+          {
+            tableId: table.id,
+            shoeId: shoe.shoeId,
+            status: "OPEN",
+            bettingOpensAt: opensAt,
+            bettingClosesAt: closesAt,
+          },
+          client,
+        );
 
-    if (shouldApplyPhase) {
-      await setTableRoundScheduleVersion(table.id, ROUND_SCHEDULE_VERSION, client);
-    }
+        if (shouldApplyPhase) {
+          await setTableRoundScheduleVersion(table.id, ROUND_SCHEDULE_VERSION, client);
+        }
 
-    return nextRound;
-  });
+        return nextRound;
+      }),
+    () => getActiveRound(table.id),
+  );
 
-  await publishLiveEvent({
-    type: "table_changed",
-    tableId: table.id,
-    reason: "round_opened",
-    at: new Date().toISOString(),
-  });
+  if (created) {
+    await publishLiveEvent({
+      type: "table_changed",
+      tableId: table.id,
+      reason: "round_opened",
+      at: new Date().toISOString(),
+    });
+  }
 
   return round;
 }

@@ -11,6 +11,7 @@ import type {
   UserRecord,
   UserRole,
 } from "../types/domain.js";
+import { ACTIVE_ROUND_UNIQUE_INDEX } from "./active-round-invariant.js";
 import { createMassachusettsShoeState, type Card, type TableShoeState } from "./baccarat.js";
 
 type DbExecutor = Pool | PoolClient;
@@ -179,6 +180,42 @@ export async function initializeDatabase() {
     CREATE INDEX IF NOT EXISTS idx_balance_adjustments_created
       ON balance_adjustments (created_at DESC);
   `);
+
+  await withTransaction(async (client) => {
+    await client.query("LOCK TABLE game_rounds IN SHARE ROW EXCLUSIVE MODE");
+    const duplicateActiveRounds = await queryRows<{
+      table_id: string;
+      round_ids: string[];
+      active_count: string;
+    }>(
+      client,
+      `SELECT table_id,
+              ARRAY_AGG(id ORDER BY created_at DESC, id DESC) AS round_ids,
+              COUNT(*) AS active_count
+       FROM game_rounds
+       WHERE status IN ('OPEN', 'LOCKED')
+       GROUP BY table_id
+       HAVING COUNT(*) > 1
+       ORDER BY table_id`,
+    );
+
+    if (duplicateActiveRounds.length > 0) {
+      const duplicateSummary = duplicateActiveRounds
+        .map((row) => `${row.table_id} (${row.active_count}: ${row.round_ids.join(", ")})`)
+        .join("; ");
+      const migrationError = new Error(
+        `Cannot enforce one active round per table; resolve existing OPEN/LOCKED duplicates first: ${duplicateSummary}`,
+      );
+      Object.assign(migrationError, { code: "ACTIVE_ROUND_INVARIANT_MIGRATION_REQUIRED" });
+      throw migrationError;
+    }
+
+    await client.query(
+      `CREATE UNIQUE INDEX IF NOT EXISTS ${ACTIVE_ROUND_UNIQUE_INDEX}
+       ON game_rounds (table_id)
+       WHERE status IN ('OPEN', 'LOCKED')`,
+    );
+  });
 }
 
 function mapUser(row: DbRow): UserRecord {
