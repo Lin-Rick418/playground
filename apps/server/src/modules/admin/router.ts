@@ -6,6 +6,7 @@ import { authenticate, type AuthenticatedRequest } from "../../middleware/authen
 import {
   claimIdempotencyKey,
   completeIdempotencyKey,
+  applyBalanceMutation,
   createBalanceAdjustment,
   createPlayer,
   findRoundById,
@@ -15,7 +16,6 @@ import {
   listRoundBetsDetailed,
   listUsers,
   setUserActive,
-  updateUserBalance,
   withTransaction,
 } from "../../lib/db.js";
 import { fingerprintIdempotencyRequest, parseIdempotencyKey } from "../../lib/idempotency.js";
@@ -65,7 +65,7 @@ adminRouter.get("/rounds/:roundId/bets", async (req, res) => {
   });
 });
 
-adminRouter.post("/players", async (req, res) => {
+adminRouter.post("/players", async (req: AuthenticatedRequest, res) => {
   const parsed = createPlayerSchema.safeParse(req.body);
 
   if (!parsed.success) {
@@ -81,6 +81,7 @@ adminRouter.post("/players", async (req, res) => {
     username: parsed.data.username,
     passwordHash,
     balance: parsed.data.balance,
+    actorId: req.currentUser!.id,
   });
 
   return res.status(201).json(toPublicUser(user));
@@ -166,13 +167,25 @@ adminRouter.post("/adjust-balance", async (req: AuthenticatedRequest, res) => {
       return fail(400, "Balance cannot be negative");
     }
 
-    const user = await updateUserBalance(targetUser.id, targetUser.balance + parsed.data.amount, client);
     const adjustment = await createBalanceAdjustment(
       {
         adminId: req.currentUser!.id,
         userId: targetUser.id,
         amount: parsed.data.amount,
         note: parsed.data.note,
+      },
+      client,
+    );
+    const { user } = await applyBalanceMutation(
+      {
+        userId: targetUser.id,
+        delta: parsed.data.amount,
+        actorType: "ADMIN",
+        actorId: req.currentUser!.id,
+        source: "ADMIN_ADJUSTMENT",
+        referenceType: "BALANCE_ADJUSTMENT",
+        referenceId: adjustment.id,
+        metadata: parsed.data.note ? { note: parsed.data.note } : undefined,
       },
       client,
     );

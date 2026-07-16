@@ -1,6 +1,7 @@
 import { calculatePayout, dealRoundFromShoe, getMassachusettsCutCardConfig } from "./baccarat.js";
 import { createOrGetActiveRound } from "./active-round-invariant.js";
 import {
+  applyBalanceMutation,
   createRound,
   ensureTableShoe,
   findRoundById,
@@ -9,14 +10,12 @@ import {
   getTableShoe,
   listRoundBets,
   listTables,
-  purgeSettledRoundsBefore,
   replaceTableShoe,
   saveTableShoe,
   setTableRoundScheduleVersion,
   settleRound,
   updateBetPayout,
   updateRoundStatus,
-  updateUserBalance,
   withTransaction,
 } from "./db.js";
 import { publishLiveEvent } from "./live-events.js";
@@ -30,14 +29,11 @@ import {
 import type { GameTableRecord } from "../types/domain.js";
 
 const LOOP_INTERVAL_MS = 1000;
-const CLEANUP_INTERVAL_MS = 24 * 60 * 60 * 1000;
-const SETTLED_ROUND_RETENTION_MS = 24 * 60 * 60 * 1000;
 const MIN_CARDS_TO_COMPLETE_ROUND = 6;
 const ROUND_SCHEDULE_VERSION = 1;
 
 const roundManagerState = globalThis as typeof globalThis & {
   __baccaratRoundManagerInterval?: NodeJS.Timeout;
-  __baccaratNextCleanupAt?: number;
   __baccaratRoundManagerTicking?: boolean;
 };
 
@@ -123,7 +119,18 @@ async function settleActiveRound(roundId: string, tableId: string) {
       const user = await findUserById(userId, client, { forUpdate: true });
 
       if (user) {
-        await updateUserBalance(user.id, user.balance + payout, client);
+        await applyBalanceMutation(
+          {
+            userId: user.id,
+            delta: payout,
+            actorType: "SYSTEM",
+            source: "SETTLEMENT_CREDIT",
+            referenceType: "ROUND",
+            referenceId: roundId,
+            metadata: { tableId },
+          },
+          client,
+        );
       }
     }
 
@@ -192,26 +199,6 @@ async function tickTable(table: GameTableRecord) {
   }
 }
 
-async function runDailyCleanup(now: number) {
-  if (!roundManagerState.__baccaratNextCleanupAt) {
-    roundManagerState.__baccaratNextCleanupAt = now;
-  }
-
-  if (now < roundManagerState.__baccaratNextCleanupAt) {
-    return;
-  }
-
-  const cutoffIso = new Date(now - SETTLED_ROUND_RETENTION_MS).toISOString();
-  const result = await purgeSettledRoundsBefore(cutoffIso);
-  roundManagerState.__baccaratNextCleanupAt = now + CLEANUP_INTERVAL_MS;
-
-  if (result.deletedRounds > 0 || result.deletedBets > 0) {
-    console.log(
-      `Daily cleanup removed ${result.deletedRounds} settled rounds and ${result.deletedBets} bets before ${cutoffIso}`,
-    );
-  }
-}
-
 export function getRoundConfig() {
   const cutCardConfig = getMassachusettsCutCardConfig();
 
@@ -237,7 +224,6 @@ export async function startRoundManager() {
     roundManagerState.__baccaratRoundManagerTicking = true;
 
     try {
-      const now = Date.now();
       const tables = await listTables();
 
       const results = await Promise.allSettled(tables.map((table) => tickTable(table)));
@@ -246,8 +232,6 @@ export async function startRoundManager() {
           console.error("Table tick failed", result.reason);
         }
       }
-
-      await runDailyCleanup(now);
     } catch (error) {
       console.error("Round manager tick failed", error);
     } finally {

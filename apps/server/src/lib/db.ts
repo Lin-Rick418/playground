@@ -16,6 +16,12 @@ import { ACTIVE_ROUND_UNIQUE_INDEX } from "./active-round-invariant.js";
 import { createMassachusettsShoeState, type Card, type TableShoeState } from "./baccarat.js";
 import { coreDatabaseIntegritySql } from "./database-integrity.js";
 import { assertValidRoundWindow } from "./round-schedule.js";
+import {
+  calculateBalanceTransition,
+  type FinancialLedgerActorType,
+  type FinancialLedgerReferenceType,
+  type FinancialLedgerSource,
+} from "./financial-ledger.js";
 
 type DbExecutor = Pool | PoolClient;
 type DbRow = Record<string, unknown>;
@@ -187,6 +193,39 @@ export async function initializeDatabase() {
       PRIMARY KEY (actor_id, scope, idempotency_key)
     );
 
+    CREATE TABLE IF NOT EXISTS financial_ledger_entries (
+      id TEXT PRIMARY KEY,
+      entry_sequence BIGSERIAL NOT NULL UNIQUE,
+      user_id TEXT NOT NULL,
+      actor_type TEXT NOT NULL,
+      actor_id TEXT,
+      source TEXT NOT NULL,
+      reference_type TEXT NOT NULL,
+      reference_id TEXT NOT NULL,
+      delta INTEGER NOT NULL,
+      balance_before INTEGER NOT NULL,
+      balance_after INTEGER NOT NULL,
+      metadata JSONB NOT NULL DEFAULT '{}'::jsonb,
+      created_at TIMESTAMPTZ NOT NULL,
+      CONSTRAINT financial_ledger_balance_transition
+        CHECK (balance_before >= 0 AND balance_after >= 0 AND balance_after = balance_before + delta),
+      CONSTRAINT financial_ledger_actor
+        CHECK (
+          (actor_type = 'SYSTEM' AND actor_id IS NULL) OR
+          (actor_type IN ('ADMIN', 'PLAYER') AND actor_id IS NOT NULL)
+        ),
+      CONSTRAINT financial_ledger_source_reference
+        CHECK (
+          (source = 'LEGACY_OPENING_BALANCE' AND actor_type = 'SYSTEM' AND reference_type = 'USER') OR
+          (source = 'INITIAL_FUNDING' AND actor_type IN ('SYSTEM', 'ADMIN') AND reference_type = 'USER') OR
+          (source = 'ADMIN_ADJUSTMENT' AND actor_type = 'ADMIN' AND reference_type = 'BALANCE_ADJUSTMENT') OR
+          (source = 'BET_DEBIT' AND actor_type = 'PLAYER' AND reference_type = 'BET') OR
+          (source = 'SETTLEMENT_CREDIT' AND actor_type = 'SYSTEM' AND reference_type = 'ROUND')
+        ),
+      CONSTRAINT financial_ledger_source_reference_unique
+        UNIQUE (user_id, source, reference_type, reference_id)
+    );
+
     ALTER TABLE game_tables
       ADD COLUMN IF NOT EXISTS round_phase_offset_ms INTEGER NOT NULL DEFAULT 0;
     ALTER TABLE game_tables
@@ -208,7 +247,114 @@ export async function initializeDatabase() {
       ON balance_adjustments (created_at DESC);
     CREATE INDEX IF NOT EXISTS idx_login_rate_limits_expires
       ON login_rate_limits (expires_at ASC);
+    CREATE INDEX IF NOT EXISTS idx_financial_ledger_user_sequence
+      ON financial_ledger_entries (user_id, entry_sequence ASC);
+
+    CREATE OR REPLACE FUNCTION reject_financial_ledger_mutation()
+    RETURNS trigger AS $financial_ledger_guard$
+    BEGIN
+      RAISE EXCEPTION 'financial_ledger_entries is append-only'
+        USING ERRCODE = '55000';
+    END;
+    $financial_ledger_guard$ LANGUAGE plpgsql;
+
+    DO $financial_ledger_triggers$
+    BEGIN
+      IF NOT EXISTS (
+        SELECT 1 FROM pg_trigger
+        WHERE tgname = 'financial_ledger_no_update_delete'
+          AND tgrelid = 'financial_ledger_entries'::regclass
+      ) THEN
+        EXECUTE 'CREATE TRIGGER financial_ledger_no_update_delete
+          BEFORE UPDATE OR DELETE ON financial_ledger_entries
+          FOR EACH ROW EXECUTE FUNCTION reject_financial_ledger_mutation()';
+      END IF;
+
+      IF NOT EXISTS (
+        SELECT 1 FROM pg_trigger
+        WHERE tgname = 'financial_ledger_no_truncate'
+          AND tgrelid = 'financial_ledger_entries'::regclass
+      ) THEN
+        EXECUTE 'CREATE TRIGGER financial_ledger_no_truncate
+          BEFORE TRUNCATE ON financial_ledger_entries
+          FOR EACH STATEMENT EXECUTE FUNCTION reject_financial_ledger_mutation()';
+      END IF;
+    END;
+    $financial_ledger_triggers$;
+
+    CREATE OR REPLACE VIEW financial_balance_reconciliation AS
+    WITH ordered_entries AS (
+      SELECT
+        user_id,
+        entry_sequence,
+        delta,
+        balance_before,
+        balance_after,
+        ROW_NUMBER() OVER (PARTITION BY user_id ORDER BY entry_sequence) AS entry_number,
+        LAG(balance_after) OVER (PARTITION BY user_id ORDER BY entry_sequence) AS previous_balance_after
+      FROM financial_ledger_entries
+    ),
+    ledger_rollup AS (
+      SELECT
+        user_id,
+        COUNT(*)::bigint AS entry_count,
+        SUM(delta)::bigint AS total_delta,
+        (ARRAY_AGG(balance_after ORDER BY entry_sequence DESC))[1] AS ledger_balance,
+        BOOL_AND(
+          balance_after = balance_before + delta AND
+          CASE
+            WHEN entry_number = 1 THEN balance_before = 0
+            ELSE balance_before = previous_balance_after
+          END
+        ) AS chain_consistent
+      FROM ordered_entries
+      GROUP BY user_id
+    )
+    SELECT
+      users.id AS user_id,
+      users.balance AS current_balance,
+      COALESCE(ledger_rollup.ledger_balance, 0) AS ledger_balance,
+      COALESCE(ledger_rollup.total_delta, 0)::bigint AS total_delta,
+      COALESCE(ledger_rollup.entry_count, 0)::bigint AS entry_count,
+      COALESCE(ledger_rollup.chain_consistent, FALSE) AS chain_consistent,
+      (
+        COALESCE(ledger_rollup.entry_count, 0) > 0 AND
+        COALESCE(ledger_rollup.chain_consistent, FALSE) AND
+        users.balance = COALESCE(ledger_rollup.ledger_balance, 0) AND
+        COALESCE(ledger_rollup.total_delta, 0) = COALESCE(ledger_rollup.ledger_balance, 0)
+      ) AS is_reconciled
+    FROM users
+    LEFT JOIN ledger_rollup ON ledger_rollup.user_id = users.id;
   `);
+
+  await withTransaction(async (client) => {
+    await client.query("LOCK TABLE users IN SHARE ROW EXCLUSIVE MODE");
+    await client.query(
+      `INSERT INTO financial_ledger_entries (
+        id, user_id, actor_type, actor_id, source, reference_type, reference_id,
+        delta, balance_before, balance_after, metadata, created_at
+      )
+      SELECT
+        'legacy-opening:' || users.id,
+        users.id,
+        'SYSTEM',
+        NULL,
+        'LEGACY_OPENING_BALANCE',
+        'USER',
+        users.id,
+        users.balance,
+        0,
+        users.balance,
+        '{"backfilled":true}'::jsonb,
+        NOW()
+      FROM users
+      WHERE NOT EXISTS (
+        SELECT 1 FROM financial_ledger_entries
+        WHERE financial_ledger_entries.user_id = users.id
+      )
+      ON CONFLICT (user_id, source, reference_type, reference_id) DO NOTHING`,
+    );
+  });
 
   await withTransaction(async (client) => {
     await client.query("LOCK TABLE game_rounds IN SHARE ROW EXCLUSIVE MODE");
@@ -337,31 +483,136 @@ export async function listUsers(executor: DbExecutor = pool): Promise<PublicUser
   }));
 }
 
-export async function createPlayer(
-  input: { username: string; passwordHash: string; balance: number },
-  executor: DbExecutor = pool,
-) {
-  const id = randomUUID();
+async function setUserBalance(userId: string, balance: number, executor: PoolClient) {
   const now = new Date().toISOString();
+  await executor.query("UPDATE users SET balance = $1, updated_at = $2 WHERE id = $3", [balance, now, userId]);
+  return requireRecord(await findUserById(userId, executor), "Updated user");
+}
+
+export async function applyBalanceMutation(
+  input: {
+    userId: string;
+    delta: number;
+    actorType: FinancialLedgerActorType;
+    actorId?: string;
+    source: FinancialLedgerSource;
+    referenceType: FinancialLedgerReferenceType;
+    referenceId: string;
+    metadata?: Record<string, unknown>;
+  },
+  executor: PoolClient,
+) {
+  const user = await findUserById(input.userId, executor, { forUpdate: true });
+
+  if (!user) {
+    throw new Error("User not found during balance mutation");
+  }
+
+  const transition = calculateBalanceTransition(user.balance, input.delta);
+  const id = randomUUID();
+  const createdAt = new Date().toISOString();
 
   await executor.query(
-    `INSERT INTO users (id, username, password_hash, role, is_active, balance, created_at, updated_at)
-     VALUES ($1, $2, $3, 'PLAYER', TRUE, $4, $5, $6)`,
-    [id, input.username, input.passwordHash, input.balance, now, now],
+    `INSERT INTO financial_ledger_entries (
+      id, user_id, actor_type, actor_id, source, reference_type, reference_id,
+      delta, balance_before, balance_after, metadata, created_at
+    ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11::jsonb, $12)`,
+    [
+      id,
+      user.id,
+      input.actorType,
+      input.actorId ?? null,
+      input.source,
+      input.referenceType,
+      input.referenceId,
+      transition.delta,
+      transition.balanceBefore,
+      transition.balanceAfter,
+      JSON.stringify(input.metadata ?? {}),
+      createdAt,
+    ],
   );
 
-  return requireRecord(await findUserById(id, executor), "Created user");
+  const updatedUser = await setUserBalance(user.id, transition.balanceAfter, executor);
+  return {
+    user: updatedUser,
+    ledgerEntry: {
+      id,
+      userId: user.id,
+      actorType: input.actorType,
+      actorId: input.actorId ?? null,
+      source: input.source,
+      referenceType: input.referenceType,
+      referenceId: input.referenceId,
+      ...transition,
+      metadata: input.metadata ?? {},
+      createdAt,
+    },
+  };
+}
+
+function mapBalanceReconciliation(row: DbRow) {
+  return {
+    userId: String(row.user_id),
+    currentBalance: Number(row.current_balance),
+    ledgerBalance: Number(row.ledger_balance),
+    totalDelta: Number(row.total_delta),
+    entryCount: Number(row.entry_count),
+    chainConsistent: row.chain_consistent as boolean,
+    isReconciled: row.is_reconciled as boolean,
+  };
+}
+
+export async function reconcileUserBalance(userId: string, executor: DbExecutor = pool) {
+  const row = await queryRow(
+    executor,
+    "SELECT * FROM financial_balance_reconciliation WHERE user_id = $1",
+    [userId],
+  );
+  return row ? mapBalanceReconciliation(row) : null;
+}
+
+export async function reconcileAllUserBalances(executor: DbExecutor = pool) {
+  const rows = await queryRows(
+    executor,
+    "SELECT * FROM financial_balance_reconciliation ORDER BY user_id",
+  );
+  return rows.map((row: DbRow) => mapBalanceReconciliation(row));
+}
+
+export async function createPlayer(
+  input: { username: string; passwordHash: string; balance: number; actorId: string },
+): Promise<UserRecord> {
+  return withTransaction(async (client) => {
+    const id = randomUUID();
+    const now = new Date().toISOString();
+
+    await client.query(
+      `INSERT INTO users (id, username, password_hash, role, is_active, balance, created_at, updated_at)
+       VALUES ($1, $2, $3, 'PLAYER', TRUE, 0, $4, $5)`,
+      [id, input.username, input.passwordHash, now, now],
+    );
+
+    const { user } = await applyBalanceMutation(
+      {
+        userId: id,
+        delta: input.balance,
+        actorType: "ADMIN",
+        actorId: input.actorId,
+        source: "INITIAL_FUNDING",
+        referenceType: "USER",
+        referenceId: id,
+      },
+      client,
+    );
+
+    return user;
+  });
 }
 
 export async function setUserActive(userId: string, isActive: boolean, executor: DbExecutor = pool) {
   const now = new Date().toISOString();
   await executor.query("UPDATE users SET is_active = $1, updated_at = $2 WHERE id = $3", [isActive, now, userId]);
-  return requireRecord(await findUserById(userId, executor), "Updated user");
-}
-
-export async function updateUserBalance(userId: string, balance: number, executor: DbExecutor = pool) {
-  const now = new Date().toISOString();
-  await executor.query("UPDATE users SET balance = $1, updated_at = $2 WHERE id = $3", [balance, now, userId]);
   return requireRecord(await findUserById(userId, executor), "Updated user");
 }
 
@@ -448,7 +699,6 @@ export async function completeIdempotencyKey(
     throw new Error("Idempotency response could not be recorded");
   }
 }
-
 export async function setTableRoundScheduleVersion(
   tableId: string,
   version: number,
@@ -743,32 +993,6 @@ export async function settleRound(
   );
 
   return requireRecord(await findRoundById(roundId, executor), "Settled round");
-}
-
-export async function purgeSettledRoundsBefore(
-  cutoffIso: string,
-  executor: DbExecutor = pool,
-): Promise<{ deletedRounds: number; deletedBets: number }> {
-  if (isPoolClient(executor)) {
-    const deletedBets = await executor.query(
-      `DELETE FROM bets
-       WHERE round_id IN (
-         SELECT id FROM game_rounds
-         WHERE status = 'SETTLED'
-           AND settled_at IS NOT NULL
-           AND settled_at < $1
-       )`,
-      [cutoffIso],
-    );
-    const deletedRounds = await executor.query(
-      "DELETE FROM game_rounds WHERE status = 'SETTLED' AND settled_at IS NOT NULL AND settled_at < $1",
-      [cutoffIso],
-    );
-
-    return { deletedRounds: deletedRounds.rowCount ?? 0, deletedBets: deletedBets.rowCount ?? 0 };
-  }
-
-  return withTransaction((client) => purgeSettledRoundsBefore(cutoffIso, client));
 }
 
 export async function createBalanceAdjustment(
@@ -1082,21 +1306,52 @@ async function withAdvisoryLock<T>(lockKey: number, handler: (client: PoolClient
   }
 }
 
-async function seedDemoUsers(executor: DbExecutor) {
+async function seedDemoUser(
+  input: { username: string; passwordHash: string; role: UserRole; balance: number },
+  executor: PoolClient,
+) {
+  const id = randomUUID();
   const now = new Date().toISOString();
-
-  await executor.query(
+  const inserted = await queryRow(
+    executor,
     `INSERT INTO users (id, username, password_hash, role, balance, created_at, updated_at)
-     VALUES ($1, $2, $3, $4, $5, $6, $7)
-     ON CONFLICT (username) DO NOTHING`,
-    [randomUUID(), "admin", await bcrypt.hash("admin123", 10), "ADMIN", 0, now, now],
+     VALUES ($1, $2, $3, $4, 0, $5, $6)
+     ON CONFLICT (username) DO NOTHING
+     RETURNING id`,
+    [id, input.username, input.passwordHash, input.role, now, now],
   );
 
-  await executor.query(
-    `INSERT INTO users (id, username, password_hash, role, balance, created_at, updated_at)
-     VALUES ($1, $2, $3, $4, $5, $6, $7)
-     ON CONFLICT (username) DO NOTHING`,
-    [randomUUID(), "player1", await bcrypt.hash("player123", 10), "PLAYER", 10000, now, now],
+  if (!inserted) {
+    return;
+  }
+
+  await applyBalanceMutation(
+    {
+      userId: id,
+      delta: input.balance,
+      actorType: "SYSTEM",
+      source: "INITIAL_FUNDING",
+      referenceType: "USER",
+      referenceId: id,
+      metadata: { seed: "demo" },
+    },
+    executor,
+  );
+}
+
+async function seedDemoUsers(executor: PoolClient) {
+  const [adminPasswordHash, playerPasswordHash] = await Promise.all([
+    bcrypt.hash("admin123", 10),
+    bcrypt.hash("player123", 10),
+  ]);
+
+  await seedDemoUser(
+    { username: "admin", passwordHash: adminPasswordHash, role: "ADMIN", balance: 0 },
+    executor,
+  );
+  await seedDemoUser(
+    { username: "player1", passwordHash: playerPasswordHash, role: "PLAYER", balance: 10000 },
+    executor,
   );
 }
 
@@ -1113,7 +1368,7 @@ export async function ensureSeedData(options?: { seedDemoUsers?: boolean }) {
     await initializeDatabase();
 
     if (shouldSeedDemoUsers) {
-      await seedDemoUsers(client);
+      await withTransaction((tx) => seedDemoUsers(tx));
     }
 
     const now = new Date().toISOString();
