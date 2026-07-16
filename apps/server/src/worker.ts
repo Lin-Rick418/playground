@@ -1,7 +1,7 @@
-import { ensureSeedData } from "./lib/db.js";
+import { ensureApplicationData } from "./lib/db.js";
 import { startRoundManager } from "./lib/round-manager.js";
 
-await ensureSeedData();
+await ensureApplicationData();
 await startRoundManager();
 
 console.log("Round worker started");

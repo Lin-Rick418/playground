@@ -70,15 +70,28 @@ sudo chmod 600 /etc/baccarat/baccarat.env
 
 ## 6. 初始資料
 
+先用 password manager 產生至少 16 字元的唯一 Admin 密碼，並把一次性 credentials 放在僅服務帳號可讀的暫存檔：
+
 ```bash
 cd /opt/baccarat/current
-sudo -u baccarat env $(cat /etc/baccarat/baccarat.env | xargs) npm run db:seed
+sudo install -o baccarat -g baccarat -m 600 /dev/null /etc/baccarat/bootstrap.env
+sudoedit /etc/baccarat/bootstrap.env
+sudo -u baccarat sh -c 'set -a; . /etc/baccarat/baccarat.env; set +a; BOOTSTRAP_ADMIN_CREDENTIALS_FILE=/etc/baccarat/bootstrap.env exec npm run admin:bootstrap'
+sudo rm -f /etc/baccarat/bootstrap.env
+```
+
+`/etc/baccarat/bootstrap.env` 的內容格式：
+
+```dotenv
+BOOTSTRAP_ADMIN_USERNAME=your_admin_username
+BOOTSTRAP_ADMIN_PASSWORD=a-unique-password-of-16-to-72-characters
 ```
 
 注意：
 
-- `npm run db:seed` 只應在你確定需要建立開發/測試用 demo 帳號時執行
-- 正式環境的 `api` 與 `worker` 啟動時只會初始化資料表、桌別與牌靴，不會自動建立 `admin/admin123` 或 `player1/player123`
+- `admin:bootstrap` 只允許在資料庫尚無任何 Admin 時執行；重跑會失敗，不會覆寫或重設既有帳號
+- 所有環境的 `api` 與 `worker` 都不會自動建立 Admin 或 Player
+- bootstrap credential file 必須是 `0600`（或更嚴格），只供這次命令使用；成功後應立即刪除，不能加入 production env、systemd 或 repository
 
 ## 7. 安裝 systemd services
 

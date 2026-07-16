@@ -1,5 +1,4 @@
 import { randomUUID } from "node:crypto";
-import bcrypt from "bcryptjs";
 import { Pool, PoolClient, type QueryResultRow } from "pg";
 import { env } from "../config/env.js";
 import type {
@@ -96,8 +95,8 @@ export async function withTransaction<T>(handler: (client: PoolClient) => Promis
   }
 }
 
-export async function initializeDatabase() {
-  await pool.query(`
+export async function initializeDatabase(executor: DbExecutor = pool) {
+  await executor.query(`
     CREATE TABLE IF NOT EXISTS game_tables (
       id TEXT PRIMARY KEY,
       code TEXT NOT NULL UNIQUE,
@@ -284,6 +283,35 @@ export async function createPlayer(
   );
 
   return requireRecord(await findUserById(id, executor), "Created user");
+}
+
+export async function createInitialAdmin(input: { username: string; passwordHash: string }) {
+  return withAdvisoryLock(INIT_LOCK_KEY, async (client) => {
+    await initializeDatabase(client);
+
+    const existingAdmin = await queryRow(client, "SELECT id FROM users WHERE role = 'ADMIN' LIMIT 1");
+
+    if (existingAdmin) {
+      throw new Error("Initial Admin bootstrap refused: an Admin account already exists");
+    }
+
+    const existingUsername = await queryRow(client, "SELECT id FROM users WHERE username = $1", [input.username]);
+
+    if (existingUsername) {
+      throw new Error("Initial Admin bootstrap refused: the username is already in use");
+    }
+
+    const id = randomUUID();
+    const now = new Date().toISOString();
+
+    await client.query(
+      `INSERT INTO users (id, username, password_hash, role, is_active, balance, created_at, updated_at)
+       VALUES ($1, $2, $3, 'ADMIN', TRUE, 0, $4, $5)`,
+      [id, input.username, input.passwordHash, now, now],
+    );
+
+    return requireRecord(await findUserById(id, client), "Initial Admin");
+  });
 }
 
 export async function setUserActive(userId: string, isActive: boolean, executor: DbExecutor = pool) {
@@ -930,26 +958,7 @@ async function withAdvisoryLock<T>(lockKey: number, handler: (client: PoolClient
   }
 }
 
-async function seedDemoUsers(executor: DbExecutor) {
-  const now = new Date().toISOString();
-
-  await executor.query(
-    `INSERT INTO users (id, username, password_hash, role, balance, created_at, updated_at)
-     VALUES ($1, $2, $3, $4, $5, $6, $7)
-     ON CONFLICT (username) DO NOTHING`,
-    [randomUUID(), "admin", await bcrypt.hash("admin123", 10), "ADMIN", 0, now, now],
-  );
-
-  await executor.query(
-    `INSERT INTO users (id, username, password_hash, role, balance, created_at, updated_at)
-     VALUES ($1, $2, $3, $4, $5, $6, $7)
-     ON CONFLICT (username) DO NOTHING`,
-    [randomUUID(), "player1", await bcrypt.hash("player123", 10), "PLAYER", 10000, now, now],
-  );
-}
-
-export async function ensureSeedData(options?: { seedDemoUsers?: boolean }) {
-  const shouldSeedDemoUsers = options?.seedDemoUsers ?? !env.isProduction;
+export async function ensureApplicationData() {
   const configuredTables = [
     { code: "A01", name: "極速廳 A01", displayOrder: 1, roundDurationMs: 15000, roundPhaseOffsetMs: 0, minBet: 100, maxBet: 10000 },
     { code: "A02", name: "極速廳 A02", displayOrder: 2, roundDurationMs: 15000, roundPhaseOffsetMs: 2000, minBet: 100, maxBet: 10000 },
@@ -958,11 +967,7 @@ export async function ensureSeedData(options?: { seedDemoUsers?: boolean }) {
   ] as const;
 
   await withAdvisoryLock(INIT_LOCK_KEY, async (client) => {
-    await initializeDatabase();
-
-    if (shouldSeedDemoUsers) {
-      await seedDemoUsers(client);
-    }
+    await initializeDatabase(client);
 
     const now = new Date().toISOString();
 

@@ -4,3 +4,4 @@ dist
 *.log
 coverage
 apps/server/data
+.bootstrap-admin.env

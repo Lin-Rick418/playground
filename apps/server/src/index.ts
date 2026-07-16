@@ -3,7 +3,7 @@ import express, { type ErrorRequestHandler } from "express";
 import { createServer } from "node:http";
 import { env } from "./config/env.js";
 import { attachLiveWebSocketServer } from "./lib/live-ws.js";
-import { ensureSeedData } from "./lib/db.js";
+import { ensureApplicationData } from "./lib/db.js";
 import { authRouter } from "./modules/auth/router.js";
 import { gameRouter } from "./modules/game/router.js";
 import { adminRouter } from "./modules/admin/router.js";
@@ -32,7 +32,7 @@ const globalErrorHandler: ErrorRequestHandler = (err, _req, res, _next) => {
 };
 app.use(globalErrorHandler);
 
-await ensureSeedData();
+await ensureApplicationData();
 const server = createServer(app);
 await attachLiveWebSocketServer(server);
 
