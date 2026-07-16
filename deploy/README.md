@@ -46,7 +46,15 @@ sudo install -o root -g baccarat -m 0640 \
 sudoedit /etc/baccarat/baccarat.env
 ```
 
-必須替換 `JWT_SECRET` 與 `DATABASE_URL`。建議用 `openssl rand -base64 48` 產生每個環境獨立的 JWT secret。`BUSINESS_TIME_ZONE` 必須是 IANA timezone，預設 `Asia/Taipei`。env 不得可由 group 寫入或由 other 讀取；parser 不使用 `eval`、`xargs` 或 command substitution，database URL 只透過 process environment 傳給 PostgreSQL tools，不會出現在 argv。
+必須替換 `JWT_SECRET` 與 `DATABASE_URL`。建議用 `openssl rand -base64 48` 產生每個環境獨立的 JWT secret。`BUSINESS_TIME_ZONE` 必須是 IANA timezone，預設 `Asia/Taipei`。env 必須是 regular file，不得使用 symlink、不得可由 group 寫入或由 other 讀取。
+
+systemd 直接使用 `EnvironmentFile`。一次性維運指令使用安全 loader，不要以 `env $(cat ...)`、`xargs` 或 command substitution 展開 secret：
+
+```text
+node deploy/bin/run-with-env-file.mjs <env-file> -- <command> [args...]
+```
+
+Loader 先以 `O_NOFOLLOW` 檢查 file type、owner/group 與 mode，再直接建立 child environment；值中的空白、`$`、backtick、`#`、`=` 不會經 shell 解譯，也不會出現在 argv 或錯誤訊息。production deploy、migration 與 backup scripts 同樣只透過 process environment 傳遞 database URL。
 
 ## 2. 安裝與驗證 services／nginx
 
@@ -116,7 +124,11 @@ Optional executable hooks 位於 `deploy/hooks/`：
 | `verify-rollback-compatibility PREVIOUS_RELEASE` | migration 前證明 previous code 相容。 |
 | `readiness HEALTH_URL` | 取代預設 readiness request。 |
 
-首次部署在 migration 後執行 `npm run db:bootstrap` 建立必要桌別與牌靴。`npm run db:seed` 僅供明確需要 demo player 的開發或測試環境，production 不會自動建立帳號。
+首次部署在 migration 後執行 `npm run db:bootstrap` 建立必要桌別與牌靴。Production 禁止執行 `npm run db:seed`；它只供隔離的 development／test 環境建立 demo player。需要 seed 時，使用由執行者持有、mode `0600` 的非 production env file：
+
+```bash
+node deploy/bin/run-with-env-file.mjs /path/to/development.env -- npm run db:seed
+```
 
 ## 5. 驗證、sandbox 與 rollback
 
