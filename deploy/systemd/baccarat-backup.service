@@ -1,0 +1,16 @@
+[Unit]
+Description=Baccarat PostgreSQL Backup
+After=postgresql.service
+
+[Service]
+Type=oneshot
+User=baccarat
+Group=baccarat
+UMask=0077
+ExecStart=/opt/baccarat/current/deploy/scripts/backup.sh create --env-file /etc/baccarat/baccarat.env --backup-dir /var/backups/baccarat
+ExecStartPost=/opt/baccarat/current/deploy/scripts/backup.sh prune --backup-dir /var/backups/baccarat --keep 14 --apply
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectHome=true
+ProtectSystem=strict
+ReadWritePaths=/var/backups/baccarat
