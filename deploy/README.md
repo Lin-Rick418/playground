@@ -68,6 +68,15 @@ sudo chmod 600 /etc/baccarat/baccarat.env
 - `JWT_SECRET`
 - `DATABASE_URL`
 
+為每個環境產生不同且無法預測的 `JWT_SECRET`，不要自行編寫密碼或沿用範例值：
+
+```bash
+openssl rand -base64 48
+```
+
+將輸出填入 `/etc/baccarat/baccarat.env` 的 `JWT_SECRET`。production 啟動時會拒絕空值、
+已知 placeholder、少於 32 bytes 或明顯低熵的值；請把 env 檔維持為 `0600`，不要提交實際 secret。
+
 ## 6. 初始資料
 
 ```bash
