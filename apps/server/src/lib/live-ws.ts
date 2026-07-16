@@ -250,21 +250,53 @@ async function handleLiveEvent(event: LiveEvent) {
       }
     }
 
+    const tableUserStates = new Map<
+      string,
+      Awaited<ReturnType<typeof buildTableUserState>>
+    >();
     await Promise.all(
-      tableConnections.map((connection) => pushTableUserSnapshot(connection, event.tableId)),
+      Array.from(new Set(tableConnections.map((connection) => connection.userId)), async (userId) => {
+        tableUserStates.set(userId, await buildTableUserState(userId, event.tableId));
+      }),
     );
+    for (const connection of tableConnections) {
+      const state = tableUserStates.get(connection.userId);
+      if (state) {
+        sendMessage(connection.socket, { type: "table_user_snapshot", data: state });
+      }
+    }
     return;
   }
 
   const matchingConnections = Array.from(connections.values()).filter((connection) => connection.userId === event.userId);
-  await Promise.all(
-    matchingConnections.map(async (connection) => {
-      const authorized = await pushUserSnapshot(connection);
-      if (authorized && connection.subscription.scope === "table") {
-        await pushTableUserSnapshot(connection, connection.subscription.tableId);
-      }
-    }),
+  const tableIds = Array.from(
+    new Set(
+      matchingConnections.flatMap((connection) =>
+        connection.subscription.scope === "table" ? [connection.subscription.tableId] : [],
+      ),
+    ),
   );
+  const [user, tableStates] = await Promise.all([
+    buildUserLiveState(event.userId),
+    Promise.all(tableIds.map(async (tableId) => [tableId, await buildTableUserState(event.userId, tableId)] as const)),
+  ]);
+  const tableStateById = new Map(tableStates);
+
+  for (const connection of matchingConnections) {
+    const decision = validateWebSocketSession(connection.role, user);
+    if (!decision.authorized) {
+      revokeLiveConnection(connection, decision.reason);
+      continue;
+    }
+
+    sendMessage(connection.socket, { type: "user_snapshot", data: decision.user });
+    if (connection.subscription.scope === "table") {
+      const state = tableStateById.get(connection.subscription.tableId);
+      if (state) {
+        sendMessage(connection.socket, { type: "table_user_snapshot", data: state });
+      }
+    }
+  }
 }
 
 const WS_AUTH_PROTOCOL = "bearer";

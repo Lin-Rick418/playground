@@ -195,3 +195,5 @@ WHERE NOT is_reconciled;
 - 7 天 refresh token 只以 `HttpOnly`、`SameSite=Strict` cookie 傳輸，資料庫只保存 SHA-256 hash；每次 refresh 都 rotation。
 - `POST /api/auth/logout` 會 revoke server session、清 cookie，並關閉同一 session 的 WebSocket；後續 HTTP request 即使尚有未過期 access JWT 也會被拒絕。
 - nginx security headers 包含 CSP、HSTS、frame/MIME/referrer/permissions/COOP。HSTS 只有在 HTTPS 回應生效，上線前必須先完成 TLS 與 HTTP→HTTPS redirect。
+
+- DB pool 預設每個 process 最多 20 connections、3 秒 connect timeout、5 秒 statement/query timeout；調高 `DATABASE_POOL_MAX` 前必須把 API＋worker instance 數一起納入 PostgreSQL `max_connections` 容量計算。

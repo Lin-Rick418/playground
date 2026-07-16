@@ -8,12 +8,12 @@ import type {
   GameTableRecord,
   RoundStatus,
   RoundWinner,
-  PublicUserRecord,
   UserRecord,
   UserRole,
 } from "../types/domain.js";
 import { ACTIVE_ROUND_UNIQUE_INDEX } from "./active-round-invariant.js";
 import { createMassachusettsShoeState, type Card, type TableShoeState } from "./baccarat.js";
+import { chunkItems } from "./batch.js";
 import { coreDatabaseIntegritySql } from "./database-integrity.js";
 import { assertValidRoundWindow } from "./round-schedule.js";
 import {
@@ -38,6 +38,11 @@ const sslConfig =
 export const pool = new Pool({
   connectionString: env.databaseUrl,
   ssl: sslConfig,
+  max: env.databasePoolMax,
+  connectionTimeoutMillis: env.databaseConnectionTimeoutMs,
+  idleTimeoutMillis: env.databaseIdleTimeoutMs,
+  statement_timeout: env.databaseStatementTimeoutMs,
+  query_timeout: env.databaseStatementTimeoutMs,
 });
 
 pool.on("error", (error: Error) => {
@@ -486,23 +491,6 @@ export async function findUserById(
   const suffix = options?.forUpdate && isPoolClient(executor) ? " FOR UPDATE" : "";
   const row = await queryRow(executor, `SELECT * FROM users WHERE id = $1${suffix}`, [id]);
   return row ? mapUser(row) : null;
-}
-
-export async function listUsers(executor: DbExecutor = pool): Promise<PublicUserRecord[]> {
-  const rows = await queryRows(
-    executor,
-    "SELECT id, username, role, is_active, balance, created_at, updated_at FROM users ORDER BY created_at ASC",
-  );
-
-  return rows.map((row: DbRow) => ({
-    id: String(row.id),
-    username: String(row.username),
-    role: String(row.role) as UserRole,
-    isActive: row.is_active as boolean,
-    balance: Number(row.balance),
-    createdAt: toIsoString(row.created_at),
-    updatedAt: toIsoString(row.updated_at),
-  }));
 }
 
 async function setUserBalance(userId: string, balance: number, executor: PoolClient) {
@@ -1075,8 +1063,29 @@ export async function listUserRoundBets(userId: string, roundId: string, executo
   }));
 }
 
-export async function updateBetPayout(betId: string, payout: number, executor: DbExecutor = pool) {
-  await executor.query("UPDATE bets SET payout = $1 WHERE id = $2", [payout, betId]);
+export async function updateBetPayouts(
+  payouts: { betId: string; payout: number }[],
+  executor: DbExecutor = pool,
+) {
+  if (payouts.length === 0) {
+    return;
+  }
+
+  for (const batch of chunkItems(payouts)) {
+    const values: unknown[] = [];
+    const rows = batch.map((item, index) => {
+      const offset = index * 2;
+      values.push(item.betId, item.payout);
+      return `($${offset + 1}::text, $${offset + 2}::integer)`;
+    });
+    await executor.query(
+      `UPDATE bets AS bet
+       SET payout = value.payout
+       FROM (VALUES ${rows.join(", ")}) AS value(id, payout)
+       WHERE bet.id = value.id`,
+      values,
+    );
+  }
 }
 
 export async function findRoundById(
