@@ -161,6 +161,16 @@ export async function initializeDatabase() {
       created_at TIMESTAMPTZ NOT NULL
     );
 
+    CREATE TABLE IF NOT EXISTS login_rate_limits (
+      scope TEXT NOT NULL CHECK (scope IN ('ACCOUNT_IP', 'ACCOUNT', 'IP')),
+      key_hash TEXT NOT NULL,
+      failures INTEGER NOT NULL CHECK (failures > 0),
+      window_started_at TIMESTAMPTZ NOT NULL,
+      expires_at TIMESTAMPTZ NOT NULL,
+      updated_at TIMESTAMPTZ NOT NULL,
+      PRIMARY KEY (scope, key_hash)
+    );
+
     ALTER TABLE game_tables
       ADD COLUMN IF NOT EXISTS round_phase_offset_ms INTEGER NOT NULL DEFAULT 0;
     ALTER TABLE game_tables
@@ -178,6 +188,8 @@ export async function initializeDatabase() {
       ON bets (round_id, created_at ASC);
     CREATE INDEX IF NOT EXISTS idx_balance_adjustments_created
       ON balance_adjustments (created_at DESC);
+    CREATE INDEX IF NOT EXISTS idx_login_rate_limits_expires
+      ON login_rate_limits (expires_at ASC);
   `);
 }
 
