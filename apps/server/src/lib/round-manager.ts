@@ -1,5 +1,6 @@
 import { calculatePayout, dealRoundFromShoe, getMassachusettsCutCardConfig } from "./baccarat.js";
 import {
+  cancelRoundAndRefundBets,
   createRound,
   ensureTableShoe,
   findRoundById,
@@ -9,6 +10,7 @@ import {
   listRoundBets,
   listTables,
   purgeSettledRoundsBefore,
+  recordShoeDealAudit,
   replaceTableShoe,
   saveTableShoe,
   setTableRoundScheduleVersion,
@@ -16,6 +18,7 @@ import {
   updateBetPayout,
   updateRoundStatus,
   updateUserBalance,
+  validateActiveShoeAudit,
   withTransaction,
 } from "./db.js";
 import { publishLiveEvent } from "./live-events.js";
@@ -82,7 +85,7 @@ async function createOpenRound(
   return round;
 }
 
-async function settleActiveRound(roundId: string, tableId: string) {
+export async function settleActiveRound(roundId: string, tableId: string) {
   const affectedUserIds = new Set<string>();
 
   const settled = await withTransaction(async (client) => {
@@ -94,14 +97,30 @@ async function settleActiveRound(roundId: string, tableId: string) {
       return false;
     }
 
-    let shoe = await getTableShoe(tableId, client, { forUpdate: true });
+    const shoe = await getTableShoe(tableId, client, { forUpdate: true });
+    let cancellationReason: string | null = null;
 
-    if (!shoe || !shoe.shoeId || shoe.cards.length < MIN_CARDS_TO_COMPLETE_ROUND) {
-      shoe = await replaceTableShoe(tableId, client);
+    if (round.tableId !== tableId || !shoe || !shoe.shoeId || round.shoeId !== shoe.shoeId) {
+      cancellationReason = "SHOE_BINDING_INVALID";
+    } else if (shoe.cards.length < MIN_CARDS_TO_COMPLETE_ROUND) {
+      cancellationReason = "INSUFFICIENT_COMMITTED_CARDS";
+    } else {
+      const audit = await validateActiveShoeAudit(shoe.shoeId, tableId, client);
+      if (!audit.valid) cancellationReason = audit.reason ?? "SHOE_AUDIT_INVALID";
     }
 
+    if (cancellationReason) {
+      const refundedUserIds = await cancelRoundAndRefundBets(roundId, cancellationReason, client);
+      for (const userId of refundedUserIds) affectedUserIds.add(userId);
+      return true;
+    }
+
+    if (!shoe) throw new Error("Validated shoe disappeared before settlement");
+
     const wasLastHand = shoe.lastHandPending;
+    const cardsBeforeDeal = [...shoe.cards];
     const result = dealRoundFromShoe(shoe);
+    const dealtCards = cardsBeforeDeal.slice().reverse().slice(0, cardsBeforeDeal.length - shoe.cards.length);
     const bets = await listRoundBets(roundId, client);
     const payoutsByUser = new Map<string, number>();
 
@@ -124,9 +143,26 @@ async function settleActiveRound(roundId: string, tableId: string) {
     }
 
     await settleRound(roundId, result, client);
+    await recordShoeDealAudit(
+      {
+        shoeId: shoe.shoeId,
+        roundId,
+        dealtCards,
+        result: {
+          playerCards: result.playerCards,
+          bankerCards: result.bankerCards,
+          playerTotal: result.playerTotal,
+          bankerTotal: result.bankerTotal,
+          winner: result.winner,
+          playerPair: result.playerPair,
+          bankerPair: result.bankerPair,
+        },
+      },
+      client,
+    );
 
     if (wasLastHand) {
-      await replaceTableShoe(tableId, client);
+      await replaceTableShoe(tableId, client, "CUT_CARD_LAST_HAND");
       return true;
     }
 

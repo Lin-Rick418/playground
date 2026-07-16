@@ -10,6 +10,7 @@ import {
   findTableById,
   findUserById,
   getActiveRound,
+  getShoeAuditBundle,
   listUserHistory,
   listUserRoundBets,
   updateUserBalance,
@@ -17,6 +18,7 @@ import {
 } from "../../lib/db.js";
 import { publishLiveEvent } from "../../lib/live-events.js";
 import { getRoundConfig } from "../../lib/round-manager.js";
+import { toPublicShoeAudit } from "../../lib/shoe-audit.js";
 import { betTypes } from "../../types/domain.js";
 
 const placeBetSchema = z.object({
@@ -71,6 +73,16 @@ gameRouter.get("/tables/:tableId/state", async (req: AuthenticatedRequest, res) 
 
 gameRouter.get("/history", async (req: AuthenticatedRequest, res) => {
   return res.json(await listUserHistory(req.currentUser!.id));
+});
+
+gameRouter.get("/shoes/:shoeId/audit", async (req, res) => {
+  const audit = await getShoeAuditBundle(String(req.params.shoeId));
+
+  if (!audit) {
+    return res.status(404).json({ message: "Shoe audit not found" });
+  }
+
+  return res.json(toPublicShoeAudit(audit));
 });
 
 gameRouter.post("/tables/:tableId/bet", async (req: AuthenticatedRequest, res) => {

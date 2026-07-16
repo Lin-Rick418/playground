@@ -11,10 +11,24 @@ import type {
   UserRecord,
   UserRole,
 } from "../types/domain.js";
-import { createMassachusettsShoeState, type Card, type TableShoeState } from "./baccarat.js";
+import { type Card, type TableShoeState } from "./baccarat.js";
+import {
+  createShoeCommitment,
+  createShoeFromSeed,
+  generateShoeSeed,
+  SHOE_AUDIT_VERSION,
+  SHOE_DEAL_ALGORITHM,
+  SHOE_DECK_COUNT,
+  SHOE_SHUFFLE_ALGORITHM,
+  type AuditedRoundResult,
+  type ShoeAuditBundle,
+  type ShoeCommitmentRecord,
+  type ShoeDealAuditRecord,
+} from "./shoe-audit.js";
 
 type DbExecutor = Pool | PoolClient;
 type DbRow = Record<string, unknown>;
+type PersistedTableShoe = TableShoeState & { shoeId: string };
 
 // DATABASE_SSL=true verifies the server certificate; use "no-verify" to opt
 // out explicitly (e.g. self-signed certs), never as a silent default.
@@ -136,6 +150,7 @@ export async function initializeDatabase() {
       player_pair BOOLEAN NOT NULL DEFAULT FALSE,
       banker_pair BOOLEAN NOT NULL DEFAULT FALSE,
       status TEXT NOT NULL DEFAULT 'SETTLED',
+      cancellation_reason TEXT,
       betting_opens_at TIMESTAMPTZ NOT NULL,
       betting_closes_at TIMESTAMPTZ NOT NULL,
       settled_at TIMESTAMPTZ,
@@ -161,10 +176,148 @@ export async function initializeDatabase() {
       created_at TIMESTAMPTZ NOT NULL
     );
 
+    CREATE TABLE IF NOT EXISTS shoe_commitments (
+      shoe_id TEXT PRIMARY KEY,
+      table_id TEXT NOT NULL REFERENCES game_tables(id),
+      audit_version INTEGER NOT NULL,
+      shuffle_algorithm TEXT NOT NULL,
+      deal_algorithm TEXT NOT NULL,
+      deck_count INTEGER NOT NULL CHECK (deck_count > 0),
+      commitment TEXT NOT NULL CHECK (commitment ~ '^[0-9a-f]{64}$'),
+      cut_card_remaining INTEGER NOT NULL CHECK (cut_card_remaining >= 0),
+      committed_at TIMESTAMPTZ NOT NULL
+    );
+
+    CREATE TABLE IF NOT EXISTS shoe_secrets (
+      shoe_id TEXT PRIMARY KEY REFERENCES shoe_commitments(shoe_id),
+      seed_hex TEXT NOT NULL CHECK (seed_hex ~ '^[0-9a-f]{64}$'),
+      created_at TIMESTAMPTZ NOT NULL
+    );
+
+    CREATE TABLE IF NOT EXISTS shoe_reveals (
+      shoe_id TEXT PRIMARY KEY REFERENCES shoe_commitments(shoe_id),
+      seed_hex TEXT NOT NULL CHECK (seed_hex ~ '^[0-9a-f]{64}$'),
+      reveal_reason TEXT NOT NULL,
+      revealed_at TIMESTAMPTZ NOT NULL
+    );
+
+    CREATE TABLE IF NOT EXISTS shoe_deal_audits (
+      round_id TEXT PRIMARY KEY,
+      shoe_id TEXT NOT NULL REFERENCES shoe_commitments(shoe_id),
+      deal_index INTEGER NOT NULL CHECK (deal_index >= 0),
+      dealt_cards JSONB NOT NULL,
+      round_result JSONB NOT NULL,
+      recorded_at TIMESTAMPTZ NOT NULL,
+      UNIQUE (shoe_id, deal_index)
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_shoe_commitments_table_created
+      ON shoe_commitments (table_id, committed_at DESC);
+    CREATE INDEX IF NOT EXISTS idx_shoe_deal_audits_shoe_index
+      ON shoe_deal_audits (shoe_id, deal_index ASC);
+
+    CREATE OR REPLACE FUNCTION reject_shoe_audit_mutation()
+    RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+    BEGIN
+      RAISE EXCEPTION 'shoe audit records are append-only';
+    END;
+    $$;
+
+    CREATE OR REPLACE FUNCTION reject_deal_after_shoe_reveal()
+    RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+    BEGIN
+      PERFORM 1 FROM shoe_commitments WHERE shoe_id = NEW.shoe_id FOR UPDATE;
+      IF NOT FOUND THEN
+        RAISE EXCEPTION 'shoe commitment does not exist';
+      END IF;
+      IF EXISTS (SELECT 1 FROM shoe_reveals WHERE shoe_id = NEW.shoe_id) THEN
+        RAISE EXCEPTION 'cannot append deals after shoe reveal';
+      END IF;
+      RETURN NEW;
+    END;
+    $$;
+
+    CREATE OR REPLACE FUNCTION serialize_shoe_reveal()
+    RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+    BEGIN
+      PERFORM 1 FROM shoe_commitments WHERE shoe_id = NEW.shoe_id FOR UPDATE;
+      IF NOT FOUND THEN
+        RAISE EXCEPTION 'shoe commitment does not exist';
+      END IF;
+      RETURN NEW;
+    END;
+    $$;
+
+    DO $$
+    DECLARE
+      audit_table TEXT;
+      trigger_name TEXT;
+    BEGIN
+      FOREACH audit_table IN ARRAY ARRAY['shoe_commitments', 'shoe_reveals', 'shoe_deal_audits']
+      LOOP
+        trigger_name := 'prevent_mutation_' || audit_table;
+        IF NOT EXISTS (
+          SELECT 1
+          FROM pg_trigger
+          WHERE tgname = trigger_name
+            AND tgrelid = audit_table::regclass
+            AND NOT tgisinternal
+        ) THEN
+          EXECUTE format(
+            'CREATE TRIGGER %I BEFORE UPDATE OR DELETE OR TRUNCATE ON %I FOR EACH STATEMENT EXECUTE FUNCTION reject_shoe_audit_mutation()',
+            trigger_name,
+            audit_table
+          );
+        END IF;
+      END LOOP;
+
+      IF NOT EXISTS (
+        SELECT 1 FROM pg_trigger
+        WHERE tgname = 'prevent_update_shoe_secrets'
+          AND tgrelid = 'shoe_secrets'::regclass
+          AND NOT tgisinternal
+      ) THEN
+        CREATE TRIGGER prevent_update_shoe_secrets
+          BEFORE UPDATE ON shoe_secrets
+          FOR EACH STATEMENT EXECUTE FUNCTION reject_shoe_audit_mutation();
+      END IF;
+
+      IF NOT EXISTS (
+        SELECT 1 FROM pg_trigger
+        WHERE tgname = 'prevent_deal_after_shoe_reveal'
+          AND tgrelid = 'shoe_deal_audits'::regclass
+          AND NOT tgisinternal
+      ) THEN
+        CREATE TRIGGER prevent_deal_after_shoe_reveal
+          BEFORE INSERT ON shoe_deal_audits
+          FOR EACH ROW EXECUTE FUNCTION reject_deal_after_shoe_reveal();
+      END IF;
+
+      IF NOT EXISTS (
+        SELECT 1 FROM pg_trigger
+        WHERE tgname = 'serialize_shoe_reveal_insert'
+          AND tgrelid = 'shoe_reveals'::regclass
+          AND NOT tgisinternal
+      ) THEN
+        CREATE TRIGGER serialize_shoe_reveal_insert
+          BEFORE INSERT ON shoe_reveals
+          FOR EACH ROW EXECUTE FUNCTION serialize_shoe_reveal();
+      END IF;
+    END;
+    $$;
+
     ALTER TABLE game_tables
       ADD COLUMN IF NOT EXISTS round_phase_offset_ms INTEGER NOT NULL DEFAULT 0;
     ALTER TABLE game_tables
       ADD COLUMN IF NOT EXISTS round_schedule_version INTEGER NOT NULL DEFAULT 0;
+    ALTER TABLE game_rounds
+      ADD COLUMN IF NOT EXISTS cancellation_reason TEXT;
 
     CREATE INDEX IF NOT EXISTS idx_game_rounds_active
       ON game_rounds (table_id, status, created_at DESC);
@@ -222,6 +375,7 @@ function mapRound(row: DbRow): GameRoundRecord {
     playerPair: row.player_pair as boolean,
     bankerPair: row.banker_pair as boolean,
     status: String(row.status) as RoundStatus,
+    cancellationReason: row.cancellation_reason ? String(row.cancellation_reason) : null,
     bettingOpensAt: toIsoString(row.betting_opens_at),
     bettingClosesAt: toIsoString(row.betting_closes_at),
     settledAt: row.settled_at ? toIsoString(row.settled_at) : null,
@@ -550,6 +704,49 @@ export async function updateRoundStatus(roundId: string, status: RoundStatus, ex
   return requireRecord(await findRoundById(roundId, executor), "Updated round");
 }
 
+export async function cancelRoundAndRefundBets(
+  roundId: string,
+  reason: string,
+  executor: DbExecutor = pool,
+): Promise<string[]> {
+  if (!isPoolClient(executor)) {
+    return withTransaction((client) => cancelRoundAndRefundBets(roundId, reason, client));
+  }
+
+  const round = await findRoundById(roundId, executor, { forUpdate: true });
+  if (!round) throw new Error(`Cannot cancel missing round ${roundId}`);
+  if (round.status === "CANCELLED") return [] as string[];
+  if (round.status === "SETTLED") throw new Error(`Cannot cancel settled round ${roundId}`);
+
+  const refundRows = await queryRows(
+    executor,
+    `SELECT user_id, SUM(amount)::bigint AS refund
+     FROM bets
+     WHERE round_id = $1
+     GROUP BY user_id
+     ORDER BY user_id ASC`,
+    [roundId],
+  );
+
+  for (const row of refundRows) {
+    const userId = String(row.user_id);
+    const refund = Number(row.refund);
+    const user = await findUserById(userId, executor, { forUpdate: true });
+    if (!user) throw new Error(`Cannot refund missing user ${userId}`);
+    await updateUserBalance(userId, user.balance + refund, executor);
+  }
+
+  await executor.query("UPDATE bets SET payout = amount WHERE round_id = $1", [roundId]);
+  await executor.query(
+    `UPDATE game_rounds
+     SET status = 'CANCELLED', cancellation_reason = $1, settled_at = $2
+     WHERE id = $3`,
+    [reason, new Date().toISOString(), roundId],
+  );
+
+  return refundRows.map((row) => String(row.user_id));
+}
+
 export async function settleRound(
   roundId: string,
   result: {
@@ -602,14 +799,14 @@ export async function purgeSettledRoundsBefore(
       `DELETE FROM bets
        WHERE round_id IN (
          SELECT id FROM game_rounds
-         WHERE status = 'SETTLED'
+         WHERE status IN ('SETTLED', 'CANCELLED')
            AND settled_at IS NOT NULL
            AND settled_at < $1
        )`,
       [cutoffIso],
     );
     const deletedRounds = await executor.query(
-      "DELETE FROM game_rounds WHERE status = 'SETTLED' AND settled_at IS NOT NULL AND settled_at < $1",
+      "DELETE FROM game_rounds WHERE status IN ('SETTLED', 'CANCELLED') AND settled_at IS NOT NULL AND settled_at < $1",
       [cutoffIso],
     );
 
@@ -639,11 +836,218 @@ export async function createBalanceAdjustment(
   return { id, ...input, createdAt };
 }
 
-function createShuffledShoeState() {
+function mapShoeCommitment(row: DbRow): ShoeCommitmentRecord {
   return {
-    shoeId: randomUUID(),
-    ...createMassachusettsShoeState(),
+    version: Number(row.audit_version),
+    shoeId: String(row.shoe_id),
+    tableId: String(row.table_id),
+    shuffleAlgorithm: String(row.shuffle_algorithm),
+    dealAlgorithm: String(row.deal_algorithm),
+    deckCount: Number(row.deck_count),
+    commitment: String(row.commitment),
+    cutCardRemaining: Number(row.cut_card_remaining),
+    committedAt: toIsoString(row.committed_at),
   };
+}
+
+function publicShoeCommitment(commitment: ShoeCommitmentRecord | null) {
+  if (!commitment) return null;
+  return {
+    version: commitment.version,
+    shoeId: commitment.shoeId,
+    shuffleAlgorithm: commitment.shuffleAlgorithm,
+    dealAlgorithm: commitment.dealAlgorithm,
+    deckCount: commitment.deckCount,
+    commitment: commitment.commitment,
+    committedAt: commitment.committedAt,
+  };
+}
+
+function mapShoeDealAudit(row: DbRow): ShoeDealAuditRecord {
+  return {
+    dealIndex: Number(row.deal_index),
+    roundId: String(row.round_id),
+    dealtCards: parseJsonValue<Card[]>(row.dealt_cards),
+    result: parseJsonValue<AuditedRoundResult>(row.round_result),
+    recordedAt: toIsoString(row.recorded_at),
+  };
+}
+
+export async function getShoeCommitment(shoeId: string, executor: DbExecutor = pool) {
+  if (!shoeId) return null;
+  const row = await queryRow(executor, "SELECT * FROM shoe_commitments WHERE shoe_id = $1", [shoeId]);
+  return row ? mapShoeCommitment(row) : null;
+}
+
+async function getShoeCommitments(shoeIds: string[], executor: DbExecutor = pool) {
+  if (shoeIds.length === 0) return new Map<string, ShoeCommitmentRecord>();
+  const rows = await queryRows(executor, "SELECT * FROM shoe_commitments WHERE shoe_id = ANY($1)", [shoeIds]);
+  return new Map(rows.map((row: DbRow) => {
+    const commitment = mapShoeCommitment(row);
+    return [commitment.shoeId, commitment] as const;
+  }));
+}
+
+async function hasActiveShoeSecret(shoeId: string, executor: DbExecutor) {
+  const row = await queryRow(
+    executor,
+    "SELECT EXISTS (SELECT 1 FROM shoe_secrets WHERE shoe_id = $1) AS present",
+    [shoeId],
+  );
+  return Boolean(row?.present);
+}
+
+async function lockShoeLifecycle(shoeId: string, executor: PoolClient) {
+  return queryRow(
+    executor,
+    `SELECT c.*, s.seed_hex AS active_seed, r.shoe_id AS revealed_shoe_id
+     FROM shoe_commitments c
+     LEFT JOIN shoe_secrets s ON s.shoe_id = c.shoe_id
+     LEFT JOIN shoe_reveals r ON r.shoe_id = c.shoe_id
+     WHERE c.shoe_id = $1
+     FOR UPDATE OF c`,
+    [shoeId],
+  );
+}
+
+export async function validateActiveShoeAudit(
+  shoeId: string,
+  tableId: string,
+  executor: DbExecutor = pool,
+): Promise<{ valid: boolean; reason: string | null }> {
+  if (!isPoolClient(executor)) {
+    return withTransaction((client) => validateActiveShoeAudit(shoeId, tableId, client));
+  }
+
+  const row = await lockShoeLifecycle(shoeId, executor);
+  if (!row) return { valid: false, reason: "SHOE_COMMITMENT_MISSING" };
+  if (String(row.table_id) !== tableId) return { valid: false, reason: "SHOE_TABLE_MISMATCH" };
+  if (row.revealed_shoe_id) return { valid: false, reason: "SHOE_ALREADY_REVEALED" };
+  if (!row.active_seed) return { valid: false, reason: "SHOE_ACTIVE_SECRET_MISSING" };
+  if (
+    Number(row.audit_version) !== SHOE_AUDIT_VERSION ||
+    String(row.shuffle_algorithm) !== SHOE_SHUFFLE_ALGORITHM ||
+    String(row.deal_algorithm) !== SHOE_DEAL_ALGORITHM ||
+    Number(row.deck_count) !== SHOE_DECK_COUNT
+  ) {
+    return { valid: false, reason: "SHOE_AUDIT_VERSION_MISMATCH" };
+  }
+
+  try {
+    const expectedCommitment = createShoeCommitment({
+      shoeId,
+      tableId,
+      seed: String(row.active_seed),
+      deckCount: Number(row.deck_count),
+    });
+    if (expectedCommitment !== String(row.commitment)) {
+      return { valid: false, reason: "SHOE_COMMITMENT_INVALID" };
+    }
+    if (createShoeFromSeed(String(row.active_seed), Number(row.deck_count)).shoe.cutCardRemaining !== Number(row.cut_card_remaining)) {
+      return { valid: false, reason: "SHOE_CUT_CARD_INVALID" };
+    }
+  } catch {
+    return { valid: false, reason: "SHOE_COMMITMENT_INVALID" };
+  }
+
+  return { valid: true, reason: null };
+}
+
+export async function getShoeAuditBundle(shoeId: string, executor: DbExecutor = pool): Promise<ShoeAuditBundle | null> {
+  const row = await queryRow(
+    executor,
+    `SELECT c.*, r.seed_hex, r.reveal_reason, r.revealed_at
+     FROM shoe_commitments c
+     LEFT JOIN shoe_reveals r ON r.shoe_id = c.shoe_id
+     WHERE c.shoe_id = $1`,
+    [shoeId],
+  );
+  if (!row) return null;
+
+  const dealRows = await queryRows(
+    executor,
+    "SELECT * FROM shoe_deal_audits WHERE shoe_id = $1 ORDER BY deal_index ASC",
+    [shoeId],
+  );
+
+  return {
+    ...mapShoeCommitment(row),
+    reveal: row.seed_hex
+      ? {
+          seed: String(row.seed_hex),
+          reason: String(row.reveal_reason),
+          revealedAt: toIsoString(row.revealed_at),
+        }
+      : null,
+    deals: dealRows.map((dealRow: DbRow) => mapShoeDealAudit(dealRow)),
+  };
+}
+
+export async function recordShoeDealAudit(
+  input: {
+    shoeId: string;
+    roundId: string;
+    dealtCards: Card[];
+    result: AuditedRoundResult;
+  },
+  executor: DbExecutor = pool,
+): Promise<ShoeDealAuditRecord> {
+  if (!isPoolClient(executor)) {
+    return withTransaction((client) => recordShoeDealAudit(input, client));
+  }
+
+  const lifecycle = await lockShoeLifecycle(input.shoeId, executor);
+  if (!lifecycle) throw new Error(`Cannot audit uncommitted shoe ${input.shoeId}`);
+  if (lifecycle.revealed_shoe_id) throw new Error(`Cannot append deal after shoe ${input.shoeId} reveal`);
+  if (!lifecycle.active_seed) throw new Error(`Cannot audit shoe ${input.shoeId}: active seed is missing`);
+
+  const indexRow = await queryRow(
+    executor,
+    "SELECT COALESCE(MAX(deal_index), -1) + 1 AS next_index FROM shoe_deal_audits WHERE shoe_id = $1",
+    [input.shoeId],
+  );
+  const dealIndex = Number(indexRow?.next_index ?? 0);
+  const recordedAt = new Date().toISOString();
+
+  await executor.query(
+    `INSERT INTO shoe_deal_audits (round_id, shoe_id, deal_index, dealt_cards, round_result, recorded_at)
+     VALUES ($1, $2, $3, $4::jsonb, $5::jsonb, $6)`,
+    [
+      input.roundId,
+      input.shoeId,
+      dealIndex,
+      JSON.stringify(input.dealtCards),
+      JSON.stringify(input.result),
+      recordedAt,
+    ],
+  );
+
+  return { dealIndex, ...input, recordedAt };
+}
+
+async function revealShoeAudit(shoeId: string, reason: string, executor: DbExecutor): Promise<void> {
+  if (!isPoolClient(executor)) {
+    return withTransaction((client) => revealShoeAudit(shoeId, reason, client));
+  }
+
+  const lifecycle = await lockShoeLifecycle(shoeId, executor);
+  if (!lifecycle) return;
+  if (lifecycle.revealed_shoe_id) {
+    await executor.query("DELETE FROM shoe_secrets WHERE shoe_id = $1", [shoeId]);
+    return;
+  }
+  if (!lifecycle.active_seed) {
+    throw new Error(`Cannot rotate committed shoe ${shoeId}: active seed is missing`);
+  }
+
+  const revealedAt = new Date().toISOString();
+  await executor.query(
+    `INSERT INTO shoe_reveals (shoe_id, seed_hex, reveal_reason, revealed_at)
+     VALUES ($1, $2, $3, $4)`,
+    [shoeId, String(lifecycle.active_seed), reason, revealedAt],
+  );
+
+  await executor.query("DELETE FROM shoe_secrets WHERE shoe_id = $1", [shoeId]);
 }
 
 function normalizeLegacyShoeState(cards: Card[]): TableShoeState {
@@ -661,7 +1065,7 @@ export async function getTableShoe(
   tableId: string,
   executor: DbExecutor = pool,
   options?: { forUpdate?: boolean },
-) {
+): Promise<PersistedTableShoe | null> {
   const suffix = options?.forUpdate && isPoolClient(executor) ? " FOR UPDATE" : "";
   const row = await queryRow(executor, `SELECT current_shoe_id, shoe_state FROM game_tables WHERE id = $1${suffix}`, [tableId]);
 
@@ -692,10 +1096,49 @@ export async function getTableShoe(
   };
 }
 
-export async function replaceTableShoe(tableId: string, executor: DbExecutor = pool) {
-  const nextShoe = createShuffledShoeState();
+export async function replaceTableShoe(
+  tableId: string,
+  executor: DbExecutor = pool,
+  revealReason = "ROTATED",
+): Promise<PersistedTableShoe> {
+  if (!isPoolClient(executor)) {
+    return withTransaction((client) => replaceTableShoe(tableId, client, revealReason));
+  }
+
+  const currentShoe = await getTableShoe(tableId, executor, { forUpdate: true });
+  if (currentShoe?.shoeId) {
+    await revealShoeAudit(currentShoe.shoeId, revealReason, executor);
+  }
+
+  const shoeId = randomUUID();
+  const seed = generateShoeSeed();
+  const createdAt = new Date().toISOString();
+  const nextShoe = createShoeFromSeed(seed, SHOE_DECK_COUNT).shoe;
+  const commitment = createShoeCommitment({ shoeId, tableId, seed, deckCount: SHOE_DECK_COUNT });
+
+  await executor.query(
+    `INSERT INTO shoe_commitments (
+       shoe_id, table_id, audit_version, shuffle_algorithm, deal_algorithm,
+       deck_count, commitment, cut_card_remaining, committed_at
+     ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
+    [
+      shoeId,
+      tableId,
+      SHOE_AUDIT_VERSION,
+      SHOE_SHUFFLE_ALGORITHM,
+      SHOE_DEAL_ALGORITHM,
+      SHOE_DECK_COUNT,
+      commitment,
+      nextShoe.cutCardRemaining,
+      createdAt,
+    ],
+  );
+  await executor.query(
+    "INSERT INTO shoe_secrets (shoe_id, seed_hex, created_at) VALUES ($1, $2, $3)",
+    [shoeId, seed, createdAt],
+  );
   await executor.query("UPDATE game_tables SET current_shoe_id = $1, shoe_state = $2::jsonb WHERE id = $3", [
-    nextShoe.shoeId,
+    shoeId,
     JSON.stringify({
       cards: nextShoe.cards,
       cutCardRemaining: nextShoe.cutCardRemaining,
@@ -704,7 +1147,7 @@ export async function replaceTableShoe(tableId: string, executor: DbExecutor = p
     }),
     tableId,
   ]);
-  return nextShoe;
+  return { shoeId, ...nextShoe };
 }
 
 export async function saveTableShoe(tableId: string, shoeId: string, shoe: TableShoeState, executor: DbExecutor = pool) {
@@ -724,14 +1167,73 @@ export async function saveTableShoe(tableId: string, shoeId: string, shoe: Table
   };
 }
 
-export async function ensureTableShoe(tableId: string, executor: DbExecutor = pool) {
-  const currentShoe = await getTableShoe(tableId, executor, isPoolClient(executor) ? { forUpdate: true } : undefined);
+export async function ensureTableShoe(
+  tableId: string,
+  executor: DbExecutor = pool,
+): Promise<PersistedTableShoe> {
+  if (!isPoolClient(executor)) {
+    return withTransaction((client) => ensureTableShoe(tableId, client));
+  }
 
-  if (!currentShoe || !currentShoe.shoeId || currentShoe.cards.length === 0) {
-    return replaceTableShoe(tableId, executor);
+  const currentShoe = await getTableShoe(tableId, executor, { forUpdate: true });
+
+  const commitment = currentShoe?.shoeId ? await getShoeCommitment(currentShoe.shoeId, executor) : null;
+
+  if (currentShoe?.shoeId && commitment && !(await hasActiveShoeSecret(currentShoe.shoeId, executor))) {
+    throw new Error(`Cannot continue committed shoe ${currentShoe.shoeId}: active seed is missing`);
+  }
+
+  if (!currentShoe || !currentShoe.shoeId || currentShoe.cards.length < 6 || !commitment) {
+    return replaceTableShoe(
+      tableId,
+      executor,
+      commitment ? "INSUFFICIENT_CARDS" : "LEGACY_UPGRADE",
+    );
   }
 
   return currentShoe;
+}
+
+async function migrateTableShoeAtStartup(tableId: string, executor: PoolClient) {
+  const activeRound = await getActiveRound(tableId, executor, { forUpdate: true });
+  const currentShoe = await getTableShoe(tableId, executor, { forUpdate: true });
+  const commitment = currentShoe?.shoeId ? await getShoeCommitment(currentShoe.shoeId, executor) : null;
+
+  if (commitment && currentShoe) {
+    const validation = await validateActiveShoeAudit(currentShoe.shoeId, tableId, executor);
+    if (!validation.valid) {
+      if (activeRound) {
+        await cancelRoundAndRefundBets(activeRound.id, validation.reason ?? "SHOE_AUDIT_INVALID", executor);
+      }
+      return { shoe: currentShoe, fatalReason: validation.reason ?? "SHOE_AUDIT_INVALID" };
+    }
+  }
+
+  const requiresRotation = !currentShoe || !currentShoe.shoeId || !commitment || currentShoe.cards.length < 6;
+  if (
+    activeRound &&
+    (requiresRotation || !currentShoe || activeRound.shoeId !== currentShoe.shoeId)
+  ) {
+    const cancellationReason = !commitment
+      ? "LEGACY_SHOE_UNAUDITED"
+      : currentShoe && currentShoe.cards.length < 6
+        ? "INSUFFICIENT_COMMITTED_CARDS"
+        : "SHOE_BINDING_INVALID";
+    await cancelRoundAndRefundBets(activeRound.id, cancellationReason, executor);
+  }
+
+  if (requiresRotation) {
+    return {
+      shoe: await replaceTableShoe(
+        tableId,
+        executor,
+        commitment ? "INSUFFICIENT_CARDS_CANCELLED" : "LEGACY_UPGRADE",
+      ),
+      fatalReason: null,
+    };
+  }
+
+  return { shoe: currentShoe, fatalReason: null };
 }
 
 export async function listAdjustments(executor: DbExecutor = pool) {
@@ -812,6 +1314,10 @@ export async function buildLobbyTables(executor: DbExecutor = pool) {
   }
   const roadResults = await Promise.all(roadShoeQueries);
   const roadByTable = new Map(roadResults.map((r) => [r.tableId, r.rounds]));
+  const commitments = await getShoeCommitments(
+    Array.from(activeByTable.values(), (round) => round.shoeId).filter(Boolean),
+    executor,
+  );
 
   return tables.map((table) => {
     const recentRounds = recentByTable.get(table.id) ?? [];
@@ -825,6 +1331,7 @@ export async function buildLobbyTables(executor: DbExecutor = pool) {
       previousRound,
       recentRounds: recentRounds.slice(0, 6),
       roadRounds,
+      shoeAudit: publicShoeCommitment(activeRound ? commitments.get(activeRound.shoeId) ?? null : null),
     };
   });
 }
@@ -841,6 +1348,7 @@ export async function buildTablePublicState(tableId: string, executor: DbExecuto
   const previousRound = recentRounds[0] ?? null;
   const roadRounds = activeRound ? await listRecentSettledRoundsByShoe(table.id, activeRound.shoeId, 200, executor) : [];
   const shoe = await getTableShoe(table.id, executor);
+  const shoeCommitment = await getShoeCommitment(activeRound?.shoeId ?? shoe?.shoeId ?? "", executor);
 
   if (!activeRound) {
     return {
@@ -854,6 +1362,7 @@ export async function buildTablePublicState(tableId: string, executor: DbExecuto
         isLastHand: Boolean(shoe?.lastHandPending),
         cutCardReached: Boolean(shoe?.cutCardReached),
       },
+      shoeAudit: publicShoeCommitment(shoeCommitment),
       serverTime: new Date().toISOString(),
     };
   }
@@ -874,6 +1383,7 @@ export async function buildTablePublicState(tableId: string, executor: DbExecuto
       isLastHand: Boolean(shoe?.lastHandPending),
       cutCardReached: Boolean(shoe?.cutCardReached),
     },
+    shoeAudit: publicShoeCommitment(shoeCommitment),
     serverTime: new Date().toISOString(),
   };
 }
@@ -999,13 +1509,17 @@ export async function ensureSeedData(options?: { seedDemoUsers?: boolean }) {
     });
 
     const tables = await listTables(client);
+    const fatalMigrations: string[] = [];
 
     for (const table of tables) {
-      const currentShoe = await getTableShoe(table.id, client);
-      const ensuredShoe =
-        !currentShoe || !currentShoe.shoeId || currentShoe.cards.length === 0 ? await replaceTableShoe(table.id, client) : currentShoe;
+      const migration = await withTransaction((tx) => migrateTableShoeAtStartup(table.id, tx));
+      if (migration.fatalReason) {
+        fatalMigrations.push(`${table.id}:${migration.fatalReason}`);
+      }
+    }
 
-      await client.query("UPDATE game_rounds SET shoe_id = $1 WHERE table_id = $2 AND shoe_id = ''", [ensuredShoe.shoeId, table.id]);
+    if (fatalMigrations.length > 0) {
+      throw new Error(`Shoe audit startup migration failed closed: ${fatalMigrations.join(", ")}`);
     }
   });
 }

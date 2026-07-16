@@ -1,6 +1,6 @@
 export type UserRole = "ADMIN" | "PLAYER";
 export type RoundWinner = "PLAYER" | "BANKER" | "TIE";
-export type RoundStatus = "OPEN" | "LOCKED" | "SETTLED";
+export type RoundStatus = "OPEN" | "LOCKED" | "SETTLED" | "CANCELLED";
 export type BetType = "PLAYER" | "BANKER" | "TIE" | "PLAYER_PAIR" | "BANKER_PAIR";
 export type BaccaratPairType = "PLAYER_PAIR" | "BANKER_PAIR" | "BOTH_PAIR" | "NO_PAIR";
 
@@ -25,6 +25,7 @@ export type ActiveRound = {
   tableId: string;
   shoeId: string;
   status: RoundStatus;
+  cancellationReason: string | null;
   bettingOpensAt: string;
   bettingClosesAt: string;
   settledAt: string | null;

@@ -74,6 +74,10 @@ VITE_API_BASE_URL=https://your-api-host.example.com
 - 後端: Node.js, Express, JWT, WebSocket
 - 資料庫: PostgreSQL
 
+## 公平性稽核
+
+每個新 shoe 會先發布 cryptographic commitment，rotate 後 reveal seed 與 append-only deal audit，讓玩家或 operator 可獨立重建驗證。algorithm、API、verifier 與 threat model 見 [docs/shoe-audit.md](docs/shoe-audit.md)。
+
 ## 備註
 
 - 目前是測試幣模式，未接金流。

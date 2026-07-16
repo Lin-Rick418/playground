@@ -7,6 +7,7 @@ import {
   createBalanceAdjustment,
   createPlayer,
   findRoundById,
+  getShoeAuditBundle,
   findUserById,
   findUserByUsername,
   listAdjustments,
@@ -17,6 +18,7 @@ import {
   withTransaction,
 } from "../../lib/db.js";
 import { publishLiveEvent } from "../../lib/live-events.js";
+import { toPublicShoeAudit } from "../../lib/shoe-audit.js";
 
 const adjustBalanceSchema = z.object({
   userId: z.string().min(1),
@@ -59,6 +61,16 @@ adminRouter.get("/rounds/:roundId/bets", async (req, res) => {
     round,
     bets: await listRoundBetsDetailed(round.id),
   });
+});
+
+adminRouter.get("/shoes/:shoeId/audit", async (req, res) => {
+  const audit = await getShoeAuditBundle(String(req.params.shoeId));
+
+  if (!audit) {
+    return res.status(404).json({ message: "Shoe audit not found" });
+  }
+
+  return res.json(toPublicShoeAudit(audit));
 });
 
 adminRouter.post("/players", async (req, res) => {
