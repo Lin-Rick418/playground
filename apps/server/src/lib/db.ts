@@ -8,6 +8,7 @@ import type {
   GameTableRecord,
   RoundStatus,
   RoundWinner,
+  PublicUserRecord,
   UserRecord,
   UserRole,
 } from "../types/domain.js";
@@ -254,10 +255,10 @@ export async function findUserById(
   return row ? mapUser(row) : null;
 }
 
-export async function listUsers(executor: DbExecutor = pool) {
+export async function listUsers(executor: DbExecutor = pool): Promise<PublicUserRecord[]> {
   const rows = await queryRows(
     executor,
-    "SELECT id, username, role, is_active, balance, created_at FROM users ORDER BY created_at ASC",
+    "SELECT id, username, role, is_active, balance, created_at, updated_at FROM users ORDER BY created_at ASC",
   );
 
   return rows.map((row: DbRow) => ({
@@ -267,6 +268,7 @@ export async function listUsers(executor: DbExecutor = pool) {
     isActive: row.is_active as boolean,
     balance: Number(row.balance),
     createdAt: toIsoString(row.created_at),
+    updatedAt: toIsoString(row.updated_at),
   }));
 }
 

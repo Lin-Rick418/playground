@@ -26,6 +26,8 @@ export type UserRecord = {
   updatedAt: string;
 };
 
+export type PublicUserRecord = Omit<UserRecord, "passwordHash">;
+
 export type GameRoundRecord = {
   id: string;
   tableId: string;

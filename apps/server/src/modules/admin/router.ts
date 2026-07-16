@@ -17,6 +17,7 @@ import {
   withTransaction,
 } from "../../lib/db.js";
 import { publishLiveEvent } from "../../lib/live-events.js";
+import { toPublicUser } from "../../lib/public-user.js";
 
 const adjustBalanceSchema = z.object({
   userId: z.string().min(1),
@@ -79,7 +80,7 @@ adminRouter.post("/players", async (req, res) => {
     balance: parsed.data.balance,
   });
 
-  return res.status(201).json(user);
+  return res.status(201).json(toPublicUser(user));
 });
 
 adminRouter.post("/users/set-active", async (req, res) => {
@@ -106,7 +107,7 @@ adminRouter.post("/users/set-active", async (req, res) => {
     reason: "user_active_changed",
     at: new Date().toISOString(),
   });
-  return res.json(user);
+  return res.json(toPublicUser(user));
 });
 
 adminRouter.post("/adjust-balance", async (req: AuthenticatedRequest, res) => {
@@ -152,5 +153,5 @@ adminRouter.post("/adjust-balance", async (req: AuthenticatedRequest, res) => {
     at: new Date().toISOString(),
   });
 
-  return res.json({ user: payload.user, adjustment: payload.adjustment });
+  return res.json({ user: toPublicUser(payload.user), adjustment: payload.adjustment });
 });
