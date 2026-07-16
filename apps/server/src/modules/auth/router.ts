@@ -1,65 +1,55 @@
 import { Router } from "express";
-import bcrypt from "bcryptjs";
 import { z } from "zod";
 import { signToken } from "../../lib/auth.js";
 import { authenticate, type AuthenticatedRequest } from "../../middleware/authenticate.js";
-import { findUserById, findUserByUsername } from "../../lib/db.js";
+import { findUserById, findUserByUsername, pool } from "../../lib/db.js";
+import {
+  createLoginRateLimitAttempt,
+  LoginRateLimiter,
+} from "../../lib/login-rate-limit.js";
+import { verifyLoginPassword } from "../../lib/login-password.js";
+import { PostgresLoginRateLimitStore } from "../../lib/postgres-login-rate-limit-store.js";
 
 const loginSchema = z.object({
-  username: z.string().min(1),
+  username: z.string().trim().min(1).max(64),
   password: z.string().min(1),
 });
 
-const LOGIN_WINDOW_MS = 60_000;
-const LOGIN_MAX_ATTEMPTS = 10;
-const LOGIN_ATTEMPTS_PRUNE_THRESHOLD = 10_000;
-const loginAttempts = new Map<string, { count: number; resetAt: number }>();
-
-// Equalizes bcrypt timing for unknown usernames so response time does not
-// reveal whether an account exists.
-const dummyPasswordHash = bcrypt.hashSync("login-timing-placeholder", 10);
-
-function isLoginRateLimited(key: string) {
-  const now = Date.now();
-
-  if (loginAttempts.size > LOGIN_ATTEMPTS_PRUNE_THRESHOLD) {
-    for (const [attemptKey, entry] of loginAttempts) {
-      if (now >= entry.resetAt) {
-        loginAttempts.delete(attemptKey);
-      }
-    }
-  }
-
-  const entry = loginAttempts.get(key);
-
-  if (!entry || now >= entry.resetAt) {
-    loginAttempts.set(key, { count: 1, resetAt: now + LOGIN_WINDOW_MS });
-    return false;
-  }
-
-  entry.count += 1;
-  return entry.count > LOGIN_MAX_ATTEMPTS;
-}
+const loginRateLimiter = new LoginRateLimiter(new PostgresLoginRateLimitStore(pool));
 
 export const authRouter = Router();
 
 authRouter.post("/login", async (req, res) => {
-  if (isLoginRateLimited(req.ip ?? "unknown")) {
-    return res.status(429).json({ message: "Too many login attempts, try again later" });
-  }
-
   const parsed = loginSchema.safeParse(req.body);
 
   if (!parsed.success) {
     return res.status(400).json({ message: "Invalid login payload" });
   }
 
+  const attempt = createLoginRateLimitAttempt(parsed.data.username, req.ip);
+  const existingLimit = await loginRateLimiter.inspect(attempt);
+
+  if (existingLimit.hardBlocked) {
+    // A hard account/account+IP block still performs bcrypt work, but avoids
+    // querying the real password hash so known and unknown users look alike.
+    await verifyLoginPassword(parsed.data.password, undefined);
+    return res.status(429).json({ message: "Too many login attempts, try again later" });
+  }
+
   const user = await findUserByUsername(parsed.data.username);
-  const isValid = await bcrypt.compare(parsed.data.password, user?.passwordHash ?? dummyPasswordHash);
+  const isValid = await verifyLoginPassword(parsed.data.password, user?.passwordHash);
 
   if (!user || !isValid) {
+    const failureLimit = await loginRateLimiter.recordFailure(attempt);
+
+    if (failureLimit.limitedScopes.length > 0) {
+      return res.status(429).json({ message: "Too many login attempts, try again later" });
+    }
+
     return res.status(401).json({ message: "Invalid credentials" });
   }
+
+  await loginRateLimiter.recordSuccess(attempt);
 
   // Only revealed after the password is verified, so it cannot be used to
   // enumerate accounts.
