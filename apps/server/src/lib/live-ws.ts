@@ -2,7 +2,14 @@ import { randomUUID } from "node:crypto";
 import { URL } from "node:url";
 import type { Server } from "node:http";
 import { WebSocket, WebSocketServer } from "ws";
+import {
+  liveClientMessageSchema,
+  liveServerMessageSchema,
+  type LiveClientMessage,
+  type LiveServerMessage,
+} from "@baccarat/contracts";
 import { verifyToken } from "./auth.js";
+import { contractIssues } from "./contracts.js";
 import {
   buildLobbyTables,
   buildTablePublicState,
@@ -21,46 +28,29 @@ type LiveSocketConnection = {
   subscription: { scope: "none" } | { scope: "lobby" } | { scope: "table"; tableId: string };
 };
 
-type ClientMessage = { type: "subscribe_lobby" } | { type: "subscribe_table"; tableId: string };
-
-type ServerMessage =
-  | { type: "connected"; serverTime: string }
-  | { type: "error"; message: string }
-  | {
-      type: "lobby_snapshot";
-      data: {
-        tables: Awaited<ReturnType<typeof buildLobbyTables>>;
-        config: ReturnType<typeof getRoundConfig>;
-        serverTime: string;
-      };
-    }
-  | {
-      type: "table_snapshot";
-      data: NonNullable<Awaited<ReturnType<typeof buildTablePublicState>>> & {
-        config: ReturnType<typeof getRoundConfig>;
-      };
-    }
-  | {
-      type: "table_user_snapshot";
-      data: Awaited<ReturnType<typeof buildTableUserState>>;
-    }
-  | {
-      type: "user_snapshot";
-      data: NonNullable<Awaited<ReturnType<typeof buildUserLiveState>>>;
-    };
-
 const connections = new Map<string, LiveSocketConnection>();
 let stopSubscriber: null | (() => Promise<void>) = null;
 
 const HEARTBEAT_INTERVAL_MS = 30_000;
 const HEARTBEAT_TIMEOUT_MS = 10_000;
 
-function sendMessage(socket: WebSocket, message: ServerMessage) {
+function sendMessage(socket: WebSocket, message: LiveServerMessage) {
   if (socket.readyState !== WebSocket.OPEN) {
     return;
   }
 
-  socket.send(JSON.stringify(message));
+  const parsed = liveServerMessageSchema.safeParse(message);
+
+  if (!parsed.success) {
+    console.error("WebSocket response contract validation failed", {
+      type: message.type,
+      issues: contractIssues(parsed.error),
+    });
+    socket.send(JSON.stringify({ type: "error", message: "Live data unavailable" }));
+    return;
+  }
+
+  socket.send(JSON.stringify(parsed.data));
 }
 
 async function pushLobbySnapshot(connection: LiveSocketConnection) {
@@ -121,7 +111,7 @@ async function pushTableUserSnapshot(connection: LiveSocketConnection, tableId: 
   });
 }
 
-async function handleSubscriptionMessage(connection: LiveSocketConnection, message: ClientMessage) {
+async function handleSubscriptionMessage(connection: LiveSocketConnection, message: LiveClientMessage) {
   if (message.type === "subscribe_lobby") {
     connection.subscription = { scope: "lobby" };
     await Promise.all([pushLobbySnapshot(connection), pushUserSnapshot(connection)]);
@@ -193,19 +183,22 @@ async function handleLiveEvent(event: LiveEvent) {
   );
 }
 
-function parseClientMessage(data: string): ClientMessage | null {
+function parseClientMessage(data: string): LiveClientMessage | null {
   try {
-    const message = JSON.parse(data) as ClientMessage;
-    if (message.type === "subscribe_lobby") {
-      return message;
+    const parsed = liveClientMessageSchema.safeParse(JSON.parse(data));
+
+    if (!parsed.success) {
+      console.warn("WebSocket request contract validation failed", {
+        issues: contractIssues(parsed.error),
+      });
+      return null;
     }
 
-    if (message.type === "subscribe_table" && typeof message.tableId === "string") {
-      return message;
-    }
-
-    return null;
+    return parsed.data;
   } catch {
+    console.warn("WebSocket request contract validation failed", {
+      issues: [{ code: "invalid_json", path: "" }],
+    });
     return null;
   }
 }

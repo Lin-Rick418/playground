@@ -57,6 +57,15 @@ async function togglePlayer(userId: string, isActive: boolean) {
   await adminStore.setUserActive(userId, !isActive);
 }
 
+async function changeUsersPage(page: number) {
+  if (page < 1 || page > adminStore.usersPagination.totalPages || page === adminStore.usersPagination.page) {
+    return;
+  }
+
+  await adminStore.fetchDashboard(page);
+  form.userId = playerUsers.value[0]?.id ?? "";
+}
+
 async function openRoundDetail(roundId: string) {
   await adminStore.fetchRoundDetail(roundId);
 }
@@ -155,6 +164,25 @@ onMounted(async () => {
               </button>
             </div>
           </article>
+        </div>
+        <div v-if="adminStore.usersPagination.totalPages > 1" class="pagination-controls">
+          <button
+            class="button-secondary compact-button"
+            :disabled="adminStore.usersPagination.page <= 1"
+            @click="changeUsersPage(adminStore.usersPagination.page - 1)"
+          >
+            上一頁
+          </button>
+          <span>
+            {{ adminStore.usersPagination.page }} / {{ adminStore.usersPagination.totalPages }}
+          </span>
+          <button
+            class="button-secondary compact-button"
+            :disabled="adminStore.usersPagination.page >= adminStore.usersPagination.totalPages"
+            @click="changeUsersPage(adminStore.usersPagination.page + 1)"
+          >
+            下一頁
+          </button>
         </div>
       </section>
 
@@ -315,6 +343,14 @@ onMounted(async () => {
 
 .compact-button {
   padding: $space-2 $space-3;
+}
+
+.pagination-controls {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: $space-3;
+  margin-top: $space-4;
 }
 
 .clickable {

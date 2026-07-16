@@ -1,5 +1,7 @@
 import { defineStore } from "pinia";
+import { lobbyResponseSchema, tableStateResponseSchema } from "@baccarat/contracts";
 import { api } from "../lib/api";
+import { parseRuntimeContract } from "../lib/contracts";
 import type {
   ActiveRound,
   BetType,
@@ -9,11 +11,9 @@ import type {
   LobbyTable,
   PlaceBetResponse,
   PresentationWindow,
-  RoundConfig,
   RoundHistoryItem,
   ShoeStatus,
   TableSnapshot,
-  TableStateResponse,
 } from "../types/domain";
 
 export const useGameStore = defineStore("game", {
@@ -80,12 +80,18 @@ export const useGameStore = defineStore("game", {
       this.currentBets = [];
     },
     async fetchLobby() {
-      const { data } = await api.get<LobbySnapshot & { config: RoundConfig }>("/game/lobby");
+      const response = await api.get("/game/lobby");
+      const data = parseRuntimeContract(lobbyResponseSchema, response.data, "GET /game/lobby");
       this.applyLobbySnapshot(data);
       return data;
     },
     async fetchState(tableId: string) {
-      const { data } = await api.get<TableStateResponse>(`/game/tables/${tableId}/state`);
+      const response = await api.get(`/game/tables/${tableId}/state`);
+      const data = parseRuntimeContract(
+        tableStateResponseSchema,
+        response.data,
+        "GET /game/tables/:tableId/state",
+      );
       this.applyTableSnapshot(data);
       this.applyTableUserSnapshot({
         currentRoundId: data.round.id,

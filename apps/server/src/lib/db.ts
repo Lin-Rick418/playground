@@ -254,20 +254,32 @@ export async function findUserById(
   return row ? mapUser(row) : null;
 }
 
-export async function listUsers(executor: DbExecutor = pool) {
+export async function listUsers(
+  pagination: { page: number; pageSize: number },
+  executor: DbExecutor = pool,
+) {
+  const offset = (pagination.page - 1) * pagination.pageSize;
+  const countRow = await queryRow<{ total: string }>(executor, "SELECT count(*)::text AS total FROM users");
   const rows = await queryRows(
     executor,
-    "SELECT id, username, role, is_active, balance, created_at FROM users ORDER BY created_at ASC",
+    `SELECT id, username, role, is_active, balance, created_at
+     FROM users
+     ORDER BY created_at ASC, id ASC
+     LIMIT $1 OFFSET $2`,
+    [pagination.pageSize, offset],
   );
 
-  return rows.map((row: DbRow) => ({
-    id: String(row.id),
-    username: String(row.username),
-    role: String(row.role) as UserRole,
-    isActive: row.is_active as boolean,
-    balance: Number(row.balance),
-    createdAt: toIsoString(row.created_at),
-  }));
+  return {
+    items: rows.map((row: DbRow) => ({
+      id: String(row.id),
+      username: String(row.username),
+      role: String(row.role) as UserRole,
+      isActive: row.is_active as boolean,
+      balance: Number(row.balance),
+      createdAt: toIsoString(row.created_at),
+    })),
+    total: Number(countRow?.total ?? 0),
+  };
 }
 
 export async function createPlayer(

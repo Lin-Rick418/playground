@@ -1,7 +1,9 @@
 import { Router } from "express";
 import { z } from "zod";
+import { lobbyResponseSchema, tableStateResponseSchema } from "@baccarat/contracts";
 import { authenticate, type AuthenticatedRequest } from "../../middleware/authenticate.js";
 import { requireRole } from "../../lib/auth.js";
+import { sendContractResponse } from "../../lib/contracts.js";
 import {
   buildLobbyTables,
   buildTablePublicState,
@@ -40,7 +42,7 @@ gameRouter.use((req, res, next) => requireRole(req as AuthenticatedRequest, res,
 gameRouter.get("/lobby", async (_req, res) => {
   const tables = await buildLobbyTables();
 
-  return res.json({
+  return sendContractResponse(res, "game.lobby", lobbyResponseSchema, {
     tables,
     config: getRoundConfig(),
     serverTime: new Date().toISOString(),
@@ -61,7 +63,7 @@ gameRouter.get("/tables/:tableId/state", async (req: AuthenticatedRequest, res) 
 
   const userState = await buildTableUserState(req.currentUser!.id, tableId);
 
-  return res.json({
+  return sendContractResponse(res, "game.table.state", tableStateResponseSchema, {
     ...publicState,
     myBets: userState.myBets,
     balance: userState.balance,

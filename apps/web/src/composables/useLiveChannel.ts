@@ -1,12 +1,14 @@
 import { onMounted, onUnmounted } from "vue";
 import { useRouter } from "vue-router";
+import { liveClientMessageSchema, type LiveClientMessage } from "@baccarat/contracts";
 import { createLiveSocket, type LiveMessage } from "../lib/live";
+import { parseRuntimeContract } from "../lib/contracts";
 import { useAuthStore } from "../stores/auth";
 
 type ChannelMessage = Exclude<LiveMessage, { type: "connected" } | { type: "error" } | { type: "user_snapshot" }>;
 
 type UseLiveChannelOptions = {
-  getSubscribeMessage: () => Record<string, unknown>;
+  getSubscribeMessage: () => LiveClientMessage;
   onMessage: (message: ChannelMessage) => void | Promise<void>;
   onError?: (message: string) => void;
 };
@@ -68,7 +70,18 @@ export function useLiveChannel(options: UseLiveChannelOptions) {
     socket = createLiveSocket({
       onOpen: (ws) => {
         reconnectAttempts = 0;
-        ws.send(JSON.stringify(options.getSubscribeMessage()));
+        try {
+          const subscription = parseRuntimeContract(
+            liveClientMessageSchema,
+            options.getSubscribeMessage(),
+            "client.live.subscription",
+            "WebSocket message",
+          );
+          ws.send(JSON.stringify(subscription));
+        } catch {
+          options.onError?.("即時連線訂閱格式錯誤");
+          ws.close(1002, "Invalid subscription message");
+        }
       },
       onMessage: handleMessage,
       onClose: () => {

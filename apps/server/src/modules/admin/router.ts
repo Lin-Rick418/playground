@@ -1,7 +1,9 @@
 import { Router } from "express";
 import bcrypt from "bcryptjs";
 import { z } from "zod";
+import { adminUsersQuerySchema, adminUsersResponseSchema } from "@baccarat/contracts";
 import { requireRole } from "../../lib/auth.js";
+import { sendContractResponse } from "../../lib/contracts.js";
 import { authenticate, type AuthenticatedRequest } from "../../middleware/authenticate.js";
 import {
   createBalanceAdjustment,
@@ -40,8 +42,23 @@ export const adminRouter = Router();
 adminRouter.use(authenticate);
 adminRouter.use((req, res, next) => requireRole(req as AuthenticatedRequest, res, next, "ADMIN"));
 
-adminRouter.get("/users", async (_req, res) => {
-  return res.json(await listUsers());
+adminRouter.get("/users", async (req, res) => {
+  const parsed = adminUsersQuerySchema.safeParse(req.query);
+
+  if (!parsed.success) {
+    return res.status(400).json({ message: "Invalid pagination query" });
+  }
+
+  const { items, total } = await listUsers(parsed.data);
+  return sendContractResponse(res, "admin.users.list", adminUsersResponseSchema, {
+    items,
+    pagination: {
+      page: parsed.data.page,
+      pageSize: parsed.data.pageSize,
+      total,
+      totalPages: Math.ceil(total / parsed.data.pageSize),
+    },
+  });
 });
 
 adminRouter.get("/adjustments", async (_req, res) => {

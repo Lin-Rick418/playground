@@ -1,10 +1,13 @@
 import { defineStore } from "pinia";
+import { adminUsersResponseSchema, type AdminUsersResponse } from "@baccarat/contracts";
 import { api } from "../lib/api";
+import { parseRuntimeContract } from "../lib/contracts";
 import type { Adjustment, AdminUser, RoundBetDetail, RoundWinner } from "../types/domain";
 
 export const useAdminStore = defineStore("admin", {
   state: () => ({
     users: [] as AdminUser[],
+    usersPagination: { page: 1, pageSize: 20, total: 0, totalPages: 0 } as AdminUsersResponse["pagination"],
     adjustments: [] as Adjustment[],
     roundDetail: null as null | {
       round: {
@@ -18,16 +21,25 @@ export const useAdminStore = defineStore("admin", {
     loading: false,
   }),
   actions: {
-    async fetchDashboard() {
+    async fetchDashboard(page?: number) {
       this.loading = true;
 
       try {
+        const requestedPage = page ?? this.usersPagination.page;
         const [usersRes, adjustmentsRes] = await Promise.all([
-          api.get<AdminUser[]>("/admin/users"),
+          api.get("/admin/users", {
+            params: { page: requestedPage, pageSize: this.usersPagination.pageSize },
+          }),
           api.get<Adjustment[]>("/admin/adjustments"),
         ]);
 
-        this.users = usersRes.data;
+        const usersData = parseRuntimeContract(
+          adminUsersResponseSchema,
+          usersRes.data,
+          "GET /admin/users",
+        );
+        this.users = usersData.items;
+        this.usersPagination = usersData.pagination;
         this.adjustments = adjustmentsRes.data;
       } finally {
         this.loading = false;

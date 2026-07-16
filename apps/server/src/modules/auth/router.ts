@@ -1,14 +1,10 @@
 import { Router } from "express";
 import bcrypt from "bcryptjs";
-import { z } from "zod";
+import { loginRequestSchema, loginResponseSchema, userSchema } from "@baccarat/contracts";
 import { signToken } from "../../lib/auth.js";
 import { authenticate, type AuthenticatedRequest } from "../../middleware/authenticate.js";
 import { findUserById, findUserByUsername } from "../../lib/db.js";
-
-const loginSchema = z.object({
-  username: z.string().min(1),
-  password: z.string().min(1),
-});
+import { sendContractResponse } from "../../lib/contracts.js";
 
 const LOGIN_WINDOW_MS = 60_000;
 const LOGIN_MAX_ATTEMPTS = 10;
@@ -48,7 +44,7 @@ authRouter.post("/login", async (req, res) => {
     return res.status(429).json({ message: "Too many login attempts, try again later" });
   }
 
-  const parsed = loginSchema.safeParse(req.body);
+  const parsed = loginRequestSchema.safeParse(req.body);
 
   if (!parsed.success) {
     return res.status(400).json({ message: "Invalid login payload" });
@@ -72,16 +68,21 @@ authRouter.post("/login", async (req, res) => {
     role: user.role,
   });
 
-  return res.json({
-    token,
-    user: {
-      id: user.id,
-      username: user.username,
-      role: user.role,
-      isActive: user.isActive,
-      balance: user.balance,
+  return sendContractResponse(
+    res,
+    "auth.login",
+    loginResponseSchema,
+    {
+      token,
+      user: {
+        id: user.id,
+        username: user.username,
+        role: user.role,
+        isActive: user.isActive,
+        balance: user.balance,
+      },
     },
-  });
+  );
 });
 
 authRouter.get("/me", authenticate, async (req: AuthenticatedRequest, res) => {
@@ -95,7 +96,7 @@ authRouter.get("/me", authenticate, async (req: AuthenticatedRequest, res) => {
     return res.status(403).json({ message: "Account is disabled" });
   }
 
-  return res.json({
+  return sendContractResponse(res, "auth.me", userSchema, {
     id: user.id,
     username: user.username,
     role: user.role,
