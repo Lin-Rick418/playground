@@ -74,6 +74,10 @@ VITE_API_BASE_URL=https://your-api-host.example.com
 - 後端: Node.js, Express, JWT, WebSocket
 - 資料庫: PostgreSQL
 
+## 金額異動 API 的 idempotency
+
+下注與 Admin 餘額調整請求必須帶 8–128 字元的 `Idempotency-Key` header。client 在回應不確定時，應以相同 key 與完全相同的 payload 重試；server 會回傳第一次已提交的結果，而不會再次扣款或調整餘額。同一使用者、同一操作範圍若以相同 key 傳送不同 payload，server 會回傳 `409`。
+
 ## 備註
 
 - 目前是測試幣模式，未接金流。

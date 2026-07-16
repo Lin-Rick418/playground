@@ -1,5 +1,5 @@
 import { defineStore } from "pinia";
-import { api } from "../lib/api";
+import { api, createIdempotencyKey, shouldReuseIdempotencyKey } from "../lib/api";
 import type {
   ActiveRound,
   BetType,
@@ -32,6 +32,7 @@ export const useGameStore = defineStore("game", {
     loading: false,
     message: "",
     lastSettledRoundId: "",
+    pendingBetIdempotencyKeys: {} as Record<string, string>,
   }),
   actions: {
     applyLobbySnapshot(data: LobbySnapshot) {
@@ -105,11 +106,27 @@ export const useGameStore = defineStore("game", {
       }
     },
     async placeBet(tableId: string, payload: { betType: BetType; amount: number }[]) {
-      const { data } = await api.post<PlaceBetResponse>(`/game/tables/${tableId}/bet`, { bets: payload });
-      if (this.currentRound?.id === data.round.id) {
-        this.currentBets = [...this.currentBets, ...data.bets];
+      const requestSignature = JSON.stringify({ tableId, roundId: this.currentRound?.id ?? "", bets: payload });
+      const idempotencyKey = this.pendingBetIdempotencyKeys[requestSignature] ?? createIdempotencyKey();
+      this.pendingBetIdempotencyKeys[requestSignature] = idempotencyKey;
+
+      try {
+        const { data } = await api.post<PlaceBetResponse>(
+          `/game/tables/${tableId}/bet`,
+          { bets: payload },
+          { headers: { "Idempotency-Key": idempotencyKey } },
+        );
+        delete this.pendingBetIdempotencyKeys[requestSignature];
+        if (this.currentRound?.id === data.round.id) {
+          this.currentBets = [...this.currentBets, ...data.bets];
+        }
+        return data;
+      } catch (error) {
+        if (!shouldReuseIdempotencyKey(error)) {
+          delete this.pendingBetIdempotencyKeys[requestSignature];
+        }
+        throw error;
       }
-      return data;
     },
   },
 });
