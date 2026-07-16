@@ -1,6 +1,20 @@
 import { defineStore } from "pinia";
 import { api } from "../lib/api";
-import type { ActiveRound, BetType, CurrentBet, GameTable, LobbyTable, PresentationWindow, RoundHistoryItem, ShoeStatus } from "../types/domain";
+import type {
+  ActiveRound,
+  BetType,
+  CurrentBet,
+  GameTable,
+  LobbySnapshot,
+  LobbyTable,
+  PlaceBetResponse,
+  PresentationWindow,
+  RoundConfig,
+  RoundHistoryItem,
+  ShoeStatus,
+  TableSnapshot,
+  TableStateResponse,
+} from "../types/domain";
 
 export const useGameStore = defineStore("game", {
   state: () => ({
@@ -20,22 +34,11 @@ export const useGameStore = defineStore("game", {
     lastSettledRoundId: "",
   }),
   actions: {
-    applyLobbySnapshot(data: { tables: LobbyTable[]; serverTime: string }) {
+    applyLobbySnapshot(data: LobbySnapshot) {
       this.tables = data.tables;
       this.serverTime = data.serverTime;
     },
-    applyTableSnapshot(
-      data: {
-        table: GameTable;
-        round: ActiveRound | null;
-        previousRound: ActiveRound | null;
-        presentation: PresentationWindow | null;
-        shoeStatus: ShoeStatus;
-        recentRounds: ActiveRound[];
-        roadRounds: ActiveRound[];
-        serverTime: string;
-      },
-    ) {
+    applyTableSnapshot(data: TableSnapshot) {
       const previousCurrentRoundId = this.currentRound?.id ?? "";
 
       this.currentTable = data.table;
@@ -61,7 +64,7 @@ export const useGameStore = defineStore("game", {
       const latestSettledRoundId = data.previousRound?.id ?? "";
       if (
         previousCurrentRoundId &&
-        previousCurrentRoundId !== (data.round?.id ?? "") &&
+        previousCurrentRoundId !== data.round.id &&
         latestSettledRoundId &&
         latestSettledRoundId !== this.lastSettledRoundId
       ) {
@@ -77,15 +80,15 @@ export const useGameStore = defineStore("game", {
       this.currentBets = [];
     },
     async fetchLobby() {
-      const { data } = await api.get("/game/lobby");
+      const { data } = await api.get<LobbySnapshot & { config: RoundConfig }>("/game/lobby");
       this.applyLobbySnapshot(data);
       return data;
     },
     async fetchState(tableId: string) {
-      const { data } = await api.get(`/game/tables/${tableId}/state`);
+      const { data } = await api.get<TableStateResponse>(`/game/tables/${tableId}/state`);
       this.applyTableSnapshot(data);
       this.applyTableUserSnapshot({
-        currentRoundId: data.round?.id ?? "",
+        currentRoundId: data.round.id,
         myBets: data.myBets,
       });
 
@@ -95,14 +98,14 @@ export const useGameStore = defineStore("game", {
       this.loading = true;
 
       try {
-        const { data } = await api.get("/game/history");
+        const { data } = await api.get<RoundHistoryItem[]>("/game/history");
         this.history = data;
       } finally {
         this.loading = false;
       }
     },
     async placeBet(tableId: string, payload: { betType: BetType; amount: number }[]) {
-      const { data } = await api.post(`/game/tables/${tableId}/bet`, { bets: payload });
+      const { data } = await api.post<PlaceBetResponse>(`/game/tables/${tableId}/bet`, { bets: payload });
       if (this.currentRound?.id === data.round.id) {
         this.currentBets = [...this.currentBets, ...data.bets];
       }

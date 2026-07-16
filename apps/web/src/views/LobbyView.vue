@@ -66,8 +66,8 @@ function toBigRoad(rounds: Pick<ActiveRound, "winner" | "playerPair" | "bankerPa
     }));
 }
 
-function betLabel(type: BetType | string) {
-  return BET_TYPE_LABELS[type as BetType] ?? String(type);
+function betLabel(type: BetType) {
+  return BET_TYPE_LABELS[type];
 }
 
 function historyNetAmount(item: Pick<RoundHistoryItem, "totalAmount" | "totalPayout">) {
@@ -123,15 +123,30 @@ function historyBetSummary(item: Pick<RoundHistoryItem, "bets">) {
       </div>
     </transition>
 
-    <button class="back-button" @click="logout" aria-label="返回登入">
-      ←
-    </button>
-    <button class="history-button" @click="openHistory" aria-label="最近 20 筆下注紀錄">
-      📖
-    </button>
+    <header class="lobby-header">
+      <button class="back-button" type="button" @click="logout" aria-label="返回登入">‹</button>
+      <div class="lobby-title">
+        <p>Live Baccarat</p>
+        <h1>遊戲大廳</h1>
+      </div>
+      <button class="history-button" type="button" @click="openHistory" aria-label="最近 20 筆下注紀錄">
+        <svg viewBox="0 0 24 24" aria-hidden="true">
+          <path d="M12 7v5l3 2M21 12a9 9 0 1 1-2.64-6.36M21 4v5h-5" />
+        </svg>
+      </button>
+    </header>
 
     <section class="table-cards">
-      <article v-for="item in tables" :key="item.table.id" class="panel table-card" @click="openTable(item.table.id)">
+      <article
+        v-for="item in tables"
+        :key="item.table.id"
+        class="panel table-card"
+        role="button"
+        tabindex="0"
+        @click="openTable(item.table.id)"
+        @keydown.enter="openTable(item.table.id)"
+        @keydown.space.prevent="openTable(item.table.id)"
+      >
         <div class="card-head">
           <div>
             <p class="topbar-label">{{ item.table.code }}</p>
@@ -141,7 +156,10 @@ function historyBetSummary(item: Pick<RoundHistoryItem, "bets">) {
               {{ item.table.maxBet.toLocaleString() }}
             </p>
           </div>
-          <span class="table-status-dot" :class="item.activeRound?.status === 'OPEN' ? 'open' : 'locked'" />
+          <span class="table-status" :class="item.activeRound?.status === 'OPEN' ? 'open' : 'locked'">
+            <i aria-hidden="true" />
+            {{ item.activeRound?.status === "OPEN" ? "下注中" : "封盤" }}
+          </span>
         </div>
 
         <div class="lobby-road">
@@ -184,7 +202,11 @@ function historyBetSummary(item: Pick<RoundHistoryItem, "bets">) {
 .lobby-page {
   display: flex;
   flex-direction: column;
-  gap: $space-6;
+  gap: $space-4;
+  min-height: 100vh;
+  min-height: 100dvh;
+  padding: $space-3 $space-4 $space-6;
+  background: $gradient-felt;
 }
 
 .lobby-loading-overlay {
@@ -249,42 +271,98 @@ function historyBetSummary(item: Pick<RoundHistoryItem, "bets">) {
   display: grid;
   grid-template-columns: 1fr;
   gap: $space-4;
-  margin-top: $space-7;
+}
+
+.lobby-header {
+  position: sticky;
+  top: 0;
+  z-index: 20;
+  display: grid;
+  grid-template-columns: 48px minmax(0, 1fr) 48px;
+  align-items: center;
+  gap: $space-2;
+  min-height: 64px;
+  padding: $space-1 0 $space-2;
+}
+
+.lobby-title {
+  min-width: 0;
+  text-align: center;
+}
+
+.lobby-title p {
+  margin: 0;
+  color: $color-text-muted;
+  font-size: 10px;
+  font-weight: 800;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+}
+
+.lobby-title h1 {
+  margin: 1px 0 0;
+  color: $color-text-primary;
+  font-family: "Noto Serif TC", "PingFang TC", "Microsoft JhengHei", serif;
+  font-size: 21px;
+  font-weight: 900;
+  letter-spacing: 0.1em;
+}
+
+.back-button,
+.history-button {
+  width: 42px;
+  height: 42px;
+  border: 0;
+  border-radius: 999px;
+  touch-action: manipulation;
+  -webkit-tap-highlight-color: transparent;
+  transition: transform 120ms ease, filter 120ms ease;
 }
 
 .back-button {
-  position: fixed;
-  top: $space-6;
-  left: $space-6;
-  z-index: 20;
-  width: 48px;
-  height: 48px;
-  @include floating-shell();
-  border: 0;
-  border-radius: 999px;
+  justify-self: start;
+  background: $color-surface-soft;
   color: $color-text-primary;
   font-size: 26px;
   line-height: 1;
 }
 
 .history-button {
-  position: fixed;
-  top: 80px;
-  left: $space-6;
-  z-index: 20;
-  width: 48px;
-  height: 48px;
-  @include floating-shell();
-  border: 0;
-  border-radius: 999px;
-  color: $color-text-primary;
-  font-size: 22px;
-  line-height: 1;
+  justify-self: end;
+  display: grid;
+  place-items: center;
+  background: $color-surface-raised;
+  color: #8c2f23;
+  border: 1px solid $color-border-strong;
+  box-shadow: 0 6px 14px rgba(0, 0, 0, 0.2);
+}
+
+.history-button svg {
+  width: 23px;
+  height: 23px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 2;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.back-button:active,
+.history-button:active {
+  transform: scale(0.94);
 }
 
 .table-card {
   padding: $space-5;
   cursor: pointer;
+  background: linear-gradient(180deg, rgba(7, 48, 33, 0.74), rgba(5, 34, 23, 0.82));
+  border-color: $color-border-soft;
+  transition: transform 140ms ease, border-color 140ms ease, background 140ms ease;
+}
+
+.table-card:active {
+  transform: scale(0.992);
+  background: linear-gradient(180deg, rgba(8, 57, 39, 0.78), rgba(5, 38, 26, 0.86));
 }
 
 .card-head {
@@ -295,6 +373,10 @@ function historyBetSummary(item: Pick<RoundHistoryItem, "bets">) {
 
 .card-head h2 {
   margin: $space-2 0 0;
+  color: $color-text-primary;
+  font-family: "Noto Serif TC", "PingFang TC", "Microsoft JhengHei", serif;
+  font-size: 22px;
+  letter-spacing: 0.04em;
 }
 
 .table-meta {
@@ -307,26 +389,42 @@ function historyBetSummary(item: Pick<RoundHistoryItem, "bets">) {
   margin-top: $space-5;
 }
 
-.table-status-dot {
-  width: 14px;
-  height: 14px;
+.table-status {
+  flex: 0 0 auto;
+  align-self: flex-start;
   margin-top: $space-2;
+  min-height: 26px;
+  padding: 0 $space-3;
   border-radius: 999px;
-  box-shadow: 0 0 0 4px rgba(255, 255, 255, 0.06);
+  display: inline-flex;
+  align-items: center;
+  gap: $space-2;
+  background: $color-surface-soft;
+  border: 1px solid $color-border-soft;
+  color: $color-text-muted;
+  font-size: 11px;
+  font-weight: 800;
 }
 
-.table-status-dot.open {
+.table-status i {
+  width: 8px;
+  height: 8px;
+  border-radius: 999px;
+}
+
+.table-status.open i {
   background: $color-open;
 }
 
-.table-status-dot.locked {
+.table-status.locked i {
   background: $color-lock;
 }
 
 .modal-backdrop {
   position: fixed;
   inset: 0;
-  background: rgba(4, 10, 8, 0.72);
+  background: rgba(3, 9, 7, 0.66);
+  backdrop-filter: blur(6px);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -345,8 +443,8 @@ function historyBetSummary(item: Pick<RoundHistoryItem, "bets">) {
   height: 40px;
   border: 0;
   border-radius: 999px;
-  background: rgba(192, 48, 48, 0.18);
-  color: #ff7f7f;
+  background: rgba(182, 34, 34, 0.92);
+  color: $color-text-primary;
   font-size: 22px;
   line-height: 1;
 }
@@ -362,7 +460,8 @@ function historyBetSummary(item: Pick<RoundHistoryItem, "bets">) {
 
 .history-item {
   border-radius: 14px;
-  background: rgba(255, 255, 255, 0.04);
+  background: $color-surface-soft;
+  border: 1px solid $color-border-soft;
   padding: $space-4;
 }
 
@@ -376,16 +475,16 @@ function historyBetSummary(item: Pick<RoundHistoryItem, "bets">) {
 
 .history-sub {
   margin-top: $space-2;
-  color: rgba(247, 244, 233, 0.65);
+  color: $color-text-muted;
   font-size: 14px;
 }
 
 .history-payout.positive {
-  color: #72f2a5;
+  color: $color-positive;
 }
 
 .history-payout.negative {
-  color: #ff7f7f;
+  color: $color-negative;
 }
 
 </style>

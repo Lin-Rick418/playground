@@ -1,13 +1,10 @@
 import { randomInt as cryptoRandomInt } from "node:crypto";
-import type { BetType, RoundWinner } from "../types/domain.js";
+import type { BetType, Card, RoundWinner } from "../types/domain.js";
 
-const suits = ["S", "H", "D", "C"] as const;
-const ranks = ["A", "2", "3", "4", "5", "6", "7", "8", "9", "10", "J", "Q", "K"] as const;
+const suits = ["S", "H", "D", "C"] as const satisfies readonly Card["suit"][];
+const ranks = ["A", "2", "3", "4", "5", "6", "7", "8", "9", "10", "J", "Q", "K"] as const satisfies readonly Card["rank"][];
 
-export type Card = {
-  rank: (typeof ranks)[number];
-  suit: (typeof suits)[number];
-};
+export type { Card } from "../types/domain.js";
 
 export type TableShoeState = {
   cards: Card[];

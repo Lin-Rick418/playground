@@ -156,7 +156,7 @@ gameRouter.post("/tables/:tableId/bet", async (req: AuthenticatedRequest, res) =
       table,
       round: activeRound,
       bets,
-      balance: updatedUser?.balance ?? user.balance - totalBet,
+      balance: updatedUser.balance,
       userId: user.id,
     } as const;
   });

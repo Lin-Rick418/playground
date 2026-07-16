@@ -28,28 +28,29 @@ interface PositionedGridCellData extends GridCellData {
 type GridMatrix = (GridCellData | null)[][];
 
 interface Props {
-  bigRoad?: BaccaratGameData[] | null;
+  bigRoad: BaccaratGameData[];
   rows?: number;
   cols?: number;
   cellSize?: number | null;
   tokenSize?: number | null;
   previewIndex?: number | null;
+  fullHistory?: boolean;
 }
 
 const props = withDefaults(defineProps<Props>(), {
-  bigRoad: null,
   rows: 6,
   cols: 13,
   cellSize: null,
   tokenSize: null,
   previewIndex: null,
+  fullHistory: false,
 });
 
 const rowCount = computed(() => Math.max(1, props.rows));
 const colCount = computed(() => Math.max(1, props.cols));
-const fixedCellSize = computed(() => (typeof props.cellSize === "number" ? Math.max(1, props.cellSize) : null));
+const fixedCellSize = computed(() => (props.cellSize === null ? null : Math.max(1, props.cellSize)));
 const tokenSize = computed(() => {
-  if (typeof props.tokenSize === "number") {
+  if (props.tokenSize !== null) {
     return Math.max(1, props.tokenSize);
   }
 
@@ -81,7 +82,7 @@ const COLORS = {
   TIE_LINE: "rgba(66, 188, 29, 1)",
 } as const;
 
-const getFourBitNumber = (fourBit: BaccaratGameData["fourBit"]): number => FOUR_BIT_MAP[fourBit] ?? 0;
+const getFourBitNumber = (fourBit: BaccaratGameData["fourBit"]): number => FOUR_BIT_MAP[fourBit];
 
 const normalizeWinType = (winType: GameResult): PositionWinType | null => {
   switch (winType) {
@@ -98,8 +99,8 @@ const normalizeWinType = (winType: GameResult): PositionWinType | null => {
 const isTieRound = (gameData: BaccaratGameData): boolean =>
   getFourBitNumber(gameData.fourBit) > 0 || gameData.winType === "TIE";
 
-const createEmptyGrid = (): GridMatrix =>
-  Array.from({ length: rowCount.value }, () => Array.from({ length: colCount.value }, () => null));
+const createSizedGrid = (cols: number): GridMatrix =>
+  Array.from({ length: rowCount.value }, () => Array.from({ length: Math.max(1, cols) }, () => null));
 
 interface GridState {
   col: number;
@@ -194,12 +195,18 @@ const handleTieWrite = (
   });
 };
 
-const buildBigRoadGrid = (gameDataList: BaccaratGameData[] | null): GridMatrix => {
-  if (!gameDataList?.length) {
-    return createEmptyGrid();
+interface BigRoadRender {
+  grid: GridMatrix;
+  cols: number;
+}
+
+const buildBigRoadGrid = (gameDataList: BaccaratGameData[]): BigRoadRender => {
+  const minCols = colCount.value;
+
+  if (gameDataList.length === 0) {
+    return { grid: createSizedGrid(minCols), cols: minCols };
   }
 
-  const grid = createEmptyGrid();
   const cells = new Map<string, PositionedGridCellData>();
   const occupied = new Set<string>();
   const state = createInitialState();
@@ -235,16 +242,14 @@ const buildBigRoadGrid = (gameDataList: BaccaratGameData[] | null): GridMatrix =
     state.prevWin = curWin;
   });
 
-  const startCol = Math.max(0, maxCol - colCount.value + 1);
+  const displayCols = props.fullHistory ? Math.max(minCols, maxCol + 1) : minCols;
+  const startCol = props.fullHistory ? 0 : Math.max(0, maxCol - minCols + 1);
+  const grid = createSizedGrid(displayCols);
 
   cells.forEach((cell) => {
-    if (cell.col < startCol) {
-      return;
-    }
-
     const visibleCol = cell.col - startCol;
 
-    if (visibleCol >= colCount.value) {
+    if (visibleCol < 0 || visibleCol >= displayCols || cell.row >= rowCount.value) {
       return;
     }
 
@@ -261,12 +266,14 @@ const buildBigRoadGrid = (gameDataList: BaccaratGameData[] | null): GridMatrix =
     };
   });
 
-  return grid;
+  return { grid, cols: displayCols };
 };
 
 const previewDisplayIndex = computed(() => props.previewIndex);
 
-const grid = computed<GridMatrix>(() => buildBigRoadGrid(props.bigRoad ?? null));
+const bigRoadRender = computed<BigRoadRender>(() => buildBigRoadGrid(props.bigRoad));
+const grid = computed<GridMatrix>(() => bigRoadRender.value.grid);
+const displayColCount = computed(() => bigRoadRender.value.cols);
 
 const getStrokeColor = (cell: GridCellData): string => {
   switch (cell.winType) {
@@ -280,8 +287,7 @@ const getStrokeColor = (cell: GridCellData): string => {
   }
 };
 
-const getCellTieCount = (cell: GridCellData): number =>
-  (cell.tieCount ?? getFourBitNumber(cell.fourBit)) || 0;
+const getCellTieCount = (cell: GridCellData): number => cell.tieCount ?? getFourBitNumber(cell.fourBit);
 </script>
 
 <template>
@@ -290,7 +296,7 @@ const getCellTieCount = (cell: GridCellData): number =>
     :class="{ fixed: !!fixedCellSize }"
     :style="{
       '--road-rows': String(rowCount),
-      '--road-cols': String(colCount),
+      '--road-cols': String(displayColCount),
       '--road-cell-size': fixedCellSize ? `${fixedCellSize}px` : undefined,
       '--road-token-size': `${tokenSize}px`,
     }"
@@ -338,6 +344,11 @@ const getCellTieCount = (cell: GridCellData): number =>
 .big-road-row {
   display: grid;
   grid-template-columns: repeat(var(--road-cols), minmax(14px, 1fr));
+}
+
+.big-road.fixed {
+  width: max-content;
+  min-width: 100%;
 }
 
 .big-road.fixed .big-road-row {

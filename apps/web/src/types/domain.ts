@@ -4,9 +4,12 @@ export type RoundStatus = "OPEN" | "LOCKED" | "SETTLED";
 export type BetType = "PLAYER" | "BANKER" | "TIE" | "PLAYER_PAIR" | "BANKER_PAIR";
 export type BaccaratPairType = "PLAYER_PAIR" | "BANKER_PAIR" | "BOTH_PAIR" | "NO_PAIR";
 
+export type CardRank = "A" | "2" | "3" | "4" | "5" | "6" | "7" | "8" | "9" | "10" | "J" | "Q" | "K";
+export type CardSuit = "S" | "H" | "D" | "C";
+
 export type Card = {
-  rank: string;
-  suit: string;
+  rank: CardRank;
+  suit: CardSuit;
 };
 
 export type User = {
@@ -41,6 +44,8 @@ export type GameTable = {
   name: string;
   displayOrder: number;
   roundDurationMs: number;
+  roundPhaseOffsetMs: number;
+  roundScheduleVersion: number;
   minBet: number;
   maxBet: number;
   createdAt: string;
@@ -138,4 +143,38 @@ export type RoundConfig = {
   cutCardMinRemaining: number;
   cutCardMaxRemaining: number;
   reshuffleRule: string;
+};
+
+export type LoginResponse = {
+  token: string;
+  user: User;
+};
+
+export type LobbySnapshot = {
+  tables: LobbyTable[];
+  serverTime: string;
+};
+
+export type TableSnapshot = {
+  table: GameTable;
+  round: ActiveRound;
+  previousRound: ActiveRound | null;
+  presentation: PresentationWindow | null;
+  shoeStatus: ShoeStatus;
+  recentRounds: ActiveRound[];
+  roadRounds: ActiveRound[];
+  serverTime: string;
+};
+
+export type TableStateResponse = TableSnapshot & {
+  myBets: CurrentBet[];
+  balance: number;
+  config: RoundConfig;
+};
+
+export type PlaceBetResponse = {
+  table: GameTable;
+  round: ActiveRound;
+  bets: CurrentBet[];
+  balance: number;
 };

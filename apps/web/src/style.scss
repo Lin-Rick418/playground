@@ -27,6 +27,14 @@ body {
   overflow-x: hidden;
 }
 
+// 視窗寬度超過 postcss-mobile-forever 的 maxDisplayWidth 時，
+// #app 會置中，兩側留白改為黑色偏透明（疊在頁面底色上）。
+@media screen and (min-width: 430px) {
+  body {
+    background: rgba(0, 0, 0, 0.6);
+  }
+}
+
 button,
 input,
 select,
@@ -56,25 +64,28 @@ a {
 
 .panel {
   background: $color-panel-surface;
-  border: 1px solid $color-gold-border;
+  border: 1px solid $color-border-soft;
   border-radius: 20px;
   box-shadow: $shadow-panel;
   backdrop-filter: blur(10px);
 }
 
 .button-primary {
-  background: $gradient-button-gold;
-  color: #102019;
-  border: none;
+  background: $gradient-accent;
+  color: $color-text-on-accent;
+  border: 1px solid $color-accent-border;
   border-radius: 12px;
   padding: $space-3 $space-5;
   font-weight: 700;
+  box-shadow:
+    0 10px 20px rgba(0, 0, 0, 0.2),
+    inset 0 1px 0 rgba(255, 255, 255, 0.28);
 }
 
 .button-secondary {
-  background: transparent;
+  background: $color-surface-soft;
   color: $color-text-primary;
-  border: 1px solid rgba(247, 244, 233, 0.28);
+  border: 1px solid $color-border-strong;
   border-radius: 12px;
   padding: $space-3 $space-5;
 }
@@ -88,11 +99,24 @@ a {
 .field input,
 .field textarea {
   width: 100%;
-  border: 1px solid rgba(247, 244, 233, 0.18);
+  border: 1px solid $color-border-soft;
   border-radius: 12px;
-  background: rgba(255, 255, 255, 0.06);
+  background: $color-surface-soft;
   color: $color-text-primary;
   padding: $space-3 $space-4;
+}
+
+button:focus-visible,
+input:focus-visible,
+textarea:focus-visible,
+[role="button"]:focus-visible {
+  outline: 3px solid $color-gold;
+  outline-offset: 3px;
+}
+
+button:disabled {
+  cursor: not-allowed;
+  opacity: 0.58;
 }
 
 .status-chip {
@@ -106,12 +130,12 @@ a {
 
 .status-chip.win {
   background: rgba(64, 199, 129, 0.18);
-  color: #8df0b2;
+  color: $color-positive;
 }
 
 .status-chip.lose {
   background: rgba(236, 86, 86, 0.18);
-  color: #ffb0b0;
+  color: $color-negative;
 }
 
 .status-chip.tie {

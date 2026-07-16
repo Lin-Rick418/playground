@@ -39,24 +39,12 @@ function toIsoString(value: unknown) {
     return value.toISOString();
   }
 
-  return String(value ?? "");
+  return String(value);
 }
 
-function toBoolean(value: unknown) {
-  return value === true || value === 1 || value === "1";
-}
-
-function parseJsonValue<T>(value: unknown, fallback: T): T {
-  if (value === null || value === undefined) {
-    return fallback;
-  }
-
+function parseJsonValue<T>(value: unknown): T {
   if (typeof value === "string") {
-    try {
-      return JSON.parse(value) as T;
-    } catch {
-      return fallback;
-    }
+    return JSON.parse(value) as T;
   }
 
   return value as T;
@@ -84,6 +72,14 @@ async function queryRow<T extends QueryResultRow = QueryResultRow>(
   return rows[0] ?? null;
 }
 
+function requireRecord<T>(record: T | null, entity: string): T {
+  if (!record) {
+    throw new Error(`${entity} disappeared during a database write`);
+  }
+
+  return record;
+}
+
 export async function withTransaction<T>(handler: (client: PoolClient) => Promise<T>) {
   const client = await pool.connect();
 
@@ -108,6 +104,8 @@ export async function initializeDatabase() {
       name TEXT NOT NULL,
       display_order INTEGER NOT NULL DEFAULT 0,
       round_duration_ms INTEGER NOT NULL DEFAULT 30000,
+      round_phase_offset_ms INTEGER NOT NULL DEFAULT 0,
+      round_schedule_version INTEGER NOT NULL DEFAULT 0,
       min_bet INTEGER NOT NULL DEFAULT 100,
       max_bet INTEGER NOT NULL DEFAULT 10000,
       current_shoe_id TEXT NOT NULL DEFAULT '',
@@ -163,6 +161,11 @@ export async function initializeDatabase() {
       created_at TIMESTAMPTZ NOT NULL
     );
 
+    ALTER TABLE game_tables
+      ADD COLUMN IF NOT EXISTS round_phase_offset_ms INTEGER NOT NULL DEFAULT 0;
+    ALTER TABLE game_tables
+      ADD COLUMN IF NOT EXISTS round_schedule_version INTEGER NOT NULL DEFAULT 0;
+
     CREATE INDEX IF NOT EXISTS idx_game_rounds_active
       ON game_rounds (table_id, status, created_at DESC);
     CREATE INDEX IF NOT EXISTS idx_game_rounds_settled
@@ -184,7 +187,7 @@ function mapUser(row: DbRow): UserRecord {
     username: String(row.username),
     passwordHash: String(row.password_hash),
     role: String(row.role) as UserRole,
-    isActive: toBoolean(row.is_active),
+    isActive: row.is_active as boolean,
     balance: Number(row.balance),
     createdAt: toIsoString(row.created_at),
     updatedAt: toIsoString(row.updated_at),
@@ -198,6 +201,8 @@ function mapTable(row: DbRow): GameTableRecord {
     name: String(row.name),
     displayOrder: Number(row.display_order),
     roundDurationMs: Number(row.round_duration_ms),
+    roundPhaseOffsetMs: Number(row.round_phase_offset_ms),
+    roundScheduleVersion: Number(row.round_schedule_version),
     minBet: Number(row.min_bet),
     maxBet: Number(row.max_bet),
     createdAt: toIsoString(row.created_at),
@@ -208,14 +213,14 @@ function mapRound(row: DbRow): GameRoundRecord {
   return {
     id: String(row.id),
     tableId: String(row.table_id),
-    shoeId: String(row.shoe_id ?? ""),
-    playerCards: parseJsonValue<{ rank: string; suit: string }[]>(row.player_cards, []),
-    bankerCards: parseJsonValue<{ rank: string; suit: string }[]>(row.banker_cards, []),
+    shoeId: String(row.shoe_id),
+    playerCards: parseJsonValue<Card[]>(row.player_cards),
+    bankerCards: parseJsonValue<Card[]>(row.banker_cards),
     playerTotal: Number(row.player_total),
     bankerTotal: Number(row.banker_total),
     winner: String(row.winner) as RoundWinner,
-    playerPair: toBoolean(row.player_pair),
-    bankerPair: toBoolean(row.banker_pair),
+    playerPair: row.player_pair as boolean,
+    bankerPair: row.banker_pair as boolean,
     status: String(row.status) as RoundStatus,
     bettingOpensAt: toIsoString(row.betting_opens_at),
     bettingClosesAt: toIsoString(row.betting_closes_at),
@@ -259,7 +264,7 @@ export async function listUsers(executor: DbExecutor = pool) {
     id: String(row.id),
     username: String(row.username),
     role: String(row.role) as UserRole,
-    isActive: toBoolean(row.is_active),
+    isActive: row.is_active as boolean,
     balance: Number(row.balance),
     createdAt: toIsoString(row.created_at),
   }));
@@ -278,19 +283,27 @@ export async function createPlayer(
     [id, input.username, input.passwordHash, input.balance, now, now],
   );
 
-  return findUserById(id, executor);
+  return requireRecord(await findUserById(id, executor), "Created user");
 }
 
 export async function setUserActive(userId: string, isActive: boolean, executor: DbExecutor = pool) {
   const now = new Date().toISOString();
   await executor.query("UPDATE users SET is_active = $1, updated_at = $2 WHERE id = $3", [isActive, now, userId]);
-  return findUserById(userId, executor);
+  return requireRecord(await findUserById(userId, executor), "Updated user");
 }
 
 export async function updateUserBalance(userId: string, balance: number, executor: DbExecutor = pool) {
   const now = new Date().toISOString();
   await executor.query("UPDATE users SET balance = $1, updated_at = $2 WHERE id = $3", [balance, now, userId]);
-  return findUserById(userId, executor);
+  return requireRecord(await findUserById(userId, executor), "Updated user");
+}
+
+export async function setTableRoundScheduleVersion(
+  tableId: string,
+  version: number,
+  executor: DbExecutor = pool,
+) {
+  await executor.query("UPDATE game_tables SET round_schedule_version = $1 WHERE id = $2", [version, tableId]);
 }
 
 export async function createRound(
@@ -330,7 +343,7 @@ export async function createRound(
     ],
   );
 
-  return findRoundById(id, executor);
+  return requireRecord(await findRoundById(id, executor), "Created round");
 }
 
 export async function createBet(
@@ -390,7 +403,7 @@ export async function listUserHistory(userId: string, executor: DbExecutor = poo
   );
 
   return rows.map((row: DbRow) => {
-    const bets = parseJsonValue<{ id: string; betType: BetType; amount: number; payout: number; createdAt: string }[]>(row.bets, []);
+    const bets = parseJsonValue<{ id: string; betType: BetType; amount: number; payout: number; createdAt: string }[]>(row.bets);
     const totalAmount = bets.reduce((sum: number, bet) => sum + bet.amount, 0);
     const totalPayout = bets.reduce((sum: number, bet) => sum + bet.payout, 0);
 
@@ -404,12 +417,12 @@ export async function listUserHistory(userId: string, executor: DbExecutor = poo
         id: String(row.round_id),
         tableId: String(row.table_id),
         winner: String(row.winner) as RoundWinner,
-        playerCards: parseJsonValue<{ rank: string; suit: string }[]>(row.player_cards, []),
-        bankerCards: parseJsonValue<{ rank: string; suit: string }[]>(row.banker_cards, []),
+        playerCards: parseJsonValue<Card[]>(row.player_cards),
+        bankerCards: parseJsonValue<Card[]>(row.banker_cards),
         playerTotal: Number(row.player_total),
         bankerTotal: Number(row.banker_total),
-        playerPair: toBoolean(row.player_pair),
-        bankerPair: toBoolean(row.banker_pair),
+        playerPair: row.player_pair as boolean,
+        bankerPair: row.banker_pair as boolean,
       },
     };
   });
@@ -534,14 +547,14 @@ export async function listRecentSettledRoundsByShoe(
 
 export async function updateRoundStatus(roundId: string, status: RoundStatus, executor: DbExecutor = pool) {
   await executor.query("UPDATE game_rounds SET status = $1 WHERE id = $2", [status, roundId]);
-  return findRoundById(roundId, executor);
+  return requireRecord(await findRoundById(roundId, executor), "Updated round");
 }
 
 export async function settleRound(
   roundId: string,
   result: {
-    playerCards: unknown;
-    bankerCards: unknown;
+    playerCards: Card[];
+    bankerCards: Card[];
     playerTotal: number;
     bankerTotal: number;
     winner: RoundWinner;
@@ -577,7 +590,7 @@ export async function settleRound(
     ],
   );
 
-  return findRoundById(roundId, executor);
+  return requireRecord(await findRoundById(roundId, executor), "Settled round");
 }
 
 export async function purgeSettledRoundsBefore(
@@ -656,8 +669,8 @@ export async function getTableShoe(
     return null;
   }
 
-  const shoeId = String(row.current_shoe_id ?? "");
-  const parsed = parseJsonValue<Partial<TableShoeState> | Card[]>(row.shoe_state, []);
+  const shoeId = String(row.current_shoe_id);
+  const parsed = parseJsonValue<Partial<TableShoeState> | Card[]>(row.shoe_state);
 
   if (Array.isArray(parsed)) {
     return {
@@ -938,10 +951,10 @@ async function seedDemoUsers(executor: DbExecutor) {
 export async function ensureSeedData(options?: { seedDemoUsers?: boolean }) {
   const shouldSeedDemoUsers = options?.seedDemoUsers ?? !env.isProduction;
   const configuredTables = [
-    { code: "A01", name: "極速廳 A01", displayOrder: 1, roundDurationMs: 15000, minBet: 100, maxBet: 10000 },
-    { code: "A02", name: "極速廳 A02", displayOrder: 2, roundDurationMs: 15000, minBet: 100, maxBet: 10000 },
-    { code: "C01", name: "經典廳 C01", displayOrder: 3, roundDurationMs: 30000, minBet: 100, maxBet: 10000 },
-    { code: "H01", name: "高額廳 H01", displayOrder: 4, roundDurationMs: 30000, minBet: 1000, maxBet: 50000 },
+    { code: "A01", name: "極速廳 A01", displayOrder: 1, roundDurationMs: 15000, roundPhaseOffsetMs: 0, minBet: 100, maxBet: 10000 },
+    { code: "A02", name: "極速廳 A02", displayOrder: 2, roundDurationMs: 15000, roundPhaseOffsetMs: 2000, minBet: 100, maxBet: 10000 },
+    { code: "C01", name: "經典廳 C01", displayOrder: 3, roundDurationMs: 30000, roundPhaseOffsetMs: 4000, minBet: 100, maxBet: 10000 },
+    { code: "H01", name: "高額廳 H01", displayOrder: 4, roundDurationMs: 30000, roundPhaseOffsetMs: 6000, minBet: 1000, maxBet: 50000 },
   ] as const;
 
   await withAdvisoryLock(INIT_LOCK_KEY, async (client) => {
@@ -968,17 +981,19 @@ export async function ensureSeedData(options?: { seedDemoUsers?: boolean }) {
         if (existingByOrder) {
           await tx.query(
             `UPDATE game_tables
-             SET code = $1, name = $2, display_order = $3, round_duration_ms = $4, min_bet = $5, max_bet = $6
-             WHERE id = $7`,
-            [table.code, table.name, table.displayOrder, table.roundDurationMs, table.minBet, table.maxBet, String(existingByOrder.id)],
+             SET code = $1, name = $2, display_order = $3, round_duration_ms = $4,
+                 round_phase_offset_ms = $5, min_bet = $6, max_bet = $7
+             WHERE id = $8`,
+            [table.code, table.name, table.displayOrder, table.roundDurationMs, table.roundPhaseOffsetMs, table.minBet, table.maxBet, String(existingByOrder.id)],
           );
           continue;
         }
 
         await tx.query(
-          `INSERT INTO game_tables (id, code, name, display_order, round_duration_ms, min_bet, max_bet, created_at)
-           VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
-          [randomUUID(), table.code, table.name, table.displayOrder, table.roundDurationMs, table.minBet, table.maxBet, now],
+          `INSERT INTO game_tables (
+             id, code, name, display_order, round_duration_ms, round_phase_offset_ms, min_bet, max_bet, created_at
+           ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
+          [randomUUID(), table.code, table.name, table.displayOrder, table.roundDurationMs, table.roundPhaseOffsetMs, table.minBet, table.maxBet, now],
         );
       }
     });

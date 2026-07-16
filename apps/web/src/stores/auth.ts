@@ -1,7 +1,7 @@
 import { defineStore } from "pinia";
 import { api } from "../lib/api";
 import { clearStoredToken, getStoredToken, setStoredToken } from "../lib/settings";
-import type { User } from "../types/domain";
+import type { LoginResponse, User } from "../types/domain";
 
 export const useAuthStore = defineStore("auth", {
   state: () => ({
@@ -16,10 +16,11 @@ export const useAuthStore = defineStore("auth", {
       this.error = "";
 
       try {
-        const { data } = await api.post("/auth/login", { username, password });
+        const { data } = await api.post<LoginResponse>("/auth/login", { username, password });
         this.token = data.token;
         this.user = data.user;
         setStoredToken(data.token);
+        return data.user;
       } catch (error) {
         this.error = "登入失敗，請確認帳號密碼。";
         throw error;
@@ -28,7 +29,7 @@ export const useAuthStore = defineStore("auth", {
       }
     },
     async fetchMe() {
-      const { data } = await api.get("/auth/me");
+      const { data } = await api.get<User>("/auth/me");
       this.user = data;
       return data;
     },

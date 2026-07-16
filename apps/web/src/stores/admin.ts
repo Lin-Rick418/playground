@@ -23,8 +23,8 @@ export const useAdminStore = defineStore("admin", {
 
       try {
         const [usersRes, adjustmentsRes] = await Promise.all([
-          api.get("/admin/users"),
-          api.get("/admin/adjustments"),
+          api.get<AdminUser[]>("/admin/users"),
+          api.get<Adjustment[]>("/admin/adjustments"),
         ]);
 
         this.users = usersRes.data;
@@ -51,7 +51,7 @@ export const useAdminStore = defineStore("admin", {
       await this.fetchDashboard();
     },
     async fetchRoundDetail(roundId: string) {
-      const { data } = await api.get(`/admin/rounds/${roundId}/bets`);
+      const { data } = await api.get<NonNullable<typeof this.roundDetail>>(`/admin/rounds/${roundId}/bets`);
       this.roundDetail = data;
     },
   },

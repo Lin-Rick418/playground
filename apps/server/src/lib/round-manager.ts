@@ -11,6 +11,7 @@ import {
   purgeSettledRoundsBefore,
   replaceTableShoe,
   saveTableShoe,
+  setTableRoundScheduleVersion,
   settleRound,
   updateBetPayout,
   updateRoundStatus,
@@ -18,14 +19,18 @@ import {
   withTransaction,
 } from "./db.js";
 import { publishLiveEvent } from "./live-events.js";
+import {
+  DEAL_ANIMATION_BUFFER_MS,
+  getScheduledBettingOpensAtMs,
+  REVEAL_WINDOW_MS,
+} from "./round-schedule.js";
 import type { GameTableRecord } from "../types/domain.js";
 
-const REVEAL_WINDOW_MS = 5000;
 const LOOP_INTERVAL_MS = 1000;
 const CLEANUP_INTERVAL_MS = 24 * 60 * 60 * 1000;
 const SETTLED_ROUND_RETENTION_MS = 24 * 60 * 60 * 1000;
-const DEAL_ANIMATION_BUFFER_MS = 7000;
 const MIN_CARDS_TO_COMPLETE_ROUND = 6;
+const ROUND_SCHEDULE_VERSION = 1;
 
 function getTableRoundDurationMs(table: GameTableRecord) {
   return table.roundDurationMs;
@@ -37,14 +42,19 @@ const roundManagerState = globalThis as typeof globalThis & {
   __baccaratRoundManagerTicking?: boolean;
 };
 
-async function createOpenRound(table: GameTableRecord, startTime = Date.now()) {
+async function createOpenRound(
+  table: GameTableRecord,
+  startTime = Date.now(),
+  initializePhase = false,
+) {
   const round = await withTransaction(async (client) => {
     const shoe = await ensureTableShoe(table.id, client);
-    const opensAtMs = startTime + DEAL_ANIMATION_BUFFER_MS;
+    const shouldApplyPhase = initializePhase || table.roundScheduleVersion < ROUND_SCHEDULE_VERSION;
+    const opensAtMs = getScheduledBettingOpensAtMs(table, startTime, shouldApplyPhase);
     const opensAt = new Date(opensAtMs).toISOString();
     const closesAt = new Date(opensAtMs + getTableRoundDurationMs(table)).toISOString();
 
-    return createRound(
+    const nextRound = await createRound(
       {
         tableId: table.id,
         shoeId: shoe.shoeId,
@@ -54,6 +64,12 @@ async function createOpenRound(table: GameTableRecord, startTime = Date.now()) {
       },
       client,
     );
+
+    if (shouldApplyPhase) {
+      await setTableRoundScheduleVersion(table.id, ROUND_SCHEDULE_VERSION, client);
+    }
+
+    return nextRound;
   });
 
   await publishLiveEvent({
@@ -150,14 +166,14 @@ async function tickTable(table: GameTableRecord) {
   const now = Date.now();
 
   if (!round) {
-    await createOpenRound(table, now);
+    await createOpenRound(table, now, true);
     return;
   }
 
   const closesAt = new Date(round.bettingClosesAt).getTime();
 
   if (round.status === "OPEN" && now >= closesAt) {
-    round = (await updateRoundStatus(round.id, "LOCKED")) ?? round;
+    round = await updateRoundStatus(round.id, "LOCKED");
     await publishLiveEvent({
       type: "table_changed",
       tableId: table.id,

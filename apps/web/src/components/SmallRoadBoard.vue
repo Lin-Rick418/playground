@@ -3,7 +3,7 @@ import { computed } from "vue";
 import { buildSmallRoadGrid, type BaccaratGameData } from "../lib/road-derivation";
 
 interface Props {
-  bigRoad?: BaccaratGameData[] | null;
+  bigRoad: BaccaratGameData[];
   rows?: number;
   cols?: number;
   cellSize?: number;
@@ -11,7 +11,6 @@ interface Props {
 }
 
 const props = withDefaults(defineProps<Props>(), {
-  bigRoad: null,
   rows: 6,
   cols: 13,
   cellSize: 14,
@@ -21,7 +20,7 @@ const props = withDefaults(defineProps<Props>(), {
 const rowCount = computed(() => Math.max(1, props.rows));
 const colCount = computed(() => Math.max(1, props.cols));
 const cellSize = computed(() => Math.max(1, props.cellSize));
-const grid = computed(() => buildSmallRoadGrid(props.bigRoad ?? [], rowCount.value, colCount.value));
+const grid = computed(() => buildSmallRoadGrid(props.bigRoad, rowCount.value, colCount.value));
 const previewDisplayIndex = computed(() => {
   if (props.previewIndex === null) {
     return null;

@@ -12,8 +12,8 @@ const form = reactive({
 });
 
 async function onSubmit() {
-  await authStore.login(form.username, form.password);
-  router.push(authStore.user?.role === "ADMIN" ? "/admin" : "/lobby");
+  const user = await authStore.login(form.username, form.password);
+  router.push(user.role === "ADMIN" ? "/admin" : "/lobby");
 }
 </script>
 
@@ -38,12 +38,19 @@ async function onSubmit() {
           <form class="login-form" @submit.prevent="onSubmit">
             <label class="field">
               <span>帳號</span>
-              <input v-model="form.username" placeholder="輸入帳號" />
+              <input v-model="form.username" name="username" autocomplete="username" placeholder="輸入帳號" required />
             </label>
 
             <label class="field">
               <span>密碼</span>
-              <input v-model="form.password" type="password" placeholder="輸入密碼" />
+              <input
+                v-model="form.password"
+                name="password"
+                type="password"
+                autocomplete="current-password"
+                placeholder="輸入密碼"
+                required
+              />
             </label>
 
             <p v-if="authStore.error" class="error-text">{{ authStore.error }}</p>
@@ -71,6 +78,7 @@ async function onSubmit() {
   overflow-x: clip;
   overscroll-behavior-x: none;
   padding-top: clamp(48px, 10vh, 96px);
+  background: $gradient-felt;
 }
 
 .login-layout::before,
@@ -87,7 +95,7 @@ async function onSubmit() {
   height: 220px;
   top: 8%;
   right: -48px;
-  background: radial-gradient(circle, rgba(244, 222, 155, 0.2), transparent 72%);
+  background: radial-gradient(circle, rgba(255, 226, 158, 0.2), transparent 72%);
 }
 
 .login-layout::after {
@@ -95,7 +103,7 @@ async function onSubmit() {
   height: 260px;
   left: -88px;
   bottom: 10%;
-  background: radial-gradient(circle, rgba(97, 182, 144, 0.18), transparent 70%);
+  background: radial-gradient(circle, rgba(5, 48, 31, 0.24), transparent 70%);
 }
 
 .login-stage {
@@ -150,8 +158,9 @@ async function onSubmit() {
   max-width: 100%;
   padding: 0 $space-6 $space-6;
   background:
-    linear-gradient(180deg, rgba(11, 33, 26, 0.92), rgba(7, 22, 17, 0.92)),
+    linear-gradient(180deg, rgba(7, 48, 33, 0.76), rgba(5, 34, 23, 0.82)),
     $color-panel-surface;
+  border-color: $color-border-soft;
 }
 
 .login-card-head {
@@ -207,22 +216,22 @@ async function onSubmit() {
 .field span {
   font-family: "Manrope", "Noto Sans TC", sans-serif;
   font-size: 13px;
-  color: rgba(247, 244, 233, 0.76);
+  color: $color-text-muted;
 }
 
 .field input {
   min-height: 52px;
   border-radius: 14px;
-  background: rgba(255, 255, 255, 0.07);
+  background: $color-surface-soft;
   font-family: "Manrope", "Noto Sans TC", sans-serif;
 }
 
 .field input::placeholder {
-  color: rgba(247, 244, 233, 0.38);
+  color: $color-text-faint;
 }
 
 .error-text {
-  color: #ffb0b0;
+  color: $color-negative;
   margin: 0;
   text-align: center;
   font-family: "Manrope", "Noto Sans TC", sans-serif;
@@ -234,5 +243,10 @@ async function onSubmit() {
   border-radius: 14px;
   font-size: 16px;
   font-family: "Manrope", "Noto Sans TC", sans-serif;
+}
+
+.login-submit:not(:disabled):active {
+  transform: translateY(1px);
+  filter: brightness(1.04);
 }
 </style>

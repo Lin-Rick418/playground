@@ -1,15 +1,32 @@
-$color-text-primary: #f7f4e9;
-$color-text-muted: rgba(247, 244, 233, 0.68);
-$color-text-subtle: rgba(247, 244, 233, 0.6);
-$color-text-faint: rgba(247, 244, 233, 0.45);
+// Brand neutrals: used for copy on the green felt surfaces.
+$color-text-primary: #fffdf7;
+$color-text-muted: rgba(255, 253, 247, 0.72);
+$color-text-subtle: rgba(255, 253, 247, 0.62);
+$color-text-faint: rgba(255, 253, 247, 0.46);
+$color-text-on-accent: #3f2a08;
+
+// Felt palette: the game table is the visual source of truth for every player page.
+$color-felt-light: #37996a;
+$color-felt: #2c8258;
+$color-felt-deep: #1f6a45;
+$color-felt-ink: #093020;
 
 $color-gold: #f4de9b;
 $color-gold-strong: #dfb95d;
 $color-gold-deep: #d7a74c;
 $color-gold-border: rgba(255, 219, 127, 0.18);
 $color-gold-border-strong: rgba(244, 222, 155, 0.38);
+$color-accent: #eaa63f;
+$color-accent-deep: #cd7f1f;
+$color-accent-border: rgba(255, 233, 178, 0.5);
 
-$color-panel-surface: rgba(8, 25, 20, 0.82);
+$color-panel-surface: rgba(7, 32, 23, 0.72);
+$color-panel-surface-strong: rgba(5, 27, 19, 0.86);
+$color-surface-soft: rgba(0, 0, 0, 0.14);
+$color-surface-muted: rgba(0, 0, 0, 0.2);
+$color-surface-raised: rgba(255, 255, 255, 0.92);
+$color-border-soft: rgba(255, 255, 255, 0.16);
+$color-border-strong: rgba(255, 255, 255, 0.28);
 $color-floating-surface: rgba(8, 18, 14, 0.88);
 $color-floating-surface-strong: rgba(8, 18, 14, 0.94);
 $color-overlay-start: rgba(2, 8, 6, 0.88);
@@ -21,6 +38,8 @@ $color-lock: #f26d6d;
 $color-player: #5a9bff;
 $color-banker: #ff5f57;
 $color-tie: #3bb35f;
+$color-positive: #72f2a5;
+$color-negative: #ff8d87;
 
 $space-0: 0;
 $space-1: 4px;
@@ -39,11 +58,13 @@ $space-13: 52px;
 $space-14: 56px;
 $space-15: 60px;
 
-$gradient-page-bg:
-  radial-gradient(circle at top, rgba(244, 194, 66, 0.18), transparent 35%),
-  linear-gradient(180deg, #0c3027 0%, #071712 100%);
+$gradient-felt:
+  radial-gradient(circle at 50% 18%, rgba(255, 255, 255, 0.12), transparent 52%),
+  linear-gradient(180deg, $color-felt-light 0%, $color-felt 46%, $color-felt-deep 100%);
+$gradient-page-bg: $gradient-felt;
 $gradient-gold-text: linear-gradient(180deg, #fff7da 0%, $color-gold 38%, $color-gold-deep 100%);
-$gradient-button-gold: linear-gradient(135deg, $color-gold-strong 0%, $color-gold 100%);
+$gradient-accent: linear-gradient(180deg, $color-accent 0%, $color-accent-deep 100%);
+$gradient-button-gold: $gradient-accent;
 
 $shadow-panel: 0 16px 40px rgba(0, 0, 0, 0.25);
 $shadow-floating: 0 12px 24px rgba(0, 0, 0, 0.2);

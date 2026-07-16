@@ -7,6 +7,13 @@ export type UserRole = (typeof userRoles)[number];
 export type RoundWinner = (typeof roundWinners)[number];
 export type BetType = (typeof betTypes)[number];
 export type RoundStatus = (typeof roundStatuses)[number];
+export type CardRank = "A" | "2" | "3" | "4" | "5" | "6" | "7" | "8" | "9" | "10" | "J" | "Q" | "K";
+export type CardSuit = "S" | "H" | "D" | "C";
+
+export type Card = {
+  rank: CardRank;
+  suit: CardSuit;
+};
 
 export type UserRecord = {
   id: string;
@@ -23,8 +30,8 @@ export type GameRoundRecord = {
   id: string;
   tableId: string;
   shoeId: string;
-  playerCards: { rank: string; suit: string }[];
-  bankerCards: { rank: string; suit: string }[];
+  playerCards: Card[];
+  bankerCards: Card[];
   playerTotal: number;
   bankerTotal: number;
   winner: RoundWinner;
@@ -43,6 +50,8 @@ export type GameTableRecord = {
   name: string;
   displayOrder: number;
   roundDurationMs: number;
+  roundPhaseOffsetMs: number;
+  roundScheduleVersion: number;
   minBet: number;
   maxBet: number;
   createdAt: string;

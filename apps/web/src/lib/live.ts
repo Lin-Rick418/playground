@@ -1,28 +1,18 @@
 import { getStoredToken } from "./settings";
-import type { ActiveRound, CurrentBet, GameTable, LobbyTable, PresentationWindow, RoundConfig, ShoeStatus, User } from "../types/domain";
+import type { CurrentBet, LobbySnapshot, RoundConfig, TableSnapshot, User } from "../types/domain";
 
 export type LobbySnapshotMessage = {
   type: "lobby_snapshot";
-  data: {
-    tables: LobbyTable[];
+  data: LobbySnapshot & {
     config: RoundConfig;
-    serverTime: string;
   };
 };
 
 export type TableSnapshotMessage = {
   type: "table_snapshot";
-  data: {
-    table: GameTable;
-        round: ActiveRound | null;
-        previousRound: ActiveRound | null;
-        presentation: PresentationWindow | null;
-        recentRounds: ActiveRound[];
-        roadRounds: ActiveRound[];
-        shoeStatus: ShoeStatus;
-        config: RoundConfig;
-        serverTime: string;
-      };
+  data: TableSnapshot & {
+    config: RoundConfig;
+  };
 };
 
 export type TableUserSnapshotMessage = {
