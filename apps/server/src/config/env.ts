@@ -1,5 +1,6 @@
 import dotenv from "dotenv";
 import { requireStrongJwtSecret } from "./jwt-secret.js";
+import { assertValidTimeZone } from "../lib/business-day.js";
 
 dotenv.config();
 
@@ -9,6 +10,9 @@ dotenv.config();
 const nodeEnv = process.env.NODE_ENV ?? "production";
 const isDevelopment = nodeEnv === "development" || nodeEnv === "test";
 const isProduction = !isDevelopment;
+const businessTimeZone = process.env.BUSINESS_TIME_ZONE ?? "Asia/Taipei";
+
+assertValidTimeZone(businessTimeZone);
 
 const jwtSecret = isProduction
   ? requireStrongJwtSecret(process.env.JWT_SECRET)
@@ -24,4 +28,5 @@ export const env = {
   corsOrigin: process.env.CORS_ORIGIN ?? (isProduction ? false : "*"),
   databaseUrl: process.env.DATABASE_URL ?? "postgres://postgres:postgres@127.0.0.1:5432/baccarat",
   databaseSsl: process.env.DATABASE_SSL ?? "false",
+  businessTimeZone,
 };

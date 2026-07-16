@@ -83,6 +83,8 @@ openssl rand -base64 48
 將輸出填入 `/etc/baccarat/baccarat.env` 的 `JWT_SECRET`。production 啟動時會拒絕空值、
 已知 placeholder、少於 32 bytes 或明顯低熵的值；請把 env 檔維持為 `0600`，不要提交實際 secret。
 
+`BUSINESS_TIME_ZONE` 使用 IANA timezone，預設為 `Asia/Taipei`。玩家本日收益會以此 timezone 的 calendar day、依 round `settled_at` 認列，公式為 `total payout - total bet`；修改後必須重啟 API。
+
 ## 6. 初始資料
 
 ```bash

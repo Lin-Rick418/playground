@@ -1,7 +1,9 @@
 import { Router } from "express";
 import { z } from "zod";
+import { env } from "../../config/env.js";
 import { authenticate, type AuthenticatedRequest } from "../../middleware/authenticate.js";
 import { requireRole } from "../../lib/auth.js";
+import { getBusinessDayWindow } from "../../lib/business-day.js";
 import {
   applyBalanceMutation,
   buildLobbyTables,
@@ -13,6 +15,7 @@ import {
   findTableById,
   findUserById,
   getActiveRound,
+  getUserDailyProfit,
   listUserHistory,
   listUserRoundBets,
   withTransaction,
@@ -74,6 +77,23 @@ gameRouter.get("/tables/:tableId/state", async (req: AuthenticatedRequest, res) 
 
 gameRouter.get("/history", async (req: AuthenticatedRequest, res) => {
   return res.json(await listUserHistory(req.currentUser!.id));
+});
+
+gameRouter.get("/daily-profit", async (req: AuthenticatedRequest, res) => {
+  const calculatedAt = new Date();
+  const window = getBusinessDayWindow(calculatedAt, env.businessTimeZone);
+  const totals = await getUserDailyProfit(req.currentUser!.id, window);
+
+  return res.json({
+    date: window.date,
+    timeZone: window.timeZone,
+    windowStart: window.start.toISOString(),
+    windowEnd: window.end.toISOString(),
+    formula: "TOTAL_PAYOUT_MINUS_TOTAL_BET",
+    recognitionTime: "ROUND_SETTLED_AT",
+    ...totals,
+    calculatedAt: calculatedAt.toISOString(),
+  });
 });
 
 gameRouter.post("/tables/:tableId/bet", async (req: AuthenticatedRequest, res) => {
