@@ -145,7 +145,19 @@ sudo systemctl reload nginx
 pg_dump -U baccarat baccarat > /var/backups/baccarat-$(date +%F).sql
 ```
 
-## 12. 重要說明
+## 12. 財務帳本檢核
+
+所有玩家餘額異動都會寫入 append-only `financial_ledger_entries`，並保留對應的 actor、source 與 reference。部署後可執行：
+
+```sql
+SELECT *
+FROM financial_balance_reconciliation
+WHERE NOT is_reconciled;
+```
+
+正常結果應為零筆。Server 端亦提供 `reconcileUserBalance(userId)` 與 `reconcileAllUserBalances()` 供營運檢核。`game_rounds`、`bets` 與 ledger 不再由 daily cleanup 刪除；未來若導入 archive，必須保留 reference 可追溯性與 reconciliation 能力。
+
+## 13. 重要說明
 
 - 前端是同網域部署，預設走 `/api`
 - WebSocket 透過 `/api/ws` 經 nginx 轉發到後端

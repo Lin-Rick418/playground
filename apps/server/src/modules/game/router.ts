@@ -3,6 +3,7 @@ import { z } from "zod";
 import { authenticate, type AuthenticatedRequest } from "../../middleware/authenticate.js";
 import { requireRole } from "../../lib/auth.js";
 import {
+  applyBalanceMutation,
   buildLobbyTables,
   buildTablePublicState,
   buildTableUserState,
@@ -12,7 +13,6 @@ import {
   getActiveRound,
   listUserHistory,
   listUserRoundBets,
-  updateUserBalance,
   withTransaction,
 } from "../../lib/db.js";
 import { publishLiveEvent } from "../../lib/live-events.js";
@@ -135,21 +135,35 @@ gameRouter.post("/tables/:tableId/bet", async (req: AuthenticatedRequest, res) =
       return { error: { status: 400, message: "Insufficient balance" } } as const;
     }
 
-    const updatedUser = await updateUserBalance(user.id, user.balance - totalBet, client);
     const bets = [];
+    let updatedUser = user;
 
     for (const bet of parsed.data.bets) {
-      bets.push(
-        await createBet(
-          {
-            userId: user.id,
-            roundId: activeRound.id,
-            betType: bet.betType,
-            amount: bet.amount,
-          },
-          client,
-        ),
+      const createdBet = await createBet(
+        {
+          userId: user.id,
+          roundId: activeRound.id,
+          betType: bet.betType,
+          amount: bet.amount,
+        },
+        client,
       );
+      bets.push(createdBet);
+
+      const mutation = await applyBalanceMutation(
+        {
+          userId: user.id,
+          delta: -bet.amount,
+          actorType: "PLAYER",
+          actorId: user.id,
+          source: "BET_DEBIT",
+          referenceType: "BET",
+          referenceId: createdBet.id,
+          metadata: { roundId: activeRound.id, betType: bet.betType },
+        },
+        client,
+      );
+      updatedUser = mutation.user;
     }
 
     return {
