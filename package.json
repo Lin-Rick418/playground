@@ -13,7 +13,11 @@
     "dev:web": "npm run dev --workspace web",
     "dev:server": "npm run dev --workspace server",
     "dev:worker": "npm run dev:worker --workspace server",
-    "build": "npm run build --workspaces",
+    "build": "npm run build --workspaces && node scripts/build-metadata.mjs write",
+    "test:release": "node --test scripts/*.test.mjs",
+    "release:preflight": "node scripts/release-preflight.mjs",
+    "release:verify": "node scripts/build-metadata.mjs verify",
+    "release:build": "npm run release:preflight && npm run build && npm run release:verify",
     "db:seed": "npm run db:seed --workspace server"
   },
   "devDependencies": {
