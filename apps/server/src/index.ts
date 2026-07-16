@@ -1,8 +1,8 @@
 import { createServer } from "node:http";
-import { env } from "./config/env.js";
 import { createApp } from "./app.js";
-import { attachLiveWebSocketServer } from "./lib/live-ws.js";
+import { env } from "./config/env.js";
 import { ensureSeedData, pool } from "./lib/db.js";
+import { attachLiveWebSocketServer } from "./lib/live-ws.js";
 import { assertDatabaseSchemaCurrent } from "./lib/migration-runner.js";
 
 await assertDatabaseSchemaCurrent(pool);

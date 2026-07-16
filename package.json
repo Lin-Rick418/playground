@@ -23,7 +23,7 @@
     "dev:worker": "npm run dev:worker --workspace server",
     "check:static": "node scripts/check-static.mjs && npm run typecheck",
     "typecheck": "npm run typecheck --workspaces",
-    "build": "npm run verify:runtime && npm run build --workspaces && node scripts/write-build-metadata.mjs",
+    "build": "npm run verify:runtime && npm run build --workspaces && node scripts/build-metadata.mjs write",
     "test:runtime": "node --test scripts/*.test.mjs",
     "test": "npm test --workspace server",
     "test:integration": "npm run test:integration --workspace server",
@@ -32,6 +32,10 @@
     "db:migrate": "npm run db:migrate --workspace server",
     "db:migrate:status": "npm run db:migrate:status --workspace server",
     "db:bootstrap": "npm run db:bootstrap --workspace server",
+    "test:release": "node --test scripts/*.test.mjs",
+    "release:preflight": "node scripts/release-preflight.mjs",
+    "release:verify": "node scripts/build-metadata.mjs verify",
+    "release:build": "npm run release:preflight && npm run build && npm run release:verify",
     "db:seed": "npm run db:seed --workspace server"
   },
   "devDependencies": {

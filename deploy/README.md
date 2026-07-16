@@ -162,15 +162,45 @@ sudo certbot --nginx -d example.com
 
 ## 10. 更新流程
 
-每次更新：
+`release.config.json` 是 release branch 的 authoritative 設定；目前正式 release branch 為
+`main`、remote 為 `origin`。若正式流程改用其他 branch，必須透過受 review 的 commit
+更新該檔，不要在部署主機臨時略過 branch 檢查。
+
+每次更新先讓本機 branch 以 fast-forward 對齊 remote：
 
 ```bash
 cd /opt/baccarat/current
+release_branch=$(node -p "require('./release.config.json').authoritativeBranch")
+release_remote=$(node -p "require('./release.config.json').remote")
+git fetch --prune "$release_remote"
+git switch "$release_branch"
+git merge --ff-only "$release_remote/$release_branch"
+npm ci
+npm test --workspace server
+npm run test:release
+npm run release:build
+```
+
+`release:build` 會再次 fetch，並在任何下列狀況拒絕 release：
+
+- tracked 或 untracked 檔案造成 dirty worktree
+- 不在 `release.config.json` 指定的 authoritative branch
+- upstream 不符指定的 remote/branch 或尚未設定
+- local branch 尚未 push、落後 remote，或已 diverge
+
+Build 完成後，server 與 web artifact 都會寫入同一份 exact commit SHA。重啟前應先保留
+preflight/build log，並核對兩個 artifact：
+
+```bash
+cat apps/server/dist/build-metadata.json
+cat apps/web/dist/build-metadata.json
+```
+
+確認兩者的 `commitSha`、`branch`、`builtAt` 完全一致且 `dirty` 為 `false` 後再部署：
+
+```bash
 sudo systemctl stop baccarat-api baccarat-worker
 pg_dump -U baccarat -Fc baccarat > /var/backups/baccarat-before-deploy-$(date +%F-%H%M%S).dump
-git pull
-npm ci
-npm run build
 sudo -u baccarat bash -lc '
   set -a
   source /etc/baccarat/baccarat.env
@@ -184,7 +214,17 @@ sudo systemctl start baccarat-api baccarat-worker
 sudo systemctl reload nginx
 ```
 
-若 migration 或狀態檢查失敗，不要啟動服務；依 [database-migrations.md](database-migrations.md) 處理後再繼續。
+若 migration 或 schema fingerprint 檢查失敗，不要啟動服務；依 [database-migrations.md](database-migrations.md) 處理後再繼續。
+
+部署後可從後端與前端分別查核實際 artifact，兩個 response 必須仍是同一 SHA：
+
+```bash
+curl --fail https://example.com/api/build-metadata
+curl --fail https://example.com/build-metadata.json
+```
+
+Release 紀錄至少應保存部署時間、操作者、preflight output 與上述 exact `commitSha`；rollback
+也必須指向已知 SHA 並重新走同一套 preflight/build/verify 流程，不得直接部署來源不明的工作目錄。
 
 ## 11. 備份
 
