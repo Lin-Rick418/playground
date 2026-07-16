@@ -1,19 +1,20 @@
 import { defineStore } from "pinia";
-import { api } from "../lib/api";
+import { lobbyResponseSchema, tableStateResponseSchema } from "@baccarat/contracts";
+import { api, createIdempotencyKey, shouldReuseIdempotencyKey } from "../lib/api";
+import { parseRuntimeContract } from "../lib/contracts";
 import type {
   ActiveRound,
   BetType,
   CurrentBet,
+  DailyProfitSummary,
   GameTable,
   LobbySnapshot,
   LobbyTable,
   PlaceBetResponse,
   PresentationWindow,
-  RoundConfig,
   RoundHistoryItem,
   ShoeStatus,
   TableSnapshot,
-  TableStateResponse,
 } from "../types/domain";
 
 export const useGameStore = defineStore("game", {
@@ -21,6 +22,7 @@ export const useGameStore = defineStore("game", {
     tables: [] as LobbyTable[],
     currentTable: null as GameTable | null,
     history: [] as RoundHistoryItem[],
+    dailyProfit: null as DailyProfitSummary | null,
     currentRound: null as ActiveRound | null,
     previousRound: null as ActiveRound | null,
     presentation: null as PresentationWindow | null,
@@ -32,6 +34,7 @@ export const useGameStore = defineStore("game", {
     loading: false,
     message: "",
     lastSettledRoundId: "",
+    pendingBetIdempotencyKeys: {} as Record<string, string>,
   }),
   actions: {
     applyLobbySnapshot(data: LobbySnapshot) {
@@ -80,12 +83,18 @@ export const useGameStore = defineStore("game", {
       this.currentBets = [];
     },
     async fetchLobby() {
-      const { data } = await api.get<LobbySnapshot & { config: RoundConfig }>("/game/lobby");
+      const response = await api.get("/game/lobby");
+      const data = parseRuntimeContract(lobbyResponseSchema, response.data, "GET /game/lobby");
       this.applyLobbySnapshot(data);
       return data;
     },
     async fetchState(tableId: string) {
-      const { data } = await api.get<TableStateResponse>(`/game/tables/${tableId}/state`);
+      const response = await api.get(`/game/tables/${tableId}/state`);
+      const data = parseRuntimeContract(
+        tableStateResponseSchema,
+        response.data,
+        "GET /game/tables/:tableId/state",
+      );
       this.applyTableSnapshot(data);
       this.applyTableUserSnapshot({
         currentRoundId: data.round.id,
@@ -98,18 +107,43 @@ export const useGameStore = defineStore("game", {
       this.loading = true;
 
       try {
-        const { data } = await api.get<RoundHistoryItem[]>("/game/history");
-        this.history = data;
+        const [historyResult, dailyProfitResult] = await Promise.allSettled([
+          api.get<RoundHistoryItem[]>("/game/history"),
+          api.get<DailyProfitSummary>("/game/daily-profit"),
+        ]);
+
+        if (historyResult.status === "rejected") {
+          throw historyResult.reason;
+        }
+
+        this.history = historyResult.value.data;
+        this.dailyProfit = dailyProfitResult.status === "fulfilled" ? dailyProfitResult.value.data : null;
       } finally {
         this.loading = false;
       }
     },
     async placeBet(tableId: string, payload: { betType: BetType; amount: number }[]) {
-      const { data } = await api.post<PlaceBetResponse>(`/game/tables/${tableId}/bet`, { bets: payload });
-      if (this.currentRound?.id === data.round.id) {
-        this.currentBets = [...this.currentBets, ...data.bets];
+      const requestSignature = JSON.stringify({ tableId, roundId: this.currentRound?.id ?? "", bets: payload });
+      const idempotencyKey = this.pendingBetIdempotencyKeys[requestSignature] ?? createIdempotencyKey();
+      this.pendingBetIdempotencyKeys[requestSignature] = idempotencyKey;
+
+      try {
+        const { data } = await api.post<PlaceBetResponse>(
+          `/game/tables/${tableId}/bet`,
+          { bets: payload },
+          { headers: { "Idempotency-Key": idempotencyKey } },
+        );
+        delete this.pendingBetIdempotencyKeys[requestSignature];
+        if (this.currentRound?.id === data.round.id) {
+          this.currentBets = [...this.currentBets, ...data.bets];
+        }
+        return data;
+      } catch (error) {
+        if (!shouldReuseIdempotencyKey(error)) {
+          delete this.pendingBetIdempotencyKeys[requestSignature];
+        }
+        throw error;
       }
-      return data;
     },
   },
 });

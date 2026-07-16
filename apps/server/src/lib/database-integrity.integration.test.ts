@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { after, before, describe, it } from "node:test";
 import { coreIntegrityConstraints } from "./database-integrity.js";
+import { assertDatabaseSchemaCurrent, runMigrations } from "./migration-runner.js";
 
 const shouldRun = process.env.RUN_DB_INTEGRATION_TESTS === "true";
 
@@ -34,7 +35,7 @@ describe("core PostgreSQL integrity constraints", { skip: !shouldRun }, () => {
     );
     assert.equal(existingTables.rows[0]?.count, "0", "Integration test database must start empty");
 
-    await database.initializeDatabase();
+    await runMigrations(database.pool);
 
     const now = new Date("2026-01-01T00:00:00.000Z");
     const closesAt = new Date(now.getTime() + 30_000);
@@ -137,7 +138,7 @@ describe("core PostgreSQL integrity constraints", { skip: !shouldRun }, () => {
          VALUES ('invalid-amount', $1, $2, 'PLAYER', 0, 0, $3)`,
         [playerId, roundId, now],
       ),
-      /bets_amounts_ck/,
+      /(bets_amounts_ck|bets_amount_policy)/,
     );
     await assert.rejects(
       database.pool.query(
@@ -168,31 +169,34 @@ describe("core PostgreSQL integrity constraints", { skip: !shouldRun }, () => {
   it("fails startup on dirty existing data and succeeds after remediation", async () => {
     const now = new Date("2026-01-03T00:00:00.000Z");
 
-    await database.pool.query("ALTER TABLE users DROP CONSTRAINT users_balance_nonnegative_ck");
+    await database.pool.query("ALTER TABLE users DROP CONSTRAINT users_username_format_ck");
     await database.pool.query(
       `INSERT INTO users (id, username, password_hash, role, balance, created_at, updated_at)
-       VALUES ('legacy-negative-balance', 'legacy_negative', 'hash', 'PLAYER', -1, $1, $1)`,
+       VALUES ('legacy-invalid-username', '-', 'hash', 'PLAYER', 0, $1, $1)`,
       [now],
     );
 
-    await assert.rejects(database.initializeDatabase(), /users_balance_nonnegative_ck/);
+    await assert.rejects(assertDatabaseSchemaCurrent(database.pool), /schema fingerprint drift/);
 
     const rolledBackConstraint = await database.pool.query<{ count: string }>(
       `SELECT count(*)::text AS count
-       FROM pg_constraint
+         FROM pg_constraint
        WHERE conrelid = 'users'::regclass
-         AND conname = 'users_balance_nonnegative_ck'`,
+         AND conname = 'users_username_format_ck'`,
     );
     assert.equal(rolledBackConstraint.rows[0]?.count, "0");
 
-    await database.pool.query("DELETE FROM users WHERE id = 'legacy-negative-balance'");
-    await database.initializeDatabase();
+    await database.pool.query("DELETE FROM users WHERE id = 'legacy-invalid-username'");
+    await database.pool.query(
+      "ALTER TABLE users ADD CONSTRAINT users_username_format_ck CHECK (username ~ '^[A-Za-z0-9_]{3,24}$')",
+    );
+    await assertDatabaseSchemaCurrent(database.pool);
 
     const validatedConstraint = await database.pool.query<{ convalidated: boolean }>(
       `SELECT convalidated
        FROM pg_constraint
        WHERE conrelid = 'users'::regclass
-         AND conname = 'users_balance_nonnegative_ck'`,
+         AND conname = 'users_username_format_ck'`,
     );
     assert.equal(validatedConstraint.rows[0]?.convalidated, true);
   });

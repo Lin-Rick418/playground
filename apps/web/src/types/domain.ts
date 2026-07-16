@@ -1,82 +1,31 @@
-export type UserRole = "ADMIN" | "PLAYER";
-export type RoundWinner = "PLAYER" | "BANKER" | "TIE";
-export type RoundStatus = "OPEN" | "LOCKED" | "SETTLED";
-export type BetType = "PLAYER" | "BANKER" | "TIE" | "PLAYER_PAIR" | "BANKER_PAIR";
+import type {
+  ActiveRound,
+  Card,
+  CurrentBet,
+  GameTable,
+  RoundWinner,
+} from "@baccarat/contracts";
+
+export type {
+  ActiveRound,
+  BetType,
+  Card,
+  CurrentBet,
+  GameTable,
+  LobbyTable,
+  LoginResponse,
+  LobbyResponse as LobbySnapshot,
+  PresentationWindow,
+  RoundConfig,
+  RoundStatus,
+  RoundWinner,
+  ShoeStatus,
+  TableSnapshot,
+  TableStateResponse,
+  User,
+  UserRole,
+} from "@baccarat/contracts";
 export type BaccaratPairType = "PLAYER_PAIR" | "BANKER_PAIR" | "BOTH_PAIR" | "NO_PAIR";
-
-export type CardRank = "A" | "2" | "3" | "4" | "5" | "6" | "7" | "8" | "9" | "10" | "J" | "Q" | "K";
-export type CardSuit = "S" | "H" | "D" | "C";
-
-export type Card = {
-  rank: CardRank;
-  suit: CardSuit;
-};
-
-export type User = {
-  id: string;
-  username: string;
-  role: UserRole;
-  isActive: boolean;
-  balance: number;
-};
-
-export type ActiveRound = {
-  id: string;
-  tableId: string;
-  shoeId: string;
-  status: RoundStatus;
-  bettingOpensAt: string;
-  bettingClosesAt: string;
-  settledAt: string | null;
-  playerCards: Card[];
-  bankerCards: Card[];
-  playerTotal: number;
-  bankerTotal: number;
-  winner: RoundWinner;
-  playerPair: boolean;
-  bankerPair: boolean;
-  createdAt: string;
-};
-
-export type GameTable = {
-  id: string;
-  code: string;
-  name: string;
-  displayOrder: number;
-  roundDurationMs: number;
-  roundPhaseOffsetMs: number;
-  roundScheduleVersion: number;
-  minBet: number;
-  maxBet: number;
-  createdAt: string;
-};
-
-export type LobbyTable = {
-  table: GameTable;
-  activeRound: ActiveRound | null;
-  previousRound: ActiveRound | null;
-  recentRounds: ActiveRound[];
-  roadRounds: ActiveRound[];
-};
-
-export type PresentationWindow = {
-  startsAt: string;
-  endsAt: string;
-};
-
-export type ShoeStatus = {
-  isLastHand: boolean;
-  cutCardReached: boolean;
-};
-
-export type CurrentBet = {
-  id: string;
-  betType: BetType;
-  amount: number;
-  payout: number;
-  createdAt: string;
-};
-
 export type RoundHistoryItem = {
   id: string;
   createdAt: string;
@@ -96,37 +45,17 @@ export type RoundHistoryItem = {
   };
 };
 
-export type AdminUser = {
-  id: string;
-  username: string;
-  role: UserRole;
-  isActive: boolean;
-  balance: number;
-  createdAt: string;
-};
-
-export type Adjustment = {
-  id: string;
-  amount: number;
-  note?: string;
-  createdAt: string;
-  admin: {
-    username: string;
-  };
-  user: {
-    username: string;
-  };
-};
-
-export type RoundBetDetail = {
-  id: string;
-  userId: string;
-  username: string;
-  roundId: string;
-  betType: BetType;
-  amount: number;
-  payout: number;
-  createdAt: string;
+export type DailyProfitSummary = {
+  date: string;
+  timeZone: string;
+  windowStart: string;
+  windowEnd: string;
+  formula: "TOTAL_PAYOUT_MINUS_TOTAL_BET";
+  recognitionTime: "ROUND_SETTLED_AT";
+  totalBet: number;
+  totalPayout: number;
+  netProfit: number;
+  calculatedAt: string;
 };
 
 export type RoadVisibilitySettings = {
@@ -135,41 +64,6 @@ export type RoadVisibilitySettings = {
   bigEyeRoad: boolean;
   smallRoad: boolean;
   cockroachRoad: boolean;
-};
-
-export type RoundConfig = {
-  revealWindowMs: number;
-  dealAnimationBufferMs: number;
-  cutCardMinRemaining: number;
-  cutCardMaxRemaining: number;
-  reshuffleRule: string;
-};
-
-export type LoginResponse = {
-  token: string;
-  user: User;
-};
-
-export type LobbySnapshot = {
-  tables: LobbyTable[];
-  serverTime: string;
-};
-
-export type TableSnapshot = {
-  table: GameTable;
-  round: ActiveRound;
-  previousRound: ActiveRound | null;
-  presentation: PresentationWindow | null;
-  shoeStatus: ShoeStatus;
-  recentRounds: ActiveRound[];
-  roadRounds: ActiveRound[];
-  serverTime: string;
-};
-
-export type TableStateResponse = TableSnapshot & {
-  myBets: CurrentBet[];
-  balance: number;
-  config: RoundConfig;
 };
 
 export type PlaceBetResponse = {

@@ -1,5 +1,7 @@
 import dotenv from "dotenv";
 import { requireStrongJwtSecret } from "./jwt-secret.js";
+import { assertValidTimeZone } from "../lib/business-day.js";
+import { parseBoundedInteger } from "./env-number.js";
 
 dotenv.config();
 
@@ -9,6 +11,9 @@ dotenv.config();
 const nodeEnv = process.env.NODE_ENV ?? "production";
 const isDevelopment = nodeEnv === "development" || nodeEnv === "test";
 const isProduction = !isDevelopment;
+const businessTimeZone = process.env.BUSINESS_TIME_ZONE ?? "Asia/Taipei";
+
+assertValidTimeZone(businessTimeZone);
 
 const jwtSecret = isProduction
   ? requireStrongJwtSecret(process.env.JWT_SECRET)
@@ -24,4 +29,24 @@ export const env = {
   corsOrigin: process.env.CORS_ORIGIN ?? (isProduction ? false : "*"),
   databaseUrl: process.env.DATABASE_URL ?? "postgres://postgres:postgres@127.0.0.1:5432/baccarat",
   databaseSsl: process.env.DATABASE_SSL ?? "false",
+  businessTimeZone,
+  databasePoolMax: parseBoundedInteger("DATABASE_POOL_MAX", process.env.DATABASE_POOL_MAX, 20, { min: 1, max: 100 }),
+  databaseConnectionTimeoutMs: parseBoundedInteger(
+    "DATABASE_CONNECTION_TIMEOUT_MS",
+    process.env.DATABASE_CONNECTION_TIMEOUT_MS,
+    3_000,
+    { min: 100, max: 30_000 },
+  ),
+  databaseIdleTimeoutMs: parseBoundedInteger(
+    "DATABASE_IDLE_TIMEOUT_MS",
+    process.env.DATABASE_IDLE_TIMEOUT_MS,
+    30_000,
+    { min: 1_000, max: 300_000 },
+  ),
+  databaseStatementTimeoutMs: parseBoundedInteger(
+    "DATABASE_STATEMENT_TIMEOUT_MS",
+    process.env.DATABASE_STATEMENT_TIMEOUT_MS,
+    5_000,
+    { min: 500, max: 60_000 },
+  ),
 };

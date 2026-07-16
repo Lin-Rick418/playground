@@ -7,16 +7,15 @@ Vue 3 + Pinia 前端，Node.js + Express 後端，PostgreSQL 資料庫。
 - 玩家登入
 - 百家樂自動輪局、封盤、開牌、結算
 - 玩家歷史下注紀錄
-- Admin 登入
-- Admin 查詢玩家列表
-- Admin 手動調整玩家餘額
-- 最近餘額異動紀錄
+- 玩家本日收益與帳號密碼管理
+- WebSocket 即時桌況與可驗證牌靴公平性
 
 ## 開發用預設帳號
 
 執行 `npm run db:seed` 後才會建立：
-- `admin / admin123`
-- `player1 / player123`
+- `player1 / LuckyShoes!2026`
+
+已存在的開發資料不會自動覆寫密碼；若資料庫曾建立舊帳號，請由帳號安全頁更新。
 
 ## 開發
 
@@ -24,6 +23,8 @@ Vue 3 + Pinia 前端，Node.js + Express 後端，PostgreSQL 資料庫。
 nvm use
 npm ci
 npm run dev:db
+npm run db:migrate
+npm run db:bootstrap
 npm run db:seed
 npm run dev:all
 ```
@@ -67,7 +68,7 @@ npm run dev:web
 VITE_API_BASE_URL=https://your-api-host.example.com
 ```
 
-預設範例可參考 [apps/web/.env.example](/Users/k/Documents/Playground/apps/web/.env.example)。
+預設範例可參考 [apps/web/.env.example](apps/web/.env.example)。
 
 ## 技術選擇
 
@@ -76,6 +77,35 @@ VITE_API_BASE_URL=https://your-api-host.example.com
 - 資料庫: PostgreSQL
 
 本專案固定使用 Node `22.19.0` 與 npm `10.9.3`；`.nvmrc`、`.node-version`、`packageManager`、`engines` 與 install preflight 會共同拒絕版本漂移。build 後可由前端 `/build-metadata.json` 及 API `/api/build-metadata` 核對 commit/runtime metadata。
+
+## 金額異動 API 的 idempotency
+
+下注請求必須帶 8–128 字元的 `Idempotency-Key` header。client 在回應不確定時，應以相同 key 與完全相同的 payload 重試；server 會回傳第一次已提交的結果，而不會再次扣款。同一使用者、同一操作範圍若以相同 key 傳送不同 payload，server 會回傳 `409`。
+
+此 repository 僅提供 player app；admin 頁面、API 與登入權限已移除。既有 admin／adjustment／ledger 資料仍保留，供未來獨立後台承接。
+
+## API error contract
+
+所有 HTTP API errors 都使用 JSON，並保留既有的 top-level `message` 欄位：
+
+```json
+{
+  "code": "VALIDATION_ERROR",
+  "message": "Invalid payload",
+  "requestId": "3d1334d8-cb00-4cd7-b614-3c66ec67babc"
+}
+```
+
+每個 response 都會回傳 `X-Request-Id` header，內容與 error body 的 `requestId` 相同。Client 可傳入 1–128 字元、僅包含英數與 `._:-` 的 `X-Request-Id`；不符合格式時 server 會改用 UUID。回報 API 問題時應附上此 ID，以便對應 server structured error log。Unknown routes 與 malformed JSON 也遵循同一 contract，不會回傳 Express HTML 或 internal error details。
+
+## CI
+
+Pull request 的 required checks、本機驗證指令與 integration test database 注意事項請見
+[docs/ci.md](docs/ci.md)。
+
+## 公平性稽核
+
+每個新 shoe 會先發布 cryptographic commitment，rotate 後 reveal seed 與 append-only deal audit，讓玩家或 operator 可獨立重建驗證。algorithm、API、verifier 與 threat model 見 [docs/shoe-audit.md](docs/shoe-audit.md)。
 
 ## 備註
 
@@ -87,4 +117,8 @@ VITE_API_BASE_URL=https://your-api-host.example.com
 - 桌況同步改成 WebSocket snapshot 推送，前端不再依賴收到事件後整包 refresh。
 - WebSocket server 限制 8 KiB message、每個 user/IP 的連線數與 message/upgrade rate，並以 heartbeat 清除失效連線；反向代理不得放寬到比 application 更寬鬆的 payload/connection policy。
 - 正式環境啟動時不會自動建立 demo 帳號；若要開發測試帳號，請手動執行 `npm run db:seed`。
+- API、worker、bootstrap 與 seed 都不會自動執行 DDL；第一次啟動及拉取新版本後，必須先執行 `npm run db:migrate`。
+- 第一次建立環境時，執行 `npm run db:bootstrap` 建立必要桌別與牌靴；`db:seed` 另外加入開發用 demo 帳號。
+- 可用 `npm run db:migrate:status` 檢查目前版本；schema 落後時會回傳非零 exit code。
+- 正式環境的 migration 順序、相容性與 rollback 策略請見 [deploy/database-migrations.md](deploy/database-migrations.md)。
 - 若未來要多人同步牌桌、路單分析、會員管理、操作審計，可在此基礎擴充。

@@ -1,12 +1,17 @@
 import { onMounted, onUnmounted } from "vue";
 import { useRouter } from "vue-router";
+import { liveClientMessageSchema, type LiveClientMessage } from "@baccarat/contracts";
 import { createLiveSocket, type LiveMessage } from "../lib/live";
+import { parseRuntimeContract } from "../lib/contracts";
 import { useAuthStore } from "../stores/auth";
 
-type ChannelMessage = Exclude<LiveMessage, { type: "connected" } | { type: "error" } | { type: "user_snapshot" }>;
+type ChannelMessage = Exclude<
+  LiveMessage,
+  { type: "connected" } | { type: "error" } | { type: "auth_revoked" } | { type: "user_snapshot" }
+>;
 
 type UseLiveChannelOptions = {
-  getSubscribeMessage: () => Record<string, unknown>;
+  getSubscribeMessage: () => LiveClientMessage;
   onMessage: (message: ChannelMessage) => void | Promise<void>;
   onError?: (message: string) => void;
 };
@@ -32,20 +37,37 @@ export function useLiveChannel(options: UseLiveChannelOptions) {
     socket = null;
   }
 
+  function revokeSession() {
+    disposed = true;
+    disconnect();
+    authStore.logout();
+    void router.push("/login");
+  }
+
   function handleMessage(message: LiveMessage) {
     if (message.type === "connected") {
       return;
     }
 
     if (message.type === "error") {
+      if (message.message === "Session is no longer valid") {
+        authStore.logout();
+        disconnect();
+        router.push("/login");
+        return;
+      }
       options.onError?.(message.message);
+      return;
+    }
+
+    if (message.type === "auth_revoked") {
+      revokeSession();
       return;
     }
 
     if (message.type === "user_snapshot") {
       if (!message.data.isActive) {
-        authStore.logout();
-        router.push("/login");
+        revokeSession();
         return;
       }
 
@@ -68,7 +90,18 @@ export function useLiveChannel(options: UseLiveChannelOptions) {
     socket = createLiveSocket({
       onOpen: (ws) => {
         reconnectAttempts = 0;
-        ws.send(JSON.stringify(options.getSubscribeMessage()));
+        try {
+          const subscription = parseRuntimeContract(
+            liveClientMessageSchema,
+            options.getSubscribeMessage(),
+            "client.live.subscription",
+            "WebSocket message",
+          );
+          ws.send(JSON.stringify(subscription));
+        } catch {
+          options.onError?.("即時連線訂閱格式錯誤");
+          ws.close(1002, "Invalid subscription message");
+        }
       },
       onMessage: handleMessage,
       onClose: () => {
@@ -76,12 +109,20 @@ export function useLiveChannel(options: UseLiveChannelOptions) {
           return;
         }
 
-        clearReconnectTimer();
-        const delayMs = Math.min(1000 * 2 ** reconnectAttempts, 30000);
-        reconnectAttempts++;
-        reconnectTimer = window.setTimeout(() => {
-          connect();
-        }, delayMs);
+        void authStore
+          .ensureFreshAccessToken()
+          .then(() => {
+            clearReconnectTimer();
+            const delayMs = Math.min(1000 * 2 ** reconnectAttempts, 30000);
+            reconnectAttempts++;
+            reconnectTimer = window.setTimeout(() => {
+              connect();
+            }, delayMs);
+          })
+          .catch(() => {
+            authStore.logout();
+            void router.push("/login");
+          });
       },
     });
   }

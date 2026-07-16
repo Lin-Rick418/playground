@@ -58,7 +58,7 @@ export const coreIntegrityConstraints = [
   {
     table: "game_rounds",
     name: "game_rounds_status_ck",
-    definition: "CHECK (status IN ('OPEN', 'LOCKED', 'SETTLED'))",
+    definition: "CHECK (status IN ('OPEN', 'LOCKED', 'SETTLED', 'CANCELLED'))",
   },
   {
     table: "game_rounds",
@@ -69,7 +69,7 @@ export const coreIntegrityConstraints = [
     table: "game_rounds",
     name: "game_rounds_settlement_ck",
     definition:
-      "CHECK (((status = 'SETTLED') = (settled_at IS NOT NULL)) AND (settled_at IS NULL OR (settled_at >= betting_closes_at AND settled_at >= created_at)))",
+      "CHECK (((status IN ('SETTLED', 'CANCELLED')) = (settled_at IS NOT NULL)) AND (settled_at IS NULL OR (settled_at >= created_at)))",
   },
   { table: "bets", name: "bets_id_not_blank_ck", definition: "CHECK (btrim(id) <> '')" },
   {

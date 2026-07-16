@@ -195,16 +195,14 @@ const feltPlayerCards = computed(() =>
 const feltBankerCards = computed(() =>
   showDealOverlay.value ? overlayBankerCards.value : presentationRound.value?.bankerCards ?? [],
 );
-const todayProfit = computed(() => {
-  const today = new Date();
-  return gameStore.history.reduce((sum, item) => {
-    const settledAt = new Date(item.createdAt);
-    const isToday =
-      settledAt.getFullYear() === today.getFullYear() &&
-      settledAt.getMonth() === today.getMonth() &&
-      settledAt.getDate() === today.getDate();
-    return isToday ? sum + (item.totalPayout - item.totalAmount) : sum;
-  }, 0);
+const todayProfit = computed(() => gameStore.dailyProfit?.netProfit ?? null);
+const dailyProfitPeriodLabel = computed(() => {
+  const summary = gameStore.dailyProfit;
+  return summary ? `${summary.date.slice(5)} 收益 · ${summary.timeZone}` : "本日收益";
+});
+const dailyProfitAccessibleLabel = computed(() => {
+  const summary = gameStore.dailyProfit;
+  return summary ? `${summary.date} 收益，時區 ${summary.timeZone}` : "本日收益尚未載入";
 });
 
 function betOptionsByKeys(keys: readonly BetKey[]) {
@@ -1307,10 +1305,12 @@ watch(
           <strong>{{ authStore.user?.balance?.toLocaleString() ?? "--" }}</strong>
         </div>
       </div>
-      <div class="wallet-panel" aria-label="今日收益">
+      <div class="wallet-panel" :aria-label="dailyProfitAccessibleLabel">
         <div class="wallet-copy">
-          <span>今日收益</span>
-          <strong :class="todayProfit >= 0 ? 'gain' : 'loss'">{{ todayProfit.toLocaleString() }}</strong>
+          <span :title="dailyProfitAccessibleLabel">{{ dailyProfitPeriodLabel }}</span>
+          <strong :class="{ gain: todayProfit !== null && todayProfit >= 0, loss: todayProfit !== null && todayProfit < 0 }">
+            {{ todayProfit?.toLocaleString() ?? "--" }}
+          </strong>
         </div>
       </div>
     </footer>
@@ -1392,6 +1392,15 @@ watch(
           <p class="settings-hint">
             若按「測試語音」沒有聲音，請確認手機未開靜音（iPhone 側邊靜音鍵）並將媒體音量調高。
           </p>
+        </div>
+        <div class="settings-section">
+          <p class="settings-section-label">帳號安全</p>
+          <div class="settings-list">
+            <button type="button" class="settings-item" @click="router.push('/account')">
+              <span>變更密碼</span>
+              <strong>前往</strong>
+            </button>
+          </div>
         </div>
       </section>
     </div>
@@ -1887,6 +1896,9 @@ watch(
   font-size: 11px;
   font-weight: 800;
   letter-spacing: 0.06em;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .wallet-copy strong {

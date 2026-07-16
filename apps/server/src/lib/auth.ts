@@ -1,45 +1,38 @@
 import jwt from "jsonwebtoken";
-import type { Response, NextFunction } from "express";
+import { randomUUID } from "node:crypto";
 import { env } from "../config/env.js";
-import type { AuthenticatedRequest } from "../middleware/authenticate.js";
-import { findUserById } from "./db.js";
-import type { UserRole } from "../types/domain.js";
+import { ACCESS_TOKEN_TTL_SECONDS } from "./session-token.js";
 
 export type JwtPayload = {
   userId: string;
-  role: UserRole;
+  role: "PLAYER";
+  sessionId: string;
 };
 
 export function signToken(payload: JwtPayload) {
-  return jwt.sign(payload, env.jwtSecret, { expiresIn: "7d" });
+  return jwt.sign(payload, env.jwtSecret, {
+    algorithm: "HS256",
+    audience: "baccarat-web",
+    issuer: "baccarat-api",
+    jwtid: randomUUID(),
+    expiresIn: ACCESS_TOKEN_TTL_SECONDS,
+  });
 }
 
 export function verifyToken(token: string) {
-  return jwt.verify(token, env.jwtSecret) as JwtPayload;
-}
+  const payload = jwt.verify(token, env.jwtSecret, {
+    algorithms: ["HS256"],
+    audience: "baccarat-web",
+    issuer: "baccarat-api",
+  }) as Partial<JwtPayload>;
 
-export function requireRole(
-  req: AuthenticatedRequest,
-  res: Response,
-  next: NextFunction,
-  role: UserRole,
-) {
-  if (!req.user || req.user.role !== role) {
-    return res.status(403).json({ message: "Forbidden" });
+  if (
+    typeof payload.userId !== "string" ||
+    typeof payload.sessionId !== "string" ||
+    payload.role !== "PLAYER"
+  ) {
+    throw new jwt.JsonWebTokenError("Invalid player token payload");
   }
 
-  return findUserById(req.user.userId)
-    .then((freshUser) => {
-      if (!freshUser) {
-        return res.status(401).json({ message: "User not found" });
-      }
-
-      if (!freshUser.isActive) {
-        return res.status(403).json({ message: "Account is disabled" });
-      }
-
-      req.currentUser = freshUser;
-      next();
-    })
-    .catch(next);
+  return payload as JwtPayload;
 }

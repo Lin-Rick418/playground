@@ -1,6 +1,8 @@
 import { calculatePayout, dealRoundFromShoe, getMassachusettsCutCardConfig } from "./baccarat.js";
 import { createOrGetActiveRound } from "./active-round-invariant.js";
 import {
+  applyBalanceMutation,
+  cancelRoundAndRefundBets,
   createRound,
   ensureTableShoe,
   findRoundById,
@@ -9,61 +11,55 @@ import {
   getTableShoe,
   listRoundBets,
   listTables,
-  purgeSettledRoundsBefore,
+  recordShoeDealAudit,
   replaceTableShoe,
   saveTableShoe,
   setTableRoundScheduleVersion,
   settleRound,
-  updateBetPayout,
   updateRoundStatus,
-  updateUserBalance,
+  updateBetPayouts,
+  validateActiveShoeAudit,
   withTransaction,
 } from "./db.js";
 import { publishLiveEvent } from "./live-events.js";
 import {
+  type Clock,
   DEAL_ANIMATION_BUFFER_MS,
-  getScheduledBettingOpensAtMs,
+  getFreshRoundWindow,
   REVEAL_WINDOW_MS,
+  systemClock,
 } from "./round-schedule.js";
 import type { GameTableRecord } from "../types/domain.js";
 
 const LOOP_INTERVAL_MS = 1000;
-const CLEANUP_INTERVAL_MS = 24 * 60 * 60 * 1000;
-const SETTLED_ROUND_RETENTION_MS = 24 * 60 * 60 * 1000;
 const MIN_CARDS_TO_COMPLETE_ROUND = 6;
 const ROUND_SCHEDULE_VERSION = 1;
 
-function getTableRoundDurationMs(table: GameTableRecord) {
-  return table.roundDurationMs;
-}
-
 const roundManagerState = globalThis as typeof globalThis & {
   __baccaratRoundManagerInterval?: NodeJS.Timeout;
-  __baccaratNextCleanupAt?: number;
   __baccaratRoundManagerTicking?: boolean;
 };
 
 async function createOpenRound(
   table: GameTableRecord,
-  startTime = Date.now(),
   initializePhase = false,
+  clock: Clock = systemClock,
 ) {
   const { round, created } = await createOrGetActiveRound(
     () =>
       withTransaction(async (client) => {
         const shoe = await ensureTableShoe(table.id, client);
         const shouldApplyPhase = initializePhase || table.roundScheduleVersion < ROUND_SCHEDULE_VERSION;
-        const opensAtMs = getScheduledBettingOpensAtMs(table, startTime, shouldApplyPhase);
-        const opensAt = new Date(opensAtMs).toISOString();
-        const closesAt = new Date(opensAtMs + getTableRoundDurationMs(table)).toISOString();
+        // Read the clock only after preceding DB work. createRound immediately
+        // validates this window against its own persistence timestamp.
+        const roundWindow = getFreshRoundWindow(table, clock, shouldApplyPhase);
 
         const nextRound = await createRound(
           {
             tableId: table.id,
             shoeId: shoe.shoeId,
             status: "OPEN",
-            bettingOpensAt: opensAt,
-            bettingClosesAt: closesAt,
+            ...roundWindow,
           },
           client,
         );
@@ -89,7 +85,7 @@ async function createOpenRound(
   return round;
 }
 
-async function settleActiveRound(roundId: string, tableId: string) {
+export async function settleActiveRound(roundId: string, tableId: string) {
   const affectedUserIds = new Set<string>();
 
   const settled = await withTransaction(async (client) => {
@@ -101,39 +97,86 @@ async function settleActiveRound(roundId: string, tableId: string) {
       return false;
     }
 
-    let shoe = await getTableShoe(tableId, client, { forUpdate: true });
+    const shoe = await getTableShoe(tableId, client, { forUpdate: true });
+    let cancellationReason: string | null = null;
 
-    if (!shoe || !shoe.shoeId || shoe.cards.length < MIN_CARDS_TO_COMPLETE_ROUND) {
-      shoe = await replaceTableShoe(tableId, client);
+    if (round.tableId !== tableId || !shoe || !shoe.shoeId || round.shoeId !== shoe.shoeId) {
+      cancellationReason = "SHOE_BINDING_INVALID";
+    } else if (shoe.cards.length < MIN_CARDS_TO_COMPLETE_ROUND) {
+      cancellationReason = "INSUFFICIENT_COMMITTED_CARDS";
+    } else {
+      const audit = await validateActiveShoeAudit(shoe.shoeId, tableId, client);
+      if (!audit.valid) cancellationReason = audit.reason ?? "SHOE_AUDIT_INVALID";
     }
 
+    if (cancellationReason) {
+      const refundedUserIds = await cancelRoundAndRefundBets(roundId, cancellationReason, client);
+      for (const userId of refundedUserIds) affectedUserIds.add(userId);
+      return true;
+    }
+
+    if (!shoe) throw new Error("Validated shoe disappeared before settlement");
+
     const wasLastHand = shoe.lastHandPending;
+    const cardsBeforeDeal = [...shoe.cards];
     const result = dealRoundFromShoe(shoe);
+    const dealtCards = cardsBeforeDeal.slice().reverse().slice(0, cardsBeforeDeal.length - shoe.cards.length);
     const bets = await listRoundBets(roundId, client);
     const payoutsByUser = new Map<string, number>();
+    const betPayouts: { betId: string; payout: number }[] = [];
 
     for (const bet of bets) {
       const payout = calculatePayout(bet.betType, bet.amount, result);
       affectedUserIds.add(bet.userId);
-      await updateBetPayout(bet.id, payout, client);
+      betPayouts.push({ betId: bet.id, payout });
 
       if (payout > 0) {
         payoutsByUser.set(bet.userId, (payoutsByUser.get(bet.userId) ?? 0) + payout);
       }
     }
 
+    await updateBetPayouts(betPayouts, client);
+
     for (const [userId, payout] of payoutsByUser.entries()) {
       const user = await findUserById(userId, client, { forUpdate: true });
 
       if (user) {
-        await updateUserBalance(user.id, user.balance + payout, client);
+        await applyBalanceMutation(
+          {
+            userId: user.id,
+            delta: payout,
+            actorType: "SYSTEM",
+            source: "SETTLEMENT_CREDIT",
+            referenceType: "ROUND",
+            referenceId: roundId,
+            metadata: { tableId },
+          },
+          client,
+        );
       }
     }
 
     await settleRound(roundId, result, client);
+    await recordShoeDealAudit(
+      {
+        shoeId: shoe.shoeId,
+        roundId,
+        dealtCards,
+        result: {
+          playerCards: result.playerCards,
+          bankerCards: result.bankerCards,
+          playerTotal: result.playerTotal,
+          bankerTotal: result.bankerTotal,
+          winner: result.winner,
+          playerPair: result.playerPair,
+          bankerPair: result.bankerPair,
+        },
+      },
+      client,
+    );
 
     if (wasLastHand) {
-      await replaceTableShoe(tableId, client);
+      await replaceTableShoe(tableId, client, "CUT_CARD_LAST_HAND");
       return true;
     }
 
@@ -173,7 +216,7 @@ async function tickTable(table: GameTableRecord) {
   const now = Date.now();
 
   if (!round) {
-    await createOpenRound(table, now, true);
+    await createOpenRound(table, true);
     return;
   }
 
@@ -191,27 +234,7 @@ async function tickTable(table: GameTableRecord) {
 
   if (round.status === "LOCKED" && now >= closesAt + REVEAL_WINDOW_MS) {
     await settleActiveRound(round.id, table.id);
-    await createOpenRound(table, now);
-  }
-}
-
-async function runDailyCleanup(now: number) {
-  if (!roundManagerState.__baccaratNextCleanupAt) {
-    roundManagerState.__baccaratNextCleanupAt = now;
-  }
-
-  if (now < roundManagerState.__baccaratNextCleanupAt) {
-    return;
-  }
-
-  const cutoffIso = new Date(now - SETTLED_ROUND_RETENTION_MS).toISOString();
-  const result = await purgeSettledRoundsBefore(cutoffIso);
-  roundManagerState.__baccaratNextCleanupAt = now + CLEANUP_INTERVAL_MS;
-
-  if (result.deletedRounds > 0 || result.deletedBets > 0) {
-    console.log(
-      `Daily cleanup removed ${result.deletedRounds} settled rounds and ${result.deletedBets} bets before ${cutoffIso}`,
-    );
+    await createOpenRound(table);
   }
 }
 
@@ -227,7 +250,11 @@ export function getRoundConfig() {
   };
 }
 
-export async function startRoundManager() {
+export type RoundManagerTickResult = { healthy: boolean; detail?: string };
+
+export async function startRoundManager(options?: {
+  onTickComplete?: (result: RoundManagerTickResult) => Promise<void> | void;
+}) {
   if (roundManagerState.__baccaratRoundManagerInterval) {
     return;
   }
@@ -238,9 +265,9 @@ export async function startRoundManager() {
     }
 
     roundManagerState.__baccaratRoundManagerTicking = true;
+    let tickResult: RoundManagerTickResult = { healthy: false, detail: "Round manager tick did not complete" };
 
     try {
-      const now = Date.now();
       const tables = await listTables();
 
       const results = await Promise.allSettled(tables.map((table) => tickTable(table)));
@@ -249,11 +276,22 @@ export async function startRoundManager() {
           console.error("Table tick failed", result.reason);
         }
       }
-
-      await runDailyCleanup(now);
+      const rejectedCount = results.filter((result) => result.status === "rejected").length;
+      tickResult = rejectedCount === 0
+        ? { healthy: true }
+        : { healthy: false, detail: `${rejectedCount} table tick(s) failed` };
     } catch (error) {
       console.error("Round manager tick failed", error);
+      tickResult = {
+        healthy: false,
+        detail: error instanceof Error ? error.message : String(error),
+      };
     } finally {
+      try {
+        await options?.onTickComplete?.(tickResult);
+      } catch (error) {
+        console.error("Round manager heartbeat failed", error);
+      }
       roundManagerState.__baccaratRoundManagerTicking = false;
     }
   };

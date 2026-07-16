@@ -1,0 +1,84 @@
+name: Pull Request CI
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: read
+
+concurrency:
+  group: pull-request-ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  quality:
+    name: quality
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_DB: baccarat_test
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d baccarat_test"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      NODE_ENV: test
+      DATABASE_URL: postgres://postgres:postgres@127.0.0.1:5432/baccarat_test
+      DATABASE_SSL: "false"
+      JWT_SECRET: ci-only-not-used-outside-the-ephemeral-test-run
+    steps:
+      - name: Check out tested commit
+        uses: actions/checkout@v4
+      - name: Use pinned Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22.19.0
+          cache: npm
+      - name: Install locked dependencies
+        run: npm ci
+      - name: Static and type checks
+        run: npm run check:static
+      - name: Production build
+        run: npm run build
+        env:
+          BUILD_COMMIT_SHA: ${{ github.sha }}
+          BUILD_BRANCH: ${{ github.head_ref || github.ref_name }}
+          BUILD_DIRTY: "false"
+      - name: Unit tests
+        run: npm test
+      - name: Web tests
+        run: npm test --workspace web
+      - name: Release and deployment safety tests
+        run: npm run test:release && npm run test:ops && npm run test:deploy
+      - name: HTTP and PostgreSQL integration tests
+        run: npm run test:integration
+
+  dependency-audit:
+    name: dependency-audit
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Check out tested commit
+        uses: actions/checkout@v4
+      - name: Use pinned Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22.19.0
+          cache: npm
+      - name: Install locked dependencies
+        run: npm ci
+      - name: Audit production dependencies
+        run: npm run audit:prod
+      - name: Audit all dependencies including development tooling
+        run: npm run audit:full
