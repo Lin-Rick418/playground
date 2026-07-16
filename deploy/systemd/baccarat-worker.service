@@ -1,22 +1,69 @@
 [Unit]
 Description=Baccarat Round Worker
-After=network.target postgresql.service baccarat-api.service
+After=network-online.target postgresql.service
 Wants=network-online.target
 
 [Service]
 Type=simple
-User=baccarat
+User=baccarat-worker
 Group=baccarat
 WorkingDirectory=/opt/baccarat/current
 Environment=NODE_ENV=production
+Environment=HOME=/nonexistent
 EnvironmentFile=/etc/baccarat/baccarat.env
-ExecStart=/usr/bin/env node /opt/baccarat/current/apps/server/dist/worker.js
+ExecStart=/usr/bin/node /opt/baccarat/current/apps/server/dist/worker.js
 Restart=always
 RestartSec=3
 KillSignal=SIGTERM
+TimeoutStartSec=60
 TimeoutStopSec=20
+
+# The worker only schedules rounds and connects to PostgreSQL/DNS. It has a
+# distinct UID/runtime directory so it cannot modify the API's runtime files.
 NoNewPrivileges=true
+CapabilityBoundingSet=
+AmbientCapabilities=
+UMask=0077
+
+ProtectSystem=strict
+ProtectHome=true
+ReadOnlyPaths=/opt/baccarat/current /etc/baccarat/baccarat.env
+RuntimeDirectory=baccarat-worker
+RuntimeDirectoryMode=0700
+RuntimeDirectoryPreserve=no
+ReadWritePaths=/run/baccarat-worker
 PrivateTmp=true
+PrivateDevices=true
+PrivateMounts=true
+ProtectClock=true
+ProtectControlGroups=true
+ProtectHostname=true
+ProtectKernelLogs=true
+ProtectKernelModules=true
+ProtectKernelTunables=true
+ProtectProc=invisible
+ProcSubset=pid
+RestrictNamespaces=true
+RestrictRealtime=true
+RestrictSUIDSGID=true
+LockPersonality=true
+RemoveIPC=true
+KeyringMode=private
+
+# V8's JIT requires executable memory. Enabling this without running Node with
+# --jitless prevents normal startup, so compatibility is recorded explicitly.
+MemoryDenyWriteExecute=false
+
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+SystemCallArchitectures=native
+SystemCallFilter=@system-service
+SystemCallErrorNumber=EPERM
+
+LimitCORE=0
+LimitNOFILE=4096
+TasksMax=128
+StandardOutput=journal
+StandardError=journal
 
 [Install]
 WantedBy=multi-user.target

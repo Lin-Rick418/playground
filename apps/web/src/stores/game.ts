@@ -1,12 +1,28 @@
 import { defineStore } from "pinia";
-import { api } from "../lib/api";
-import type { ActiveRound, BetType, CurrentBet, GameTable, LobbyTable, PresentationWindow, RoundHistoryItem, ShoeStatus } from "../types/domain";
+import { lobbyResponseSchema, tableStateResponseSchema } from "@baccarat/contracts";
+import { api, createIdempotencyKey, shouldReuseIdempotencyKey } from "../lib/api";
+import { parseRuntimeContract } from "../lib/contracts";
+import type {
+  ActiveRound,
+  BetType,
+  CurrentBet,
+  DailyProfitSummary,
+  GameTable,
+  LobbySnapshot,
+  LobbyTable,
+  PlaceBetResponse,
+  PresentationWindow,
+  RoundHistoryItem,
+  ShoeStatus,
+  TableSnapshot,
+} from "../types/domain";
 
 export const useGameStore = defineStore("game", {
   state: () => ({
     tables: [] as LobbyTable[],
     currentTable: null as GameTable | null,
     history: [] as RoundHistoryItem[],
+    dailyProfit: null as DailyProfitSummary | null,
     currentRound: null as ActiveRound | null,
     previousRound: null as ActiveRound | null,
     presentation: null as PresentationWindow | null,
@@ -18,24 +34,14 @@ export const useGameStore = defineStore("game", {
     loading: false,
     message: "",
     lastSettledRoundId: "",
+    pendingBetIdempotencyKeys: {} as Record<string, string>,
   }),
   actions: {
-    applyLobbySnapshot(data: { tables: LobbyTable[]; serverTime: string }) {
+    applyLobbySnapshot(data: LobbySnapshot) {
       this.tables = data.tables;
       this.serverTime = data.serverTime;
     },
-    applyTableSnapshot(
-      data: {
-        table: GameTable;
-        round: ActiveRound | null;
-        previousRound: ActiveRound | null;
-        presentation: PresentationWindow | null;
-        shoeStatus: ShoeStatus;
-        recentRounds: ActiveRound[];
-        roadRounds: ActiveRound[];
-        serverTime: string;
-      },
-    ) {
+    applyTableSnapshot(data: TableSnapshot) {
       const previousCurrentRoundId = this.currentRound?.id ?? "";
 
       this.currentTable = data.table;
@@ -61,7 +67,7 @@ export const useGameStore = defineStore("game", {
       const latestSettledRoundId = data.previousRound?.id ?? "";
       if (
         previousCurrentRoundId &&
-        previousCurrentRoundId !== (data.round?.id ?? "") &&
+        previousCurrentRoundId !== data.round.id &&
         latestSettledRoundId &&
         latestSettledRoundId !== this.lastSettledRoundId
       ) {
@@ -77,15 +83,21 @@ export const useGameStore = defineStore("game", {
       this.currentBets = [];
     },
     async fetchLobby() {
-      const { data } = await api.get("/game/lobby");
+      const response = await api.get("/game/lobby");
+      const data = parseRuntimeContract(lobbyResponseSchema, response.data, "GET /game/lobby");
       this.applyLobbySnapshot(data);
       return data;
     },
     async fetchState(tableId: string) {
-      const { data } = await api.get(`/game/tables/${tableId}/state`);
+      const response = await api.get(`/game/tables/${tableId}/state`);
+      const data = parseRuntimeContract(
+        tableStateResponseSchema,
+        response.data,
+        "GET /game/tables/:tableId/state",
+      );
       this.applyTableSnapshot(data);
       this.applyTableUserSnapshot({
-        currentRoundId: data.round?.id ?? "",
+        currentRoundId: data.round.id,
         myBets: data.myBets,
       });
 
@@ -95,18 +107,43 @@ export const useGameStore = defineStore("game", {
       this.loading = true;
 
       try {
-        const { data } = await api.get("/game/history");
-        this.history = data;
+        const [historyResult, dailyProfitResult] = await Promise.allSettled([
+          api.get<RoundHistoryItem[]>("/game/history"),
+          api.get<DailyProfitSummary>("/game/daily-profit"),
+        ]);
+
+        if (historyResult.status === "rejected") {
+          throw historyResult.reason;
+        }
+
+        this.history = historyResult.value.data;
+        this.dailyProfit = dailyProfitResult.status === "fulfilled" ? dailyProfitResult.value.data : null;
       } finally {
         this.loading = false;
       }
     },
     async placeBet(tableId: string, payload: { betType: BetType; amount: number }[]) {
-      const { data } = await api.post(`/game/tables/${tableId}/bet`, { bets: payload });
-      if (this.currentRound?.id === data.round.id) {
-        this.currentBets = [...this.currentBets, ...data.bets];
+      const requestSignature = JSON.stringify({ tableId, roundId: this.currentRound?.id ?? "", bets: payload });
+      const idempotencyKey = this.pendingBetIdempotencyKeys[requestSignature] ?? createIdempotencyKey();
+      this.pendingBetIdempotencyKeys[requestSignature] = idempotencyKey;
+
+      try {
+        const { data } = await api.post<PlaceBetResponse>(
+          `/game/tables/${tableId}/bet`,
+          { bets: payload },
+          { headers: { "Idempotency-Key": idempotencyKey } },
+        );
+        delete this.pendingBetIdempotencyKeys[requestSignature];
+        if (this.currentRound?.id === data.round.id) {
+          this.currentBets = [...this.currentBets, ...data.bets];
+        }
+        return data;
+      } catch (error) {
+        if (!shouldReuseIdempotencyKey(error)) {
+          delete this.pendingBetIdempotencyKeys[requestSignature];
+        }
+        throw error;
       }
-      return data;
     },
   },
 });

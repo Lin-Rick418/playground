@@ -9,17 +9,18 @@ type BeadRound = {
 };
 
 interface Props {
-  rounds?: BeadRound[] | null;
+  rounds: BeadRound[];
   rows?: number;
   cols?: number;
   cellSize?: number;
+  showLabel?: boolean;
 }
 
 const props = withDefaults(defineProps<Props>(), {
-  rounds: null,
   rows: 6,
   cols: 6,
   cellSize: 22,
+  showLabel: true,
 });
 
 const rowCount = computed(() => Math.max(1, props.rows));
@@ -27,9 +28,8 @@ const colCount = computed(() => Math.max(1, props.cols));
 const cellSize = computed(() => Math.max(12, props.cellSize));
 
 const visibleRounds = computed(() => {
-  const rounds = props.rounds ?? [];
   const maxCount = rowCount.value * colCount.value;
-  return rounds.slice(-maxCount);
+  return props.rounds.slice(-maxCount);
 });
 
 const grid = computed(() => {
@@ -77,7 +77,7 @@ function beadClass(round: BeadRound) {
     <div v-for="(row, rowIndex) in grid" :key="rowIndex" class="bead-road-row">
       <div v-for="(cell, colIndex) in row" :key="`${rowIndex}-${colIndex}`" class="bead-road-cell">
         <div v-if="cell" class="bead-token" :class="beadClass(cell)">
-          <span>{{ beadLabel(cell) }}</span>
+          <span v-if="showLabel">{{ beadLabel(cell) }}</span>
           <i v-if="cell.bankerPair" class="pair-dot banker-pair" />
           <i v-if="cell.playerPair" class="pair-dot player-pair" />
         </div>

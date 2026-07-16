@@ -1,5 +1,6 @@
 import type { Notification, PoolClient } from "pg";
 import { pool } from "./db.js";
+import { dispatchSafely } from "./async-handler.js";
 
 const LIVE_EVENT_CHANNEL = "baccarat_live";
 
@@ -12,6 +13,13 @@ export type LiveEvent =
     }
   | {
       type: "user_changed";
+      userId: string;
+      reason: string;
+      at: string;
+    }
+  | {
+      type: "session_revoked";
+      sessionId: string;
       userId: string;
       reason: string;
       at: string;
@@ -43,7 +51,9 @@ export async function startLiveEventSubscriber(onEvent: (event: LiveEvent) => Pr
 
         try {
           const event = JSON.parse(message.payload) as LiveEvent;
-          void onEvent(event);
+          void dispatchSafely(onEvent, event, (error) => {
+            console.error("Live event handler failed", error);
+          });
         } catch (error) {
           console.error("Failed to parse live event payload", error);
         }

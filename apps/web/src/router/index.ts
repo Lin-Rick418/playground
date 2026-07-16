@@ -3,7 +3,7 @@ import { useAuthStore } from "../stores/auth";
 import LoginView from "../views/LoginView.vue";
 import LobbyView from "../views/LobbyView.vue";
 import GameView from "../views/GameView.vue";
-import AdminView from "../views/AdminView.vue";
+import AccountView from "../views/AccountView.vue";
 
 const router = createRouter({
   history: createWebHistory(),
@@ -12,12 +12,15 @@ const router = createRouter({
     { path: "/login", component: LoginView },
     { path: "/lobby", component: LobbyView, meta: { requiresAuth: true, role: "PLAYER" } },
     { path: "/game/:tableId", component: GameView, meta: { requiresAuth: true, role: "PLAYER" } },
-    { path: "/admin", component: AdminView, meta: { requiresAuth: true, role: "ADMIN" } },
+    { path: "/account", component: AccountView, meta: { requiresAuth: true, role: "PLAYER" } },
+    { path: "/:pathMatch(.*)*", redirect: "/login" },
   ],
 });
 
 router.beforeEach(async (to) => {
   const authStore = useAuthStore();
+
+  await authStore.restoreSession();
 
   if (authStore.token && !authStore.user) {
     try {
@@ -32,11 +35,12 @@ router.beforeEach(async (to) => {
   }
 
   if (to.meta.role && authStore.user?.role !== to.meta.role) {
-    return authStore.user?.role === "ADMIN" ? "/admin" : "/lobby";
+    await authStore.logout();
+    return "/login";
   }
 
   if (to.path === "/login" && authStore.user) {
-    return authStore.user.role === "ADMIN" ? "/admin" : "/lobby";
+    return "/lobby";
   }
 
   return true;

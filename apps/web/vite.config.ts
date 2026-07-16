@@ -18,7 +18,7 @@ export default defineConfig(({ mode }) => {
         plugins: [
           mobile({
             appSelector: "#app",
-            viewportWidth: 390,
+            viewportWidth: 375,
             maxDisplayWidth: 430,
           }),
         ],

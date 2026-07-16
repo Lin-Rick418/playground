@@ -1,22 +1,72 @@
 [Unit]
 Description=Baccarat API Server
-After=network.target postgresql.service
+After=network-online.target postgresql.service
 Wants=network-online.target
 
 [Service]
 Type=simple
-User=baccarat
+User=baccarat-api
 Group=baccarat
 WorkingDirectory=/opt/baccarat/current
 Environment=NODE_ENV=production
+Environment=HOME=/nonexistent
 EnvironmentFile=/etc/baccarat/baccarat.env
-ExecStart=/usr/bin/env node /opt/baccarat/current/apps/server/dist/index.js
+ExecStart=/usr/bin/node /opt/baccarat/current/apps/server/dist/index.js
 Restart=always
 RestartSec=3
 KillSignal=SIGTERM
+TimeoutStartSec=60
 TimeoutStopSec=20
+
+# The API accepts HTTP/WebSocket traffic and opens PostgreSQL/DNS sockets. It
+# does not need capabilities, devices, a writable release, or host namespaces.
 NoNewPrivileges=true
+CapabilityBoundingSet=
+AmbientCapabilities=
+UMask=0077
+
+ProtectSystem=strict
+ProtectHome=true
+ReadOnlyPaths=/opt/baccarat/current /etc/baccarat/baccarat.env
+RuntimeDirectory=baccarat-api
+RuntimeDirectoryMode=0700
+RuntimeDirectoryPreserve=no
+ReadWritePaths=/run/baccarat-api
 PrivateTmp=true
+PrivateDevices=true
+PrivateMounts=true
+ProtectClock=true
+ProtectControlGroups=true
+ProtectHostname=true
+ProtectKernelLogs=true
+ProtectKernelModules=true
+ProtectKernelTunables=true
+ProtectProc=invisible
+ProcSubset=pid
+RestrictNamespaces=true
+RestrictRealtime=true
+RestrictSUIDSGID=true
+LockPersonality=true
+RemoveIPC=true
+KeyringMode=private
+
+# V8's JIT requires executable memory. Enabling this without running Node with
+# --jitless prevents normal startup, so compatibility is recorded explicitly.
+MemoryDenyWriteExecute=false
+
+# Node, PostgreSQL and DNS only require local, IPv4 and IPv6 sockets. The
+# @system-service allow-list retains the normal Node/libuv syscall surface while
+# excluding privileged kernel-management syscall classes.
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+SystemCallArchitectures=native
+SystemCallFilter=@system-service
+SystemCallErrorNumber=EPERM
+
+LimitCORE=0
+LimitNOFILE=65536
+TasksMax=256
+StandardOutput=journal
+StandardError=journal
 
 [Install]
 WantedBy=multi-user.target

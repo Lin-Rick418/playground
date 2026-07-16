@@ -1,8 +1,20 @@
 import { randomUUID } from "node:crypto";
 import { URL } from "node:url";
-import type { Server } from "node:http";
+import type { IncomingMessage, Server } from "node:http";
+import type { Duplex } from "node:stream";
 import { WebSocket, WebSocketServer } from "ws";
+import {
+  liveClientMessageSchema,
+  liveServerMessageSchema,
+  type LiveClientMessage,
+  type LiveServerMessage,
+} from "@baccarat/contracts";
 import { verifyToken } from "./auth.js";
+import { contractIssues } from "./contracts.js";
+import {
+  validatePlayerWebSocketSession,
+  type AuthorizationRevocationReason,
+} from "./authorization-state.js";
 import {
   buildLobbyTables,
   buildTablePublicState,
@@ -10,57 +22,106 @@ import {
   buildUserLiveState,
   findTableById,
   findUserById,
+  isAuthSessionActive,
 } from "./db.js";
 import { startLiveEventSubscriber, type LiveEvent } from "./live-events.js";
+import {
+  MAX_WEBSOCKET_MESSAGES_PER_WINDOW,
+  MAX_WEBSOCKET_PAYLOAD_BYTES,
+  MAX_WEBSOCKET_UPGRADES_PER_IP,
+  WEBSOCKET_MESSAGE_WINDOW_MS,
+  WEBSOCKET_UPGRADE_WINDOW_MS,
+  consumeRateLimit,
+  isConnectionLimitExceeded,
+  isWebSocketPayloadAllowed,
+  pruneRateWindows,
+  type RateWindow,
+  type WebSocketClientMessage,
+} from "./live-ws-policy.js";
 import { getRoundConfig } from "./round-manager.js";
+import type { UserRole } from "../types/domain.js";
 
 type LiveSocketConnection = {
   id: string;
   userId: string;
+  clientIp: string;
+  sessionId: string;
+  role: UserRole;
   socket: WebSocket;
+  lastPongAt: number;
+  messageWindow: RateWindow;
   subscription: { scope: "none" } | { scope: "lobby" } | { scope: "table"; tableId: string };
 };
 
-type ClientMessage = { type: "subscribe_lobby" } | { type: "subscribe_table"; tableId: string };
-
-type ServerMessage =
-  | { type: "connected"; serverTime: string }
-  | { type: "error"; message: string }
-  | {
-      type: "lobby_snapshot";
-      data: {
-        tables: Awaited<ReturnType<typeof buildLobbyTables>>;
-        config: ReturnType<typeof getRoundConfig>;
-        serverTime: string;
-      };
-    }
-  | {
-      type: "table_snapshot";
-      data: NonNullable<Awaited<ReturnType<typeof buildTablePublicState>>> & {
-        config: ReturnType<typeof getRoundConfig>;
-      };
-    }
-  | {
-      type: "table_user_snapshot";
-      data: Awaited<ReturnType<typeof buildTableUserState>>;
-    }
-  | {
-      type: "user_snapshot";
-      data: NonNullable<Awaited<ReturnType<typeof buildUserLiveState>>>;
-    };
-
 const connections = new Map<string, LiveSocketConnection>();
+const upgradeWindows = new Map<string, RateWindow>();
 let stopSubscriber: null | (() => Promise<void>) = null;
 
 const HEARTBEAT_INTERVAL_MS = 30_000;
 const HEARTBEAT_TIMEOUT_MS = 10_000;
+const WS_UNAUTHORIZED_CLOSE_CODE = 4401;
+const WS_FORBIDDEN_CLOSE_CODE = 4403;
 
-function sendMessage(socket: WebSocket, message: ServerMessage) {
+function sendMessage(socket: WebSocket, message: LiveServerMessage) {
   if (socket.readyState !== WebSocket.OPEN) {
     return;
   }
 
-  socket.send(JSON.stringify(message));
+  const parsed = liveServerMessageSchema.safeParse(message);
+
+  if (!parsed.success) {
+    console.error("WebSocket response contract validation failed", {
+      type: message.type,
+      issues: contractIssues(parsed.error),
+    });
+  }
+
+  const payload = parsed.success
+    ? parsed.data
+    : { type: "error" as const, message: "Live data unavailable" };
+
+  try {
+    socket.send(JSON.stringify(payload), (error) => {
+      if (error) {
+        console.error("Live WebSocket send failed", error);
+        socket.terminate();
+      }
+    });
+  } catch (error) {
+    console.error("Live WebSocket send failed", error);
+    socket.terminate();
+  }
+}
+
+function revokeLiveConnection(
+  connection: LiveSocketConnection,
+  reason: AuthorizationRevocationReason,
+) {
+  connections.delete(connection.id);
+  sendMessage(connection.socket, { type: "auth_revoked", reason });
+  connection.socket.close(
+    reason === "user_deleted" ? WS_UNAUTHORIZED_CLOSE_CODE : WS_FORBIDDEN_CLOSE_CODE,
+    reason,
+  );
+}
+
+async function revalidateLiveConnection(connection: LiveSocketConnection) {
+  const decision = validatePlayerWebSocketSession(
+    connection.role,
+    await buildUserLiveState(connection.userId),
+  );
+
+  if (!decision.authorized) {
+    revokeLiveConnection(connection, decision.reason);
+    return null;
+  }
+
+  if (decision.user.role !== "PLAYER") {
+    revokeLiveConnection(connection, "role_changed");
+    return null;
+  }
+
+  return { ...decision.user, role: "PLAYER" as const };
 }
 
 async function pushLobbySnapshot(connection: LiveSocketConnection) {
@@ -76,21 +137,17 @@ async function pushLobbySnapshot(connection: LiveSocketConnection) {
 }
 
 async function pushUserSnapshot(connection: LiveSocketConnection) {
-  const user = await buildUserLiveState(connection.userId);
+  const user = await revalidateLiveConnection(connection);
 
   if (!user) {
-    sendMessage(connection.socket, {
-      type: "error",
-      message: "User not found",
-    });
-    connection.socket.close();
-    return;
+    return false;
   }
 
   sendMessage(connection.socket, {
     type: "user_snapshot",
     data: user,
   });
+  return true;
 }
 
 async function pushTableSnapshot(connection: LiveSocketConnection, tableId: string) {
@@ -121,10 +178,14 @@ async function pushTableUserSnapshot(connection: LiveSocketConnection, tableId: 
   });
 }
 
-async function handleSubscriptionMessage(connection: LiveSocketConnection, message: ClientMessage) {
+async function handleSubscriptionMessage(connection: LiveSocketConnection, message: LiveClientMessage) {
+  if (!(await pushUserSnapshot(connection))) {
+    return;
+  }
+
   if (message.type === "subscribe_lobby") {
     connection.subscription = { scope: "lobby" };
-    await Promise.all([pushLobbySnapshot(connection), pushUserSnapshot(connection)]);
+    await pushLobbySnapshot(connection);
     return;
   }
 
@@ -138,10 +199,20 @@ async function handleSubscriptionMessage(connection: LiveSocketConnection, messa
   }
 
   connection.subscription = { scope: "table", tableId: table.id };
-  await Promise.all([pushTableSnapshot(connection, table.id), pushTableUserSnapshot(connection, table.id), pushUserSnapshot(connection)]);
+  await Promise.all([pushTableSnapshot(connection, table.id), pushTableUserSnapshot(connection, table.id)]);
 }
 
 async function handleLiveEvent(event: LiveEvent) {
+  if (event.type === "session_revoked") {
+    for (const connection of connections.values()) {
+      if (connection.sessionId === event.sessionId) {
+        sendMessage(connection.socket, { type: "error", message: "Session ended" });
+        connection.socket.close(1008, "Session ended");
+      }
+    }
+    return;
+  }
+
   if (event.type === "table_changed") {
     const lobbyConnections = Array.from(connections.values()).filter((connection) => connection.subscription.scope === "lobby");
     const tableConnections = Array.from(connections.values()).filter(
@@ -176,41 +247,110 @@ async function handleLiveEvent(event: LiveEvent) {
       }
     }
 
+    const tableUserStates = new Map<
+      string,
+      Awaited<ReturnType<typeof buildTableUserState>>
+    >();
     await Promise.all(
-      tableConnections.map((connection) => pushTableUserSnapshot(connection, event.tableId)),
+      Array.from(new Set(tableConnections.map((connection) => connection.userId)), async (userId) => {
+        tableUserStates.set(userId, await buildTableUserState(userId, event.tableId));
+      }),
     );
+    for (const connection of tableConnections) {
+      const state = tableUserStates.get(connection.userId);
+      if (state) {
+        sendMessage(connection.socket, { type: "table_user_snapshot", data: state });
+      }
+    }
     return;
   }
 
   const matchingConnections = Array.from(connections.values()).filter((connection) => connection.userId === event.userId);
-  await Promise.all(
-    matchingConnections.map(async (connection) => {
-      await pushUserSnapshot(connection);
-      if (connection.subscription.scope === "table") {
-        await pushTableUserSnapshot(connection, connection.subscription.tableId);
-      }
-    }),
+  const tableIds = Array.from(
+    new Set(
+      matchingConnections.flatMap((connection) =>
+        connection.subscription.scope === "table" ? [connection.subscription.tableId] : [],
+      ),
+    ),
   );
+  const [user, tableStates] = await Promise.all([
+    buildUserLiveState(event.userId),
+    Promise.all(tableIds.map(async (tableId) => [tableId, await buildTableUserState(event.userId, tableId)] as const)),
+  ]);
+  const tableStateById = new Map(tableStates);
+
+  for (const connection of matchingConnections) {
+    const decision = validatePlayerWebSocketSession(connection.role, user);
+    if (!decision.authorized) {
+      revokeLiveConnection(connection, decision.reason);
+      continue;
+    }
+
+    if (decision.user.role !== "PLAYER") {
+      revokeLiveConnection(connection, "role_changed");
+      continue;
+    }
+
+    sendMessage(connection.socket, {
+      type: "user_snapshot",
+      data: { ...decision.user, role: "PLAYER" as const },
+    });
+    if (connection.subscription.scope === "table") {
+      const state = tableStateById.get(connection.subscription.tableId);
+      if (state) {
+        sendMessage(connection.socket, { type: "table_user_snapshot", data: state });
+      }
+    }
+  }
 }
 
-function parseClientMessage(data: string): ClientMessage | null {
+function parseClientMessage(data: string): LiveClientMessage | null {
   try {
-    const message = JSON.parse(data) as ClientMessage;
-    if (message.type === "subscribe_lobby") {
-      return message;
+    const parsed = liveClientMessageSchema.safeParse(JSON.parse(data));
+
+    if (!parsed.success) {
+      console.warn("WebSocket request contract validation failed", {
+        issues: contractIssues(parsed.error),
+      });
+      return null;
     }
 
-    if (message.type === "subscribe_table" && typeof message.tableId === "string") {
-      return message;
-    }
-
-    return null;
+    return parsed.data;
   } catch {
+    console.warn("WebSocket request contract validation failed", {
+      issues: [{ code: "invalid_json", path: "" }],
+    });
     return null;
   }
 }
 
 const WS_AUTH_PROTOCOL = "bearer";
+
+function rejectUpgrade(socket: Duplex, statusCode: number, message: string) {
+  if (socket.destroyed) {
+    return;
+  }
+
+  socket.end(
+    `HTTP/1.1 ${statusCode} ${message}\r\nConnection: close\r\nContent-Type: text/plain\r\nContent-Length: ${Buffer.byteLength(message)}\r\n\r\n${message}`,
+  );
+}
+
+function isLoopbackAddress(address: string) {
+  return address === "127.0.0.1" || address === "::1" || address === "::ffff:127.0.0.1";
+}
+
+function getClientIp(request: IncomingMessage) {
+  const remoteAddress = request.socket.remoteAddress ?? "unknown";
+  const forwarded = request.headers["x-forwarded-for"];
+
+  if (!isLoopbackAddress(remoteAddress) || !forwarded) {
+    return remoteAddress;
+  }
+
+  const value = Array.isArray(forwarded) ? forwarded[0] : forwarded;
+  return value.split(",", 1)[0]?.trim() || remoteAddress;
+}
 
 // The client sends its JWT via Sec-WebSocket-Protocol ("bearer, <token>")
 // instead of the query string, so tokens never appear in access logs.
@@ -230,7 +370,11 @@ function extractTokenFromProtocolHeader(header: string | string[] | undefined) {
 export async function attachLiveWebSocketServer(server: Server) {
   const wss = new WebSocketServer({
     noServer: true,
+    maxPayload: MAX_WEBSOCKET_PAYLOAD_BYTES,
     handleProtocols: (protocols) => (protocols.has(WS_AUTH_PROTOCOL) ? WS_AUTH_PROTOCOL : false),
+  });
+  wss.on("error", (error) => {
+    console.error("Live WebSocket server error", error);
   });
   let heartbeatInterval: ReturnType<typeof setInterval> | null = null;
 
@@ -239,87 +383,172 @@ export async function attachLiveWebSocketServer(server: Server) {
   }
 
   heartbeatInterval = setInterval(() => {
+    const now = Date.now();
+    pruneRateWindows(upgradeWindows, now, WEBSOCKET_UPGRADE_WINDOW_MS);
+
     for (const connection of connections.values()) {
       const ws = connection.socket;
-      if ((ws as WebSocket & { isAlive?: boolean }).isAlive === false) {
+      if (now - connection.lastPongAt > HEARTBEAT_INTERVAL_MS + HEARTBEAT_TIMEOUT_MS) {
         connections.delete(connection.id);
         ws.terminate();
         continue;
       }
-      (ws as WebSocket & { isAlive?: boolean }).isAlive = false;
       ws.ping();
+      void revalidateLiveConnection(connection).catch((error) => {
+        console.error("Live WebSocket authorization revalidation failed", error);
+      });
     }
   }, HEARTBEAT_INTERVAL_MS);
 
-  server.on("upgrade", async (request, socket, head) => {
+  async function handleUpgrade(request: IncomingMessage, socket: Duplex, head: Buffer) {
     const requestUrl = new URL(request.url ?? "/", "http://localhost");
 
     if (!["/ws", "/api/ws"].includes(requestUrl.pathname)) {
-      socket.destroy();
+      rejectUpgrade(socket, 404, "Not Found");
+      return;
+    }
+
+    const clientIp = getClientIp(request);
+    const upgradeWindow = upgradeWindows.get(clientIp) ?? { timestamps: [] };
+    upgradeWindows.set(clientIp, upgradeWindow);
+    if (
+      !consumeRateLimit(
+        upgradeWindow,
+        Date.now(),
+        MAX_WEBSOCKET_UPGRADES_PER_IP,
+        WEBSOCKET_UPGRADE_WINDOW_MS,
+      )
+    ) {
+      rejectUpgrade(socket, 429, "Too Many Requests");
+      return;
+    }
+
+    const connectionsForIp = Array.from(connections.values()).filter(
+      (connection) => connection.clientIp === clientIp,
+    ).length;
+    if (isConnectionLimitExceeded({ total: connections.size, forIp: connectionsForIp })) {
+      rejectUpgrade(socket, 503, "WebSocket Capacity Reached");
       return;
     }
 
     const token = extractTokenFromProtocolHeader(request.headers["sec-websocket-protocol"]);
     if (!token) {
-      socket.destroy();
+      rejectUpgrade(socket, 401, "Unauthorized");
       return;
     }
 
-    try {
-      const payload = verifyToken(token);
-      const user = await findUserById(payload.userId);
+    const payload = verifyToken(token);
+    const [user, sessionActive] = await Promise.all([
+      findUserById(payload.userId),
+      isAuthSessionActive(payload.sessionId),
+    ]);
 
-      if (!user || !user.isActive) {
-        socket.destroy();
-        return;
-      }
+    if (!user || !user.isActive || user.role !== "PLAYER" || !sessionActive) {
+      rejectUpgrade(socket, 401, "Unauthorized");
+      return;
+    }
 
-      wss.handleUpgrade(request, socket, head, (ws) => {
-        const connection: LiveSocketConnection = {
-          id: randomUUID(),
-          userId: payload.userId,
-          socket: ws,
-          subscription: { scope: "none" },
-        };
+    const connectionsForUser = Array.from(connections.values()).filter(
+      (connection) => connection.userId === payload.userId,
+    ).length;
+    if (
+      isConnectionLimitExceeded({
+        total: connections.size,
+        forIp: connectionsForIp,
+        forUser: connectionsForUser,
+      })
+    ) {
+      rejectUpgrade(socket, 429, "Connection Limit Reached");
+      return;
+    }
 
-        connections.set(connection.id, connection);
-        (ws as WebSocket & { isAlive?: boolean }).isAlive = true;
-        sendMessage(ws, {
-          type: "connected",
-          serverTime: new Date().toISOString(),
-        });
+    wss.handleUpgrade(request, socket, head, (ws) => {
+      const connection: LiveSocketConnection = {
+        id: randomUUID(),
+        userId: payload.userId,
+        clientIp,
+        sessionId: payload.sessionId,
+        role: user.role,
+        socket: ws,
+        lastPongAt: Date.now(),
+        messageWindow: { timestamps: [] },
+        subscription: { scope: "none" },
+      };
 
-        ws.on("pong", () => {
-          (ws as WebSocket & { isAlive?: boolean }).isAlive = true;
-        });
+      connections.set(connection.id, connection);
+      sendMessage(ws, {
+        type: "connected",
+        serverTime: new Date().toISOString(),
+      });
 
-        ws.on("message", async (raw) => {
-          const message = parseClientMessage(raw.toString());
-          if (!message) {
-            sendMessage(ws, {
-              type: "error",
-              message: "Invalid live message",
-            });
-            return;
-          }
+      ws.on("pong", () => {
+        connection.lastPongAt = Date.now();
+      });
 
-          await handleSubscriptionMessage(connection, message);
-        });
+      ws.on("message", (raw, isBinary) => {
+        if (isBinary) {
+          ws.close(1003, "Text messages only");
+          return;
+        }
 
-        ws.on("close", () => {
-          connections.delete(connection.id);
-        });
+        const payloadBytes = Array.isArray(raw)
+          ? raw.reduce((total, chunk) => total + chunk.byteLength, 0)
+          : raw.byteLength;
+        if (!isWebSocketPayloadAllowed(payloadBytes)) {
+          ws.close(1009, "Message too large");
+          return;
+        }
 
-        ws.on("error", () => {
-          connections.delete(connection.id);
+        if (
+          !consumeRateLimit(
+            connection.messageWindow,
+            Date.now(),
+            MAX_WEBSOCKET_MESSAGES_PER_WINDOW,
+            WEBSOCKET_MESSAGE_WINDOW_MS,
+          )
+        ) {
+          sendMessage(ws, { type: "error", message: "Message rate limit exceeded" });
+          ws.close(1008, "Message rate limit exceeded");
+          return;
+        }
+
+        const message = parseClientMessage(raw.toString());
+        if (!message) {
+          sendMessage(ws, {
+            type: "error",
+            message: "Invalid live message",
+          });
+          return;
+        }
+
+        void handleSubscriptionMessage(connection, message).catch((error: unknown) => {
+          console.error("Live WebSocket message handler failed", error);
+          sendMessage(ws, { type: "error", message: "Live update failed" });
+          ws.close(1011, "Live update failed");
         });
       });
-    } catch {
-      socket.destroy();
-    }
-  });
+
+      ws.on("close", () => {
+        connections.delete(connection.id);
+      });
+
+      ws.on("error", (error) => {
+        console.error("Live WebSocket connection error", error);
+        connections.delete(connection.id);
+      });
+    });
+  }
+
+  const onUpgrade = (request: IncomingMessage, socket: Duplex, head: Buffer) => {
+    void handleUpgrade(request, socket, head).catch((error: unknown) => {
+      console.error("Live WebSocket upgrade failed", error);
+      rejectUpgrade(socket, 401, "Unauthorized");
+    });
+  };
+  server.on("upgrade", onUpgrade);
 
   return async () => {
+    server.off("upgrade", onUpgrade);
     if (heartbeatInterval) {
       clearInterval(heartbeatInterval);
       heartbeatInterval = null;
@@ -328,6 +557,7 @@ export async function attachLiveWebSocketServer(server: Server) {
       connection.socket.close();
     }
     connections.clear();
+    upgradeWindows.clear();
     await stopSubscriber?.();
     stopSubscriber = null;
     wss.close();

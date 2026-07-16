@@ -59,7 +59,7 @@ const FOUR_BIT_MAP = {
 } as const;
 
 function getFourBitNumber(fourBit: BaccaratGameData["fourBit"]) {
-  return FOUR_BIT_MAP[fourBit] ?? 0;
+  return FOUR_BIT_MAP[fourBit];
 }
 
 function normalizeWinType(winType: GameResult): PositionWinType | null {
