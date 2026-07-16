@@ -220,7 +220,11 @@ export function getRoundConfig() {
   };
 }
 
-export async function startRoundManager() {
+export type RoundManagerTickResult = { healthy: boolean; detail?: string };
+
+export async function startRoundManager(options?: {
+  onTickComplete?: (result: RoundManagerTickResult) => Promise<void> | void;
+}) {
   if (roundManagerState.__baccaratRoundManagerInterval) {
     return;
   }
@@ -231,6 +235,7 @@ export async function startRoundManager() {
     }
 
     roundManagerState.__baccaratRoundManagerTicking = true;
+    let tickResult: RoundManagerTickResult = { healthy: false, detail: "Round manager tick did not complete" };
 
     try {
       const now = Date.now();
@@ -244,9 +249,22 @@ export async function startRoundManager() {
       }
 
       await runDailyCleanup(now);
+      const rejectedCount = results.filter((result) => result.status === "rejected").length;
+      tickResult = rejectedCount === 0
+        ? { healthy: true }
+        : { healthy: false, detail: `${rejectedCount} table tick(s) failed` };
     } catch (error) {
       console.error("Round manager tick failed", error);
+      tickResult = {
+        healthy: false,
+        detail: error instanceof Error ? error.message : String(error),
+      };
     } finally {
+      try {
+        await options?.onTickComplete?.(tickResult);
+      } catch (error) {
+        console.error("Round manager heartbeat failed", error);
+      }
       roundManagerState.__baccaratRoundManagerTicking = false;
     }
   };
