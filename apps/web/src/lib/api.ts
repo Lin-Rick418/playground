@@ -1,9 +1,15 @@
 import axios from "axios";
-import { getStoredToken } from "./settings";
+import { clearStoredToken, getStoredToken, setStoredToken } from "./settings";
+
+const baseURL = import.meta.env.VITE_API_BASE_URL ?? "/api";
 
 export const api = axios.create({
-  baseURL: import.meta.env.VITE_API_BASE_URL ?? "/api",
+  baseURL,
+  withCredentials: true,
 });
+
+const sessionApi = axios.create({ baseURL, withCredentials: true });
+let refreshPromise: Promise<string> | null = null;
 
 api.interceptors.request.use((config) => {
   const token = getStoredToken();
@@ -13,4 +19,35 @@ api.interceptors.request.use((config) => {
   }
 
   return config;
+});
+
+api.interceptors.response.use(undefined, async (error) => {
+  const request = error.config as (typeof error.config & { _sessionRetry?: boolean }) | undefined;
+  const skipsRefresh =
+    typeof request?.url === "string" &&
+    ["/auth/login", "/auth/refresh", "/auth/logout"].includes(request.url);
+
+  if (!axios.isAxiosError(error) || error.response?.status !== 401 || !request || request._sessionRetry || skipsRefresh) {
+    throw error;
+  }
+
+  request._sessionRetry = true;
+  refreshPromise ??= sessionApi
+    .post<{ token: string }>("/auth/refresh")
+    .then(({ data }) => {
+      setStoredToken(data.token);
+      return data.token;
+    })
+    .finally(() => {
+      refreshPromise = null;
+    });
+
+  try {
+    const token = await refreshPromise;
+    request.headers.Authorization = `Bearer ${token}`;
+    return api(request);
+  } catch (refreshError) {
+    clearStoredToken();
+    throw refreshError;
+  }
 });

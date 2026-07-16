@@ -76,12 +76,20 @@ export function useLiveChannel(options: UseLiveChannelOptions) {
           return;
         }
 
-        clearReconnectTimer();
-        const delayMs = Math.min(1000 * 2 ** reconnectAttempts, 30000);
-        reconnectAttempts++;
-        reconnectTimer = window.setTimeout(() => {
-          connect();
-        }, delayMs);
+        void authStore
+          .ensureFreshAccessToken()
+          .then(() => {
+            clearReconnectTimer();
+            const delayMs = Math.min(1000 * 2 ** reconnectAttempts, 30000);
+            reconnectAttempts++;
+            reconnectTimer = window.setTimeout(() => {
+              connect();
+            }, delayMs);
+          })
+          .catch(() => {
+            authStore.logout();
+            void router.push("/login");
+          });
       },
     });
   }

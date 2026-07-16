@@ -1,9 +1,28 @@
-import { Router } from "express";
+import { Router, type Response } from "express";
+import { randomUUID } from "node:crypto";
 import bcrypt from "bcryptjs";
 import { z } from "zod";
 import { signToken } from "../../lib/auth.js";
+import { env } from "../../config/env.js";
 import { authenticate, type AuthenticatedRequest } from "../../middleware/authenticate.js";
-import { findUserById, findUserByUsername } from "../../lib/db.js";
+import {
+  createAuthSession,
+  findUserById,
+  findUserByUsername,
+  revokeAuthSessionByRefreshTokenHash,
+  rotateAuthSession,
+} from "../../lib/db.js";
+import { publishLiveEvent } from "../../lib/live-events.js";
+import {
+  ACCESS_TOKEN_TTL_SECONDS,
+  REFRESH_COOKIE_NAME,
+  REFRESH_TOKEN_TTL_MS,
+  createRefreshToken,
+  getRefreshCookieOptions,
+  hashRefreshToken,
+  readCookie,
+} from "../../lib/session-token.js";
+import type { UserRecord } from "../../types/domain.js";
 
 const loginSchema = z.object({
   username: z.string().min(1),
@@ -18,6 +37,35 @@ const loginAttempts = new Map<string, { count: number; resetAt: number }>();
 // Equalizes bcrypt timing for unknown usernames so response time does not
 // reveal whether an account exists.
 const dummyPasswordHash = bcrypt.hashSync("login-timing-placeholder", 10);
+
+function setRefreshCookie(res: Response, token: string) {
+  res.cookie(REFRESH_COOKIE_NAME, token, {
+    ...getRefreshCookieOptions(env.isProduction),
+    maxAge: REFRESH_TOKEN_TTL_MS,
+  });
+}
+
+function clearRefreshCookie(res: Response) {
+  res.clearCookie(REFRESH_COOKIE_NAME, getRefreshCookieOptions(env.isProduction));
+}
+
+function buildAuthResponse(user: UserRecord, sessionId: string) {
+  return {
+    token: signToken({
+      userId: user.id,
+      role: user.role,
+      sessionId,
+    }),
+    accessTokenExpiresAt: new Date(Date.now() + ACCESS_TOKEN_TTL_SECONDS * 1000).toISOString(),
+    user: {
+      id: user.id,
+      username: user.username,
+      role: user.role,
+      isActive: user.isActive,
+      balance: user.balance,
+    },
+  };
+}
 
 function isLoginRateLimited(key: string) {
   const now = Date.now();
@@ -43,6 +91,11 @@ function isLoginRateLimited(key: string) {
 
 export const authRouter = Router();
 
+authRouter.use((_req, res, next) => {
+  res.setHeader("Cache-Control", "no-store");
+  next();
+});
+
 authRouter.post("/login", async (req, res) => {
   if (isLoginRateLimited(req.ip ?? "unknown")) {
     return res.status(429).json({ message: "Too many login attempts, try again later" });
@@ -67,21 +120,66 @@ authRouter.post("/login", async (req, res) => {
     return res.status(403).json({ message: "Account is disabled" });
   }
 
-  const token = signToken({
+  const sessionId = randomUUID();
+  const refreshToken = createRefreshToken();
+  await createAuthSession({
+    id: sessionId,
     userId: user.id,
-    role: user.role,
+    refreshTokenHash: hashRefreshToken(refreshToken),
+    expiresAt: new Date(Date.now() + REFRESH_TOKEN_TTL_MS).toISOString(),
+  });
+  setRefreshCookie(res, refreshToken);
+
+  return res.json(buildAuthResponse(user, sessionId));
+});
+
+authRouter.post("/refresh", async (req, res) => {
+  const currentRefreshToken = readCookie(req.headers.cookie, REFRESH_COOKIE_NAME);
+  if (!currentRefreshToken) {
+    clearRefreshCookie(res);
+    return res.status(401).json({ message: "Session expired" });
+  }
+
+  const nextRefreshToken = createRefreshToken();
+  const session = await rotateAuthSession({
+    currentRefreshTokenHash: hashRefreshToken(currentRefreshToken),
+    nextRefreshTokenHash: hashRefreshToken(nextRefreshToken),
   });
 
-  return res.json({
-    token,
-    user: {
-      id: user.id,
-      username: user.username,
-      role: user.role,
-      isActive: user.isActive,
-      balance: user.balance,
-    },
-  });
+  if (!session) {
+    clearRefreshCookie(res);
+    return res.status(401).json({ message: "Session expired" });
+  }
+
+  const user = await findUserById(session.userId);
+  if (!user || !user.isActive) {
+    await revokeAuthSessionByRefreshTokenHash(hashRefreshToken(nextRefreshToken));
+    clearRefreshCookie(res);
+    return res.status(401).json({ message: "Session expired" });
+  }
+
+  setRefreshCookie(res, nextRefreshToken);
+  return res.json(buildAuthResponse(user, session.id));
+});
+
+authRouter.post("/logout", async (req, res) => {
+  const refreshToken = readCookie(req.headers.cookie, REFRESH_COOKIE_NAME);
+  const session = refreshToken
+    ? await revokeAuthSessionByRefreshTokenHash(hashRefreshToken(refreshToken))
+    : null;
+  clearRefreshCookie(res);
+
+  if (session) {
+    await publishLiveEvent({
+      type: "session_revoked",
+      sessionId: session.id,
+      userId: session.userId,
+      reason: "logout",
+      at: new Date().toISOString(),
+    });
+  }
+
+  return res.status(204).send();
 });
 
 authRouter.get("/me", authenticate, async (req: AuthenticatedRequest, res) => {

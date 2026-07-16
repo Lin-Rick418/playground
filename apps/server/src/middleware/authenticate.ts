@@ -1,5 +1,6 @@
 import type { NextFunction, Request, Response } from "express";
 import { verifyToken, type JwtPayload } from "../lib/auth.js";
+import { isAuthSessionActive } from "../lib/db.js";
 import type { UserRecord } from "../types/domain.js";
 
 export type AuthenticatedRequest = Request & {
@@ -19,8 +20,16 @@ export function authenticate(req: AuthenticatedRequest, res: Response, next: Nex
 
   try {
     const payload = verifyToken(token);
-    req.user = payload;
-    next();
+    return isAuthSessionActive(payload.sessionId)
+      .then((isActive) => {
+        if (!isActive) {
+          return res.status(401).json({ message: "Session expired" });
+        }
+
+        req.user = payload;
+        next();
+      })
+      .catch(next);
   } catch {
     return res.status(401).json({ message: "Invalid token" });
   }

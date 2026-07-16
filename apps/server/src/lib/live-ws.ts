@@ -10,6 +10,7 @@ import {
   buildUserLiveState,
   findTableById,
   findUserById,
+  isAuthSessionActive,
 } from "./db.js";
 import { startLiveEventSubscriber, type LiveEvent } from "./live-events.js";
 import { getRoundConfig } from "./round-manager.js";
@@ -17,6 +18,7 @@ import { getRoundConfig } from "./round-manager.js";
 type LiveSocketConnection = {
   id: string;
   userId: string;
+  sessionId: string;
   socket: WebSocket;
   subscription: { scope: "none" } | { scope: "lobby" } | { scope: "table"; tableId: string };
 };
@@ -142,6 +144,16 @@ async function handleSubscriptionMessage(connection: LiveSocketConnection, messa
 }
 
 async function handleLiveEvent(event: LiveEvent) {
+  if (event.type === "session_revoked") {
+    for (const connection of connections.values()) {
+      if (connection.sessionId === event.sessionId) {
+        sendMessage(connection.socket, { type: "error", message: "Session ended" });
+        connection.socket.close(1008, "Session ended");
+      }
+    }
+    return;
+  }
+
   if (event.type === "table_changed") {
     const lobbyConnections = Array.from(connections.values()).filter((connection) => connection.subscription.scope === "lobby");
     const tableConnections = Array.from(connections.values()).filter(
@@ -267,9 +279,12 @@ export async function attachLiveWebSocketServer(server: Server) {
 
     try {
       const payload = verifyToken(token);
-      const user = await findUserById(payload.userId);
+      const [user, sessionActive] = await Promise.all([
+        findUserById(payload.userId),
+        isAuthSessionActive(payload.sessionId),
+      ]);
 
-      if (!user || !user.isActive) {
+      if (!user || !user.isActive || !sessionActive) {
         socket.destroy();
         return;
       }
@@ -278,6 +293,7 @@ export async function attachLiveWebSocketServer(server: Server) {
         const connection: LiveSocketConnection = {
           id: randomUUID(),
           userId: payload.userId,
+          sessionId: payload.sessionId,
           socket: ws,
           subscription: { scope: "none" },
         };

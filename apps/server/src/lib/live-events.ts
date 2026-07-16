@@ -15,6 +15,13 @@ export type LiveEvent =
       userId: string;
       reason: string;
       at: string;
+    }
+  | {
+      type: "session_revoked";
+      sessionId: string;
+      userId: string;
+      reason: string;
+      at: string;
     };
 
 export async function publishLiveEvent(event: LiveEvent, executor: PoolClient | typeof pool = pool) {

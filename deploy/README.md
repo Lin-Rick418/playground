@@ -151,3 +151,10 @@ pg_dump -U baccarat baccarat > /var/backups/baccarat-$(date +%F).sql
 - WebSocket 透過 `/api/ws` 經 nginx 轉發到後端
 - API 和 worker 是兩個獨立服務，都必須常駐
 - 不要同時啟多個 worker，否則會重複推局
+
+### Session security
+
+- Access JWT 僅存於 browser memory，效期 15 分鐘；不得改回 `localStorage`。
+- 7 天 refresh token 只以 `HttpOnly`、`SameSite=Strict` cookie 傳輸，資料庫只保存 SHA-256 hash；每次 refresh 都 rotation。
+- `POST /api/auth/logout` 會 revoke server session、清 cookie，並關閉同一 session 的 WebSocket；後續 HTTP request 即使尚有未過期 access JWT 也會被拒絕。
+- nginx security headers 包含 CSP、HSTS、frame/MIME/referrer/permissions/COOP。HSTS 只有在 HTTPS 回應生效，上線前必須先完成 TLS 與 HTTP→HTTPS redirect。
