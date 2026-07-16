@@ -26,7 +26,6 @@ export type {
   UserRole,
 } from "@baccarat/contracts";
 export type BaccaratPairType = "PLAYER_PAIR" | "BANKER_PAIR" | "BOTH_PAIR" | "NO_PAIR";
-
 export type RoundHistoryItem = {
   id: string;
   createdAt: string;

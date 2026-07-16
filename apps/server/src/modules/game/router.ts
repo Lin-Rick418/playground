@@ -25,6 +25,7 @@ import {
   findTableById,
   findUserById,
   getActiveRound,
+  getShoeAuditBundle,
   getUserDailyProfit,
   getUserUnsettledMaximumPayout,
   listUserHistory,
@@ -34,6 +35,7 @@ import {
 import { fingerprintIdempotencyRequest, parseIdempotencyKey } from "../../lib/idempotency.js";
 import { publishLiveEvent } from "../../lib/live-events.js";
 import { getRoundConfig } from "../../lib/round-manager.js";
+import { toPublicShoeAudit } from "../../lib/shoe-audit.js";
 import { authenticate, type AuthenticatedRequest } from "../../middleware/authenticate.js";
 
 const BETTING_OPEN_GRACE_MS = 400;
@@ -92,6 +94,16 @@ gameRouter.get("/daily-profit", async (req: AuthenticatedRequest, res) => {
     ...totals,
     calculatedAt: calculatedAt.toISOString(),
   });
+});
+
+gameRouter.get("/shoes/:shoeId/audit", async (req, res) => {
+  const audit = await getShoeAuditBundle(String(req.params.shoeId));
+
+  if (!audit) {
+    return sendApiError(req, res, 404, "NOT_FOUND", "Shoe audit not found");
+  }
+
+  return res.json(toPublicShoeAudit(audit));
 });
 
 gameRouter.post("/tables/:tableId/bet", async (req: AuthenticatedRequest, res) => {

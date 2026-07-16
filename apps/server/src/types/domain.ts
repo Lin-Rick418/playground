@@ -1,7 +1,7 @@
 export const userRoles = ["ADMIN", "PLAYER"] as const;
 export const roundWinners = ["PLAYER", "BANKER", "TIE"] as const;
 export const betTypes = ["PLAYER", "BANKER", "TIE", "PLAYER_PAIR", "BANKER_PAIR"] as const;
-export const roundStatuses = ["OPEN", "LOCKED", "SETTLED"] as const;
+export const roundStatuses = ["OPEN", "LOCKED", "SETTLED", "CANCELLED"] as const;
 
 export type UserRole = (typeof userRoles)[number];
 export type RoundWinner = (typeof roundWinners)[number];
@@ -40,6 +40,7 @@ export type GameRoundRecord = {
   playerPair: boolean;
   bankerPair: boolean;
   status: RoundStatus;
+  cancellationReason: string | null;
   bettingOpensAt: string;
   bettingClosesAt: string;
   settledAt: string | null;

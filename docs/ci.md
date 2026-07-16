@@ -38,4 +38,4 @@ CI integration coverage 包含：
 - Baccarat payout、natural deal 與 banker third-card table
 - Bet debit、insufficient-balance rollback 與 persisted stake invariants
 - Settlement payout/balance invariant 與重複 settlement guard
-- Login、`/auth/me`、PLAYER/ADMIN authorization 與 balance adjustment persistence
+- Login、`/auth/me`、PLAYER-only authorization、session revocation 與 admin route removal

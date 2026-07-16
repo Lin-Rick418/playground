@@ -5,7 +5,7 @@ const isoDateTimeSchema = z.string().datetime({ offset: true });
 
 export const userRoleSchema = z.literal("PLAYER");
 export const roundWinnerSchema = z.enum(["PLAYER", "BANKER", "TIE"]);
-export const roundStatusSchema = z.enum(["OPEN", "LOCKED", "SETTLED"]);
+export const roundStatusSchema = z.enum(["OPEN", "LOCKED", "SETTLED", "CANCELLED"]);
 export const betTypeSchema = z.enum(["PLAYER", "BANKER", "TIE", "PLAYER_PAIR", "BANKER_PAIR"]);
 export const cardRankSchema = z.enum(["A", "2", "3", "4", "5", "6", "7", "8", "9", "10", "J", "Q", "K"]);
 export const cardSuitSchema = z.enum(["S", "H", "D", "C"]);
@@ -63,6 +63,7 @@ export const activeRoundSchema = z
     tableId: idSchema,
     shoeId: z.string(),
     status: roundStatusSchema,
+    cancellationReason: z.string().min(1).nullable(),
     bettingOpensAt: isoDateTimeSchema,
     bettingClosesAt: isoDateTimeSchema,
     settledAt: isoDateTimeSchema.nullable(),
@@ -87,6 +88,18 @@ export const currentBetSchema = z
   })
   .strict();
 
+export const shoeCommitmentSchema = z
+  .object({
+    version: z.number().int().positive(),
+    shoeId: idSchema,
+    shuffleAlgorithm: z.string().min(1),
+    dealAlgorithm: z.string().min(1),
+    deckCount: z.number().int().positive(),
+    commitment: z.string().regex(/^[0-9a-f]{64}$/),
+    committedAt: isoDateTimeSchema,
+  })
+  .strict();
+
 export const lobbyTableSchema = z
   .object({
     table: gameTableSchema,
@@ -94,6 +107,7 @@ export const lobbyTableSchema = z
     previousRound: activeRoundSchema.nullable(),
     recentRounds: z.array(activeRoundSchema),
     roadRounds: z.array(activeRoundSchema),
+    shoeAudit: shoeCommitmentSchema.nullable(),
   })
   .strict();
 
@@ -136,6 +150,7 @@ export const tableSnapshotSchema = z
     previousRound: activeRoundSchema.nullable(),
     presentation: presentationWindowSchema.nullable(),
     shoeStatus: shoeStatusSchema,
+    shoeAudit: shoeCommitmentSchema.nullable(),
     recentRounds: z.array(activeRoundSchema),
     roadRounds: z.array(activeRoundSchema),
     serverTime: isoDateTimeSchema,
@@ -199,6 +214,7 @@ export type LoginResponse = z.infer<typeof loginResponseSchema>;
 export type GameTable = z.infer<typeof gameTableSchema>;
 export type ActiveRound = z.infer<typeof activeRoundSchema>;
 export type CurrentBet = z.infer<typeof currentBetSchema>;
+export type ShoeCommitment = z.infer<typeof shoeCommitmentSchema>;
 export type LobbyTable = z.infer<typeof lobbyTableSchema>;
 export type RoundConfig = z.infer<typeof roundConfigSchema>;
 export type LobbyResponse = z.infer<typeof lobbyResponseSchema>;
