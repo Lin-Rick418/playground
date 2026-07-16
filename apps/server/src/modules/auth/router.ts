@@ -2,6 +2,7 @@ import { Router } from "express";
 import bcrypt from "bcryptjs";
 import { z } from "zod";
 import { signToken } from "../../lib/auth.js";
+import { sendApiError } from "../../lib/api-errors.js";
 import { authenticate, type AuthenticatedRequest } from "../../middleware/authenticate.js";
 import { findUserById, findUserByUsername } from "../../lib/db.js";
 
@@ -45,26 +46,26 @@ export const authRouter = Router();
 
 authRouter.post("/login", async (req, res) => {
   if (isLoginRateLimited(req.ip ?? "unknown")) {
-    return res.status(429).json({ message: "Too many login attempts, try again later" });
+    return sendApiError(req, res, 429, "RATE_LIMITED", "Too many login attempts, try again later");
   }
 
   const parsed = loginSchema.safeParse(req.body);
 
   if (!parsed.success) {
-    return res.status(400).json({ message: "Invalid login payload" });
+    return sendApiError(req, res, 400, "VALIDATION_ERROR", "Invalid login payload");
   }
 
   const user = await findUserByUsername(parsed.data.username);
   const isValid = await bcrypt.compare(parsed.data.password, user?.passwordHash ?? dummyPasswordHash);
 
   if (!user || !isValid) {
-    return res.status(401).json({ message: "Invalid credentials" });
+    return sendApiError(req, res, 401, "INVALID_CREDENTIALS", "Invalid credentials");
   }
 
   // Only revealed after the password is verified, so it cannot be used to
   // enumerate accounts.
   if (!user.isActive) {
-    return res.status(403).json({ message: "Account is disabled" });
+    return sendApiError(req, res, 403, "ACCOUNT_DISABLED", "Account is disabled");
   }
 
   const token = signToken({
@@ -88,11 +89,11 @@ authRouter.get("/me", authenticate, async (req: AuthenticatedRequest, res) => {
   const user = req.user ? await findUserById(req.user.userId) : null;
 
   if (!user) {
-    return res.status(404).json({ message: "User not found" });
+    return sendApiError(req, res, 404, "NOT_FOUND", "User not found");
   }
 
   if (!user.isActive) {
-    return res.status(403).json({ message: "Account is disabled" });
+    return sendApiError(req, res, 403, "ACCOUNT_DISABLED", "Account is disabled");
   }
 
   return res.json({

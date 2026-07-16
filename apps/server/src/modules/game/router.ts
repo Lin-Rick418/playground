@@ -2,6 +2,7 @@ import { Router } from "express";
 import { z } from "zod";
 import { authenticate, type AuthenticatedRequest } from "../../middleware/authenticate.js";
 import { requireRole } from "../../lib/auth.js";
+import { sendApiError } from "../../lib/api-errors.js";
 import {
   buildLobbyTables,
   buildTablePublicState,
@@ -52,11 +53,11 @@ gameRouter.get("/tables/:tableId/state", async (req: AuthenticatedRequest, res) 
   const publicState = await buildTablePublicState(tableId);
 
   if (!publicState) {
-    return res.status(404).json({ message: "Table not found" });
+    return sendApiError(req, res, 404, "NOT_FOUND", "Table not found");
   }
 
   if (!publicState.round) {
-    return res.status(503).json({ message: "No active round for table" });
+    return sendApiError(req, res, 503, "SERVICE_UNAVAILABLE", "No active round for table");
   }
 
   const userState = await buildTableUserState(req.currentUser!.id, tableId);
@@ -77,7 +78,7 @@ gameRouter.post("/tables/:tableId/bet", async (req: AuthenticatedRequest, res) =
   const parsed = placeBetSchema.safeParse(req.body);
 
   if (!parsed.success) {
-    return res.status(400).json({ message: "Invalid bet payload" });
+    return sendApiError(req, res, 400, "VALIDATION_ERROR", "Invalid bet payload");
   }
 
   const result = await withTransaction(async (client) => {
@@ -86,31 +87,31 @@ gameRouter.post("/tables/:tableId/bet", async (req: AuthenticatedRequest, res) =
     const table = await findTableById(tableId, client);
 
     if (!table) {
-      return { error: { status: 404, message: "Table not found" } } as const;
+      return { error: { status: 404, code: "NOT_FOUND", message: "Table not found" } } as const;
     }
 
     const activeRound = await getActiveRound(table.id, client, { forUpdate: true });
 
     if (!activeRound || activeRound.status !== "OPEN") {
-      return { error: { status: 400, message: "Betting is closed" } } as const;
+      return { error: { status: 400, code: "VALIDATION_ERROR", message: "Betting is closed" } } as const;
     }
 
     const now = Date.now();
     if (now < new Date(activeRound.bettingOpensAt).getTime() - BETTING_OPEN_GRACE_MS) {
-      return { error: { status: 400, message: "Betting is closed" } } as const;
+      return { error: { status: 400, code: "VALIDATION_ERROR", message: "Betting is closed" } } as const;
     }
 
     if (now >= new Date(activeRound.bettingClosesAt).getTime()) {
-      return { error: { status: 400, message: "Betting is closed" } } as const;
+      return { error: { status: 400, code: "VALIDATION_ERROR", message: "Betting is closed" } } as const;
     }
 
     if (parsed.data.bets.some((bet) => bet.amount < table.minBet)) {
-      return { error: { status: 400, message: `Minimum bet is ${table.minBet}` } } as const;
+      return { error: { status: 400, code: "VALIDATION_ERROR", message: `Minimum bet is ${table.minBet}` } } as const;
     }
 
     const user = await findUserById(req.currentUser!.id, client, { forUpdate: true });
     if (!user) {
-      return { error: { status: 404, message: "User not found" } } as const;
+      return { error: { status: 404, code: "NOT_FOUND", message: "User not found" } } as const;
     }
 
     const existingRoundBets = await listUserRoundBets(user.id, activeRound.id, client);
@@ -127,12 +128,14 @@ gameRouter.post("/tables/:tableId/bet", async (req: AuthenticatedRequest, res) =
 
     for (const [betType, incomingAmount] of incomingBetTotals.entries()) {
       if ((existingBetTotals.get(betType) ?? 0) + incomingAmount > table.maxBet) {
-        return { error: { status: 400, message: `單一玩法最高下注 ${table.maxBet}` } } as const;
+        return {
+          error: { status: 400, code: "VALIDATION_ERROR", message: `單一玩法最高下注 ${table.maxBet}` },
+        } as const;
       }
     }
 
     if (user.balance < totalBet) {
-      return { error: { status: 400, message: "Insufficient balance" } } as const;
+      return { error: { status: 400, code: "VALIDATION_ERROR", message: "Insufficient balance" } } as const;
     }
 
     const updatedUser = await updateUserBalance(user.id, user.balance - totalBet, client);
@@ -162,7 +165,13 @@ gameRouter.post("/tables/:tableId/bet", async (req: AuthenticatedRequest, res) =
   });
 
   if ("error" in result && result.error) {
-    return res.status(result.error.status).json({ message: result.error.message });
+    return sendApiError(
+      req,
+      res,
+      result.error.status,
+      result.error.code,
+      result.error.message,
+    );
   }
 
   await publishLiveEvent({

@@ -1,5 +1,6 @@
 import type { NextFunction, Request, Response } from "express";
 import { verifyToken, type JwtPayload } from "../lib/auth.js";
+import { sendApiError } from "../lib/api-errors.js";
 import type { UserRecord } from "../types/domain.js";
 
 export type AuthenticatedRequest = Request & {
@@ -14,7 +15,7 @@ export function authenticate(req: AuthenticatedRequest, res: Response, next: Nex
   const token = authHeader?.startsWith("Bearer ") ? authHeader.slice("Bearer ".length) : null;
 
   if (!token) {
-    return res.status(401).json({ message: "Unauthorized" });
+    return sendApiError(req, res, 401, "AUTHENTICATION_REQUIRED", "Authentication is required");
   }
 
   try {
@@ -22,6 +23,6 @@ export function authenticate(req: AuthenticatedRequest, res: Response, next: Nex
     req.user = payload;
     next();
   } catch {
-    return res.status(401).json({ message: "Invalid token" });
+    return sendApiError(req, res, 401, "INVALID_TOKEN", "Invalid token");
   }
 }

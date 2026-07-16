@@ -2,6 +2,7 @@ import { Router } from "express";
 import bcrypt from "bcryptjs";
 import { z } from "zod";
 import { requireRole } from "../../lib/auth.js";
+import { sendApiError } from "../../lib/api-errors.js";
 import { authenticate, type AuthenticatedRequest } from "../../middleware/authenticate.js";
 import {
   createBalanceAdjustment,
@@ -52,7 +53,7 @@ adminRouter.get("/rounds/:roundId/bets", async (req, res) => {
   const round = await findRoundById(req.params.roundId);
 
   if (!round) {
-    return res.status(404).json({ message: "Round not found" });
+    return sendApiError(req, res, 404, "NOT_FOUND", "Round not found");
   }
 
   return res.json({
@@ -65,11 +66,11 @@ adminRouter.post("/players", async (req, res) => {
   const parsed = createPlayerSchema.safeParse(req.body);
 
   if (!parsed.success) {
-    return res.status(400).json({ message: "Invalid payload" });
+    return sendApiError(req, res, 400, "VALIDATION_ERROR", "Invalid payload");
   }
 
   if (await findUserByUsername(parsed.data.username)) {
-    return res.status(400).json({ message: "Username already exists" });
+    return sendApiError(req, res, 409, "CONFLICT", "Username already exists");
   }
 
   const passwordHash = await bcrypt.hash(parsed.data.password, 10);
@@ -86,17 +87,17 @@ adminRouter.post("/users/set-active", async (req, res) => {
   const parsed = setUserActiveSchema.safeParse(req.body);
 
   if (!parsed.success) {
-    return res.status(400).json({ message: "Invalid payload" });
+    return sendApiError(req, res, 400, "VALIDATION_ERROR", "Invalid payload");
   }
 
   const targetUser = await findUserById(parsed.data.userId);
 
   if (!targetUser) {
-    return res.status(404).json({ message: "Target user not found" });
+    return sendApiError(req, res, 404, "NOT_FOUND", "Target user not found");
   }
 
   if (targetUser.role === "ADMIN") {
-    return res.status(400).json({ message: "Admin account cannot be disabled here" });
+    return sendApiError(req, res, 400, "VALIDATION_ERROR", "Admin account cannot be disabled here");
   }
 
   const user = await setUserActive(targetUser.id, parsed.data.isActive);
@@ -113,18 +114,18 @@ adminRouter.post("/adjust-balance", async (req: AuthenticatedRequest, res) => {
   const parsed = adjustBalanceSchema.safeParse(req.body);
 
   if (!parsed.success) {
-    return res.status(400).json({ message: "Invalid payload" });
+    return sendApiError(req, res, 400, "VALIDATION_ERROR", "Invalid payload");
   }
 
   const payload = await withTransaction(async (client) => {
     const targetUser = await findUserById(parsed.data.userId, client, { forUpdate: true });
 
     if (!targetUser) {
-      return { error: { status: 404, message: "Target user not found" } } as const;
+      return { error: { status: 404, code: "NOT_FOUND", message: "Target user not found" } } as const;
     }
 
     if (targetUser.balance + parsed.data.amount < 0) {
-      return { error: { status: 400, message: "Balance cannot be negative" } } as const;
+      return { error: { status: 400, code: "VALIDATION_ERROR", message: "Balance cannot be negative" } } as const;
     }
 
     const user = await updateUserBalance(targetUser.id, targetUser.balance + parsed.data.amount, client);
@@ -142,7 +143,13 @@ adminRouter.post("/adjust-balance", async (req: AuthenticatedRequest, res) => {
   });
 
   if ("error" in payload && payload.error) {
-    return res.status(payload.error.status).json({ message: payload.error.message });
+    return sendApiError(
+      req,
+      res,
+      payload.error.status,
+      payload.error.code,
+      payload.error.message,
+    );
   }
 
   await publishLiveEvent({

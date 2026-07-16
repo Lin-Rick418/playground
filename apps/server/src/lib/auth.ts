@@ -3,6 +3,7 @@ import type { Response, NextFunction } from "express";
 import { env } from "../config/env.js";
 import type { AuthenticatedRequest } from "../middleware/authenticate.js";
 import { findUserById } from "./db.js";
+import { sendApiError } from "./api-errors.js";
 import type { UserRole } from "../types/domain.js";
 
 export type JwtPayload = {
@@ -25,17 +26,17 @@ export function requireRole(
   role: UserRole,
 ) {
   if (!req.user || req.user.role !== role) {
-    return res.status(403).json({ message: "Forbidden" });
+    return sendApiError(req, res, 403, "FORBIDDEN", "Forbidden");
   }
 
   return findUserById(req.user.userId)
     .then((freshUser) => {
       if (!freshUser) {
-        return res.status(401).json({ message: "User not found" });
+        return sendApiError(req, res, 401, "INVALID_TOKEN", "Authenticated user no longer exists");
       }
 
       if (!freshUser.isActive) {
-        return res.status(403).json({ message: "Account is disabled" });
+        return sendApiError(req, res, 403, "ACCOUNT_DISABLED", "Account is disabled");
       }
 
       req.currentUser = freshUser;
