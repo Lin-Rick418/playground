@@ -4,10 +4,12 @@
   "version": "1.0.0",
   "type": "module",
   "scripts": {
-    "dev": "NODE_ENV=development tsx watch src/index.ts",
-    "dev:worker": "NODE_ENV=development tsx watch src/worker.ts",
+    "dev": "NODE_OPTIONS=--conditions=development NODE_ENV=development tsx watch src/index.ts",
+    "dev:worker": "NODE_OPTIONS=--conditions=development NODE_ENV=development tsx watch src/worker.ts",
     "typecheck": "tsc -p tsconfig.test.json",
+    "prebuild": "npm run build --workspace @baccarat/contracts",
     "build": "tsc -p tsconfig.json",
+    "pretest": "npm run build --workspace @baccarat/contracts",
     "test": "NODE_ENV=test tsx --test src/*.test.ts src/**/*.test.ts",
     "test:integration": "NODE_ENV=test tsx --test test/integration/**/*.test.ts",
     "test:db-integrity": "NODE_ENV=test RUN_DB_INTEGRATION_TESTS=true tsx --test src/lib/database-integrity.integration.test.ts",
@@ -17,6 +19,7 @@
     "db:seed": "NODE_ENV=development tsx src/scripts/seed.ts"
   },
   "dependencies": {
+    "@baccarat/contracts": "*",
     "bcryptjs": "^3.0.2",
     "cors": "^2.8.5",
     "dotenv": "^16.4.7",

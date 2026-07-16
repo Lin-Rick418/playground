@@ -6,11 +6,14 @@
   "scripts": {
     "dev": "vite",
     "typecheck": "vue-tsc -b",
+    "prebuild": "npm run build --workspace @baccarat/contracts",
     "build": "vue-tsc -b && vite build",
-    "test": "node --test src/tests/*.test.mjs",
+    "pretest": "npm run build --workspace @baccarat/contracts",
+    "test": "node --test src/tests/*.test.mjs && tsx --test src/**/*.test.ts",
     "preview": "vite preview"
   },
   "dependencies": {
+    "@baccarat/contracts": "*",
     "axios": "^1.8.4",
     "pinia": "^3.0.2",
     "vue": "^3.5.25",
@@ -22,6 +25,7 @@
     "@vue/tsconfig": "^0.8.1",
     "postcss-mobile-forever": "^5.0.0",
     "sass": "^1.98.0",
+    "tsx": "^4.19.3",
     "typescript": "~5.9.3",
     "vite": "^7.3.1",
     "vue-tsc": "^3.1.5"

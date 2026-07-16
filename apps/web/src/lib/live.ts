@@ -1,52 +1,12 @@
+import { liveServerMessageSchema, type LiveServerMessage } from "@baccarat/contracts";
 import { getStoredToken } from "./settings";
-import type { CurrentBet, LobbySnapshot, RoundConfig, TableSnapshot, User } from "../types/domain";
+import { ContractValidationError, parseRuntimeContract } from "./contracts";
 
-export type LobbySnapshotMessage = {
-  type: "lobby_snapshot";
-  data: LobbySnapshot & {
-    config: RoundConfig;
-  };
-};
-
-export type TableSnapshotMessage = {
-  type: "table_snapshot";
-  data: TableSnapshot & {
-    config: RoundConfig;
-  };
-};
-
-export type TableUserSnapshotMessage = {
-  type: "table_user_snapshot";
-  data: {
-    tableId: string;
-    currentRoundId: string;
-    myBets: CurrentBet[];
-    balance: number;
-    isActive: boolean;
-    serverTime: string;
-  };
-};
-
-export type UserSnapshotMessage = {
-  type: "user_snapshot";
-  data: User & {
-    serverTime: string;
-  };
-};
-
-export type AuthRevokedMessage = {
-  type: "auth_revoked";
-  reason: "user_deleted" | "account_disabled" | "role_changed";
-};
-
-export type LiveMessage =
-  | { type: "connected"; serverTime: string }
-  | { type: "error"; message: string }
-  | AuthRevokedMessage
-  | LobbySnapshotMessage
-  | TableSnapshotMessage
-  | TableUserSnapshotMessage
-  | UserSnapshotMessage;
+export type LiveMessage = LiveServerMessage;
+export type LobbySnapshotMessage = Extract<LiveMessage, { type: "lobby_snapshot" }>;
+export type TableSnapshotMessage = Extract<LiveMessage, { type: "table_snapshot" }>;
+export type TableUserSnapshotMessage = Extract<LiveMessage, { type: "table_user_snapshot" }>;
+export type UserSnapshotMessage = Extract<LiveMessage, { type: "user_snapshot" }>;
 
 type SocketCallbacks = {
   onMessage: (message: LiveMessage) => void;
@@ -63,6 +23,28 @@ function buildWebSocketUrl() {
   return normalizedBase.toString();
 }
 
+export function parseLiveMessage(rawMessage: string) {
+  let payload: unknown;
+
+  try {
+    payload = JSON.parse(rawMessage);
+  } catch {
+    const issues = [{ code: "invalid_json", path: "" }];
+    console.error("WebSocket message contract validation failed", {
+      contract: "server.live.message",
+      issues,
+    });
+    throw new ContractValidationError("server.live.message", issues);
+  }
+
+  return parseRuntimeContract(
+    liveServerMessageSchema,
+    payload,
+    "server.live.message",
+    "WebSocket message",
+  );
+}
+
 export function createLiveSocket(callbacks: SocketCallbacks) {
   // The token travels in the Sec-WebSocket-Protocol header rather than the
   // URL so it stays out of server access logs and browser history.
@@ -75,10 +57,9 @@ export function createLiveSocket(callbacks: SocketCallbacks) {
 
   socket.addEventListener("message", (event) => {
     try {
-      const message = JSON.parse(String(event.data)) as LiveMessage;
-      callbacks.onMessage(message);
+      callbacks.onMessage(parseLiveMessage(String(event.data)));
     } catch {
-      // Ignore malformed messages.
+      socket.close(1002, "Invalid server message");
     }
   });
 

@@ -1,6 +1,6 @@
 import { Router, type Response } from "express";
 import { randomUUID } from "node:crypto";
-import { z } from "zod";
+import { loginRequestSchema, loginResponseSchema, userSchema } from "@baccarat/contracts";
 import { signToken } from "../../lib/auth.js";
 import { env } from "../../config/env.js";
 import { sendApiError } from "../../lib/api-errors.js";
@@ -29,12 +29,9 @@ import {
   hashRefreshToken,
   readCookie,
 } from "../../lib/session-token.js";
+import { sendContractResponse } from "../../lib/contracts.js";
 import type { UserRecord } from "../../types/domain.js";
 
-const loginSchema = z.object({
-  username: z.string().trim().min(1).max(64),
-  password: z.string().min(1),
-});
 
 const loginRateLimiter = new LoginRateLimiter(new PostgresLoginRateLimitStore(pool));
 
@@ -75,7 +72,7 @@ authRouter.use((_req, res, next) => {
 });
 
 authRouter.post("/login", async (req, res) => {
-  const parsed = loginSchema.safeParse(req.body);
+  const parsed = loginRequestSchema.safeParse(req.body);
 
   if (!parsed.success) {
     return sendApiError(req, res, 400, "VALIDATION_ERROR", "Invalid login payload");
@@ -126,7 +123,7 @@ authRouter.post("/login", async (req, res) => {
   });
   setRefreshCookie(res, refreshToken);
 
-  return res.json(buildAuthResponse(user, sessionId));
+  return sendContractResponse(res, "auth.login", loginResponseSchema, buildAuthResponse(user, sessionId));
 });
 
 authRouter.post("/refresh", async (req, res) => {
@@ -155,7 +152,7 @@ authRouter.post("/refresh", async (req, res) => {
   }
 
   setRefreshCookie(res, nextRefreshToken);
-  return res.json(buildAuthResponse(user, session.id));
+  return sendContractResponse(res, "auth.refresh", loginResponseSchema, buildAuthResponse(user, session.id));
 });
 
 authRouter.post("/logout", async (req, res) => {
@@ -189,7 +186,7 @@ authRouter.get("/me", authenticate, async (req: AuthenticatedRequest, res) => {
     return sendApiError(req, res, 403, "FORBIDDEN", "Account is not available in the player application");
   }
 
-  return res.json({
+  return sendContractResponse(res, "auth.me", userSchema, {
     id: user.id,
     username: user.username,
     role: user.role,

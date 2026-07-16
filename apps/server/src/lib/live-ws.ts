@@ -3,7 +3,14 @@ import { URL } from "node:url";
 import type { IncomingMessage, Server } from "node:http";
 import type { Duplex } from "node:stream";
 import { WebSocket, WebSocketServer } from "ws";
+import {
+  liveClientMessageSchema,
+  liveServerMessageSchema,
+  type LiveClientMessage,
+  type LiveServerMessage,
+} from "@baccarat/contracts";
 import { verifyToken } from "./auth.js";
+import { contractIssues } from "./contracts.js";
 import {
   validateWebSocketSession,
   type AuthorizationRevocationReason,
@@ -27,7 +34,6 @@ import {
   consumeRateLimit,
   isConnectionLimitExceeded,
   isWebSocketPayloadAllowed,
-  parseWebSocketClientMessage,
   pruneRateWindows,
   type RateWindow,
   type WebSocketClientMessage,
@@ -47,33 +53,6 @@ type LiveSocketConnection = {
   subscription: { scope: "none" } | { scope: "lobby" } | { scope: "table"; tableId: string };
 };
 
-type ServerMessage =
-  | { type: "connected"; serverTime: string }
-  | { type: "error"; message: string }
-  | { type: "auth_revoked"; reason: AuthorizationRevocationReason }
-  | {
-      type: "lobby_snapshot";
-      data: {
-        tables: Awaited<ReturnType<typeof buildLobbyTables>>;
-        config: ReturnType<typeof getRoundConfig>;
-        serverTime: string;
-      };
-    }
-  | {
-      type: "table_snapshot";
-      data: NonNullable<Awaited<ReturnType<typeof buildTablePublicState>>> & {
-        config: ReturnType<typeof getRoundConfig>;
-      };
-    }
-  | {
-      type: "table_user_snapshot";
-      data: Awaited<ReturnType<typeof buildTableUserState>>;
-    }
-  | {
-      type: "user_snapshot";
-      data: NonNullable<Awaited<ReturnType<typeof buildUserLiveState>>>;
-    };
-
 const connections = new Map<string, LiveSocketConnection>();
 const upgradeWindows = new Map<string, RateWindow>();
 let stopSubscriber: null | (() => Promise<void>) = null;
@@ -83,13 +62,26 @@ const HEARTBEAT_TIMEOUT_MS = 10_000;
 const WS_UNAUTHORIZED_CLOSE_CODE = 4401;
 const WS_FORBIDDEN_CLOSE_CODE = 4403;
 
-function sendMessage(socket: WebSocket, message: ServerMessage) {
+function sendMessage(socket: WebSocket, message: LiveServerMessage) {
   if (socket.readyState !== WebSocket.OPEN) {
     return;
   }
 
+  const parsed = liveServerMessageSchema.safeParse(message);
+
+  if (!parsed.success) {
+    console.error("WebSocket response contract validation failed", {
+      type: message.type,
+      issues: contractIssues(parsed.error),
+    });
+  }
+
+  const payload = parsed.success
+    ? parsed.data
+    : { type: "error" as const, message: "Live data unavailable" };
+
   try {
-    socket.send(JSON.stringify(message), (error) => {
+    socket.send(JSON.stringify(payload), (error) => {
       if (error) {
         console.error("Live WebSocket send failed", error);
         socket.terminate();
@@ -124,7 +116,12 @@ async function revalidateLiveConnection(connection: LiveSocketConnection) {
     return null;
   }
 
-  return decision.user;
+  if (decision.user.role !== "PLAYER") {
+    revokeLiveConnection(connection, "role_changed");
+    return null;
+  }
+
+  return { ...decision.user, role: "PLAYER" as const };
 }
 
 async function pushLobbySnapshot(connection: LiveSocketConnection) {
@@ -181,7 +178,7 @@ async function pushTableUserSnapshot(connection: LiveSocketConnection, tableId: 
   });
 }
 
-async function handleSubscriptionMessage(connection: LiveSocketConnection, message: WebSocketClientMessage) {
+async function handleSubscriptionMessage(connection: LiveSocketConnection, message: LiveClientMessage) {
   if (!(await pushUserSnapshot(connection))) {
     return;
   }
@@ -289,13 +286,41 @@ async function handleLiveEvent(event: LiveEvent) {
       continue;
     }
 
-    sendMessage(connection.socket, { type: "user_snapshot", data: decision.user });
+    if (decision.user.role !== "PLAYER") {
+      revokeLiveConnection(connection, "role_changed");
+      continue;
+    }
+
+    sendMessage(connection.socket, {
+      type: "user_snapshot",
+      data: { ...decision.user, role: "PLAYER" as const },
+    });
     if (connection.subscription.scope === "table") {
       const state = tableStateById.get(connection.subscription.tableId);
       if (state) {
         sendMessage(connection.socket, { type: "table_user_snapshot", data: state });
       }
     }
+  }
+}
+
+function parseClientMessage(data: string): LiveClientMessage | null {
+  try {
+    const parsed = liveClientMessageSchema.safeParse(JSON.parse(data));
+
+    if (!parsed.success) {
+      console.warn("WebSocket request contract validation failed", {
+        issues: contractIssues(parsed.error),
+      });
+      return null;
+    }
+
+    return parsed.data;
+  } catch {
+    console.warn("WebSocket request contract validation failed", {
+      issues: [{ code: "invalid_json", path: "" }],
+    });
+    return null;
   }
 }
 
@@ -487,7 +512,7 @@ export async function attachLiveWebSocketServer(server: Server) {
           return;
         }
 
-        const message = parseWebSocketClientMessage(raw.toString());
+        const message = parseClientMessage(raw.toString());
         if (!message) {
           sendMessage(ws, {
             type: "error",

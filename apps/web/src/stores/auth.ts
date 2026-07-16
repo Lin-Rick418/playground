@@ -1,5 +1,7 @@
 import { defineStore } from "pinia";
+import { loginResponseSchema, userSchema } from "@baccarat/contracts";
 import { api } from "../lib/api";
+import { parseRuntimeContract } from "../lib/contracts";
 import { clearStoredToken, getStoredToken, setStoredToken } from "../lib/settings";
 import type { LoginResponse, User } from "../types/domain";
 
@@ -18,7 +20,8 @@ export const useAuthStore = defineStore("auth", {
       this.error = "";
 
       try {
-        const { data } = await api.post<LoginResponse>("/auth/login", { username, password });
+        const response = await api.post("/auth/login", { username, password });
+        const data = parseRuntimeContract(loginResponseSchema, response.data, "POST /auth/login");
         this.token = data.token;
         this.user = data.user;
         this.accessTokenExpiresAt = data.accessTokenExpiresAt;
@@ -33,7 +36,8 @@ export const useAuthStore = defineStore("auth", {
       }
     },
     async fetchMe() {
-      const { data } = await api.get<User>("/auth/me");
+      const response = await api.get("/auth/me");
+      const data = parseRuntimeContract(userSchema, response.data, "GET /auth/me");
       this.user = data;
       return data;
     },
