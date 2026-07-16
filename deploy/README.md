@@ -14,10 +14,16 @@
 
 ```bash
 sudo apt update
-sudo apt install -y nginx postgresql postgresql-contrib nodejs npm
+sudo apt install -y nginx postgresql postgresql-contrib
 ```
 
-如果你要固定 Node 版本，建議改用 NodeSource 或 `nvm` 安裝 Node 20+。
+安裝 `.nvmrc` 指定的 Node `22.19.0` 與 npm `10.9.3`；不要使用 distribution 未鎖版的 `nodejs`/`npm`。部署前必須確認：
+
+```bash
+node --version  # v22.19.0
+npm --version   # 10.9.3
+npm run verify:runtime
+```
 
 ## 2. 建立系統使用者與目錄
 
@@ -49,7 +55,7 @@ sudo -u postgres createdb -O baccarat baccarat
 
 ```bash
 cd /opt/baccarat/current
-npm install
+npm ci
 npm run build
 ```
 
@@ -131,7 +137,7 @@ sudo certbot --nginx -d example.com
 ```bash
 cd /opt/baccarat/current
 git pull
-npm install
+npm ci
 npm run build
 sudo systemctl restart baccarat-api baccarat-worker
 sudo systemctl reload nginx

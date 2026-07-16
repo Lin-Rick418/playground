@@ -21,7 +21,8 @@ Vue 3 + Pinia 前端，Node.js + Express 後端，PostgreSQL 資料庫。
 ## 開發
 
 ```bash
-npm install
+nvm use
+npm ci
 npm run dev:db
 npm run db:seed
 npm run dev:all
@@ -73,6 +74,8 @@ VITE_API_BASE_URL=https://your-api-host.example.com
 - 前端: Vue 3, Pinia, Vue Router, Vite
 - 後端: Node.js, Express, JWT, WebSocket
 - 資料庫: PostgreSQL
+
+本專案固定使用 Node `22.19.0` 與 npm `10.9.3`；`.nvmrc`、`.node-version`、`packageManager`、`engines` 與 install preflight 會共同拒絕版本漂移。build 後可由前端 `/build-metadata.json` 及 API `/api/build-metadata` 核對 commit/runtime metadata。
 
 ## 備註
 

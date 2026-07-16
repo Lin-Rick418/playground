@@ -3,6 +3,7 @@ import express, { type ErrorRequestHandler } from "express";
 import { createServer } from "node:http";
 import { env } from "./config/env.js";
 import { attachLiveWebSocketServer } from "./lib/live-ws.js";
+import { readBuildMetadata } from "./lib/build-metadata.js";
 import { ensureSeedData } from "./lib/db.js";
 import { authRouter } from "./modules/auth/router.js";
 import { gameRouter } from "./modules/game/router.js";
@@ -18,6 +19,14 @@ app.use(express.json());
 
 app.get("/health", (_req, res) => {
   res.json({ ok: true });
+});
+
+app.get("/build-metadata", async (_req, res) => {
+  try {
+    return res.json(await readBuildMetadata());
+  } catch {
+    return res.status(503).json({ message: "Build metadata unavailable" });
+  }
 });
 
 app.use("/auth", authRouter);
