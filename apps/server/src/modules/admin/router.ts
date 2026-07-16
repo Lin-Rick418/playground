@@ -11,12 +11,13 @@ import {
   findUserByUsername,
   listAdjustments,
   listRoundBetsDetailed,
-  listUsers,
+  listUsersPage,
   setUserActive,
   updateUserBalance,
   withTransaction,
 } from "../../lib/db.js";
 import { publishLiveEvent } from "../../lib/live-events.js";
+import { parsePagination } from "../../lib/pagination.js";
 
 const adjustBalanceSchema = z.object({
   userId: z.string().min(1),
@@ -40,8 +41,20 @@ export const adminRouter = Router();
 adminRouter.use(authenticate);
 adminRouter.use((req, res, next) => requireRole(req as AuthenticatedRequest, res, next, "ADMIN"));
 
-adminRouter.get("/users", async (_req, res) => {
-  return res.json(await listUsers());
+adminRouter.get("/users", async (req, res) => {
+  const pagination = parsePagination({ page: req.query.page, pageSize: req.query.pageSize });
+  const result = await listUsersPage({ limit: pagination.pageSize, offset: pagination.offset });
+  const totalPages = Math.max(1, Math.ceil(result.total / pagination.pageSize));
+
+  return res.json({
+    items: result.items,
+    pagination: {
+      page: pagination.page,
+      pageSize: pagination.pageSize,
+      total: result.total,
+      totalPages,
+    },
+  });
 });
 
 adminRouter.get("/adjustments", async (_req, res) => {

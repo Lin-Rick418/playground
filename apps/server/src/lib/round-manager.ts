@@ -3,7 +3,6 @@ import {
   createRound,
   ensureTableShoe,
   findRoundById,
-  findUserById,
   getActiveRound,
   getTableShoe,
   listRoundBets,
@@ -13,9 +12,9 @@ import {
   saveTableShoe,
   setTableRoundScheduleVersion,
   settleRound,
-  updateBetPayout,
+  incrementUserBalances,
   updateRoundStatus,
-  updateUserBalance,
+  updateBetPayouts,
   withTransaction,
 } from "./db.js";
 import { publishLiveEvent } from "./live-events.js";
@@ -104,24 +103,23 @@ async function settleActiveRound(roundId: string, tableId: string) {
     const result = dealRoundFromShoe(shoe);
     const bets = await listRoundBets(roundId, client);
     const payoutsByUser = new Map<string, number>();
+    const betPayouts: { betId: string; payout: number }[] = [];
 
     for (const bet of bets) {
       const payout = calculatePayout(bet.betType, bet.amount, result);
       affectedUserIds.add(bet.userId);
-      await updateBetPayout(bet.id, payout, client);
+      betPayouts.push({ betId: bet.id, payout });
 
       if (payout > 0) {
         payoutsByUser.set(bet.userId, (payoutsByUser.get(bet.userId) ?? 0) + payout);
       }
     }
 
-    for (const [userId, payout] of payoutsByUser.entries()) {
-      const user = await findUserById(userId, client, { forUpdate: true });
-
-      if (user) {
-        await updateUserBalance(user.id, user.balance + payout, client);
-      }
-    }
+    await updateBetPayouts(betPayouts, client);
+    await incrementUserBalances(
+      Array.from(payoutsByUser, ([userId, amount]) => ({ userId, amount })),
+      client,
+    );
 
     await settleRound(roundId, result, client);
 

@@ -156,6 +156,23 @@ onMounted(async () => {
             </div>
           </article>
         </div>
+        <nav class="pagination" aria-label="帳號列表分頁">
+          <button
+            class="button-secondary compact-button"
+            :disabled="adminStore.userPage <= 1"
+            @click="adminStore.changeUserPage(adminStore.userPage - 1)"
+          >
+            上一頁
+          </button>
+          <span>第 {{ adminStore.userPage }} / {{ adminStore.userTotalPages }} 頁，共 {{ adminStore.userTotal }} 筆</span>
+          <button
+            class="button-secondary compact-button"
+            :disabled="adminStore.userPage >= adminStore.userTotalPages"
+            @click="adminStore.changeUserPage(adminStore.userPage + 1)"
+          >
+            下一頁
+          </button>
+        </nav>
       </section>
 
       <section class="panel logs-panel">
@@ -234,6 +251,14 @@ onMounted(async () => {
   display: flex;
   flex-direction: column;
   gap: $space-6;
+}
+
+.pagination {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: $space-3;
+  margin-top: $space-4;
 }
 
 .topbar,

@@ -105,6 +105,16 @@ export type AdminUser = {
   createdAt: string;
 };
 
+export type PaginatedAdminUsers = {
+  items: AdminUser[];
+  pagination: {
+    page: number;
+    pageSize: number;
+    total: number;
+    totalPages: number;
+  };
+};
+
 export type Adjustment = {
   id: string;
   amount: number;

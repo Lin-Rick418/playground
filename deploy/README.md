@@ -151,3 +151,4 @@ pg_dump -U baccarat baccarat > /var/backups/baccarat-$(date +%F).sql
 - WebSocket 透過 `/api/ws` 經 nginx 轉發到後端
 - API 和 worker 是兩個獨立服務，都必須常駐
 - 不要同時啟多個 worker，否則會重複推局
+- DB pool 預設每個 process 最多 20 connections、3 秒 connect timeout、5 秒 statement/query timeout；調高 `DATABASE_POOL_MAX` 前必須把 API＋worker instance 數一起納入 PostgreSQL `max_connections` 容量計算。

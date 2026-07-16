@@ -12,6 +12,7 @@ import type {
   UserRole,
 } from "../types/domain.js";
 import { createMassachusettsShoeState, type Card, type TableShoeState } from "./baccarat.js";
+import { chunkItems } from "./batch.js";
 
 type DbExecutor = Pool | PoolClient;
 type DbRow = Record<string, unknown>;
@@ -28,6 +29,11 @@ const sslConfig =
 export const pool = new Pool({
   connectionString: env.databaseUrl,
   ssl: sslConfig,
+  max: env.databasePoolMax,
+  connectionTimeoutMillis: env.databaseConnectionTimeoutMs,
+  idleTimeoutMillis: env.databaseIdleTimeoutMs,
+  statement_timeout: env.databaseStatementTimeoutMs,
+  query_timeout: env.databaseStatementTimeoutMs,
 });
 
 pool.on("error", (error: Error) => {
@@ -254,20 +260,33 @@ export async function findUserById(
   return row ? mapUser(row) : null;
 }
 
-export async function listUsers(executor: DbExecutor = pool) {
-  const rows = await queryRows(
-    executor,
-    "SELECT id, username, role, is_active, balance, created_at FROM users ORDER BY created_at ASC",
-  );
+export async function listUsersPage(
+  options: { limit: number; offset: number },
+  executor: DbExecutor = pool,
+) {
+  const [rows, totalRow] = await Promise.all([
+    queryRows(
+      executor,
+      `SELECT id, username, role, is_active, balance, created_at
+       FROM users
+       ORDER BY created_at ASC, id ASC
+       LIMIT $1 OFFSET $2`,
+      [options.limit, options.offset],
+    ),
+    queryRow(executor, "SELECT COUNT(*) AS total FROM users"),
+  ]);
 
-  return rows.map((row: DbRow) => ({
-    id: String(row.id),
-    username: String(row.username),
-    role: String(row.role) as UserRole,
-    isActive: row.is_active as boolean,
-    balance: Number(row.balance),
-    createdAt: toIsoString(row.created_at),
-  }));
+  return {
+    items: rows.map((row: DbRow) => ({
+      id: String(row.id),
+      username: String(row.username),
+      role: String(row.role) as UserRole,
+      isActive: row.is_active as boolean,
+      balance: Number(row.balance),
+      createdAt: toIsoString(row.created_at),
+    })),
+    total: Number(totalRow?.total ?? 0),
+  };
 }
 
 export async function createPlayer(
@@ -489,8 +508,56 @@ export async function listUserRoundBets(userId: string, roundId: string, executo
   }));
 }
 
-export async function updateBetPayout(betId: string, payout: number, executor: DbExecutor = pool) {
-  await executor.query("UPDATE bets SET payout = $1 WHERE id = $2", [payout, betId]);
+export async function updateBetPayouts(
+  payouts: { betId: string; payout: number }[],
+  executor: DbExecutor = pool,
+) {
+  if (payouts.length === 0) {
+    return;
+  }
+
+  for (const batch of chunkItems(payouts)) {
+    const values: unknown[] = [];
+    const rows = batch.map((item, index) => {
+      const offset = index * 2;
+      values.push(item.betId, item.payout);
+      return `($${offset + 1}::text, $${offset + 2}::integer)`;
+    });
+    await executor.query(
+      `UPDATE bets AS bet
+       SET payout = value.payout
+       FROM (VALUES ${rows.join(", ")}) AS value(id, payout)
+       WHERE bet.id = value.id`,
+      values,
+    );
+  }
+}
+
+export async function incrementUserBalances(
+  increments: { userId: string; amount: number }[],
+  executor: DbExecutor = pool,
+) {
+  if (increments.length === 0) {
+    return;
+  }
+
+  const updatedAt = new Date().toISOString();
+  for (const batch of chunkItems(increments)) {
+    const values: unknown[] = [];
+    const rows = batch.map((item, index) => {
+      const offset = index * 2;
+      values.push(item.userId, item.amount);
+      return `($${offset + 1}::text, $${offset + 2}::integer)`;
+    });
+    values.push(updatedAt);
+    await executor.query(
+      `UPDATE users AS app_user
+       SET balance = app_user.balance + value.amount, updated_at = $${values.length}
+       FROM (VALUES ${rows.join(", ")}) AS value(id, amount)
+       WHERE app_user.id = value.id`,
+      values,
+    );
+  }
 }
 
 export async function findRoundById(
