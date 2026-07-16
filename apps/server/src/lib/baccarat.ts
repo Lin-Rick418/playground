@@ -177,8 +177,10 @@ export function dealRoundFromShoe(shoe: TableShoeState) {
     return result.card;
   };
 
-  const playerCards = [draw(), draw()];
-  const bankerCards = [draw(), draw()];
+  const playerCards = [draw()];
+  const bankerCards = [draw()];
+  playerCards.push(draw());
+  bankerCards.push(draw());
 
   let playerHand: Hand = {
     cards: playerCards,
