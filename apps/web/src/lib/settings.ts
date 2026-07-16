@@ -5,15 +5,19 @@ const TOKEN_STORAGE_KEY = "baccarat_token";
 const ROAD_VISIBILITY_STORAGE_KEY = "baccarat-road-visibility";
 const VOICE_ANNOUNCEMENT_STORAGE_KEY = "baccarat-voice-announcement";
 
+let inMemoryAccessToken = "";
+
 export function getStoredToken() {
-  return localStorage.getItem(TOKEN_STORAGE_KEY) ?? "";
+  return inMemoryAccessToken;
 }
 
 export function setStoredToken(token: string) {
-  localStorage.setItem(TOKEN_STORAGE_KEY, token);
+  inMemoryAccessToken = token;
+  localStorage.removeItem(TOKEN_STORAGE_KEY);
 }
 
 export function clearStoredToken() {
+  inMemoryAccessToken = "";
   localStorage.removeItem(TOKEN_STORAGE_KEY);
 }
 

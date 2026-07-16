@@ -11,11 +11,18 @@ import { gameRouter } from "./modules/game/router.js";
 import { adminRouter } from "./modules/admin/router.js";
 
 const app = express();
+app.disable("x-powered-by");
 
 // Trust X-Forwarded-For only from the local reverse proxy (nginx) so login
 // rate limiting sees real client IPs without letting remote clients spoof them.
 app.set("trust proxy", "loopback");
-app.use(cors({ origin: env.corsOrigin }));
+app.use(cors({ origin: env.corsOrigin, credentials: true }));
+app.use((_req, res, next) => {
+  res.setHeader("X-Content-Type-Options", "nosniff");
+  res.setHeader("X-Frame-Options", "DENY");
+  res.setHeader("Referrer-Policy", "strict-origin-when-cross-origin");
+  next();
+});
 app.use(express.json());
 
 const DEPENDENCY_CHECK_TIMEOUT_MS = 1_500;

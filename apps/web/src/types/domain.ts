@@ -160,6 +160,7 @@ export type RoundConfig = {
 
 export type LoginResponse = {
   token: string;
+  accessTokenExpiresAt: string;
   user: User;
 };
 

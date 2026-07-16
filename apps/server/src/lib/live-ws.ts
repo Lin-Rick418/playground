@@ -11,6 +11,7 @@ import {
   buildUserLiveState,
   findTableById,
   findUserById,
+  isAuthSessionActive,
 } from "./db.js";
 import { startLiveEventSubscriber, type LiveEvent } from "./live-events.js";
 import {
@@ -33,6 +34,7 @@ type LiveSocketConnection = {
   id: string;
   userId: string;
   clientIp: string;
+  sessionId: string;
   socket: WebSocket;
   lastPongAt: number;
   messageWindow: RateWindow;
@@ -169,6 +171,16 @@ async function handleSubscriptionMessage(connection: LiveSocketConnection, messa
 }
 
 async function handleLiveEvent(event: LiveEvent) {
+  if (event.type === "session_revoked") {
+    for (const connection of connections.values()) {
+      if (connection.sessionId === event.sessionId) {
+        sendMessage(connection.socket, { type: "error", message: "Session ended" });
+        connection.socket.close(1008, "Session ended");
+      }
+    }
+    return;
+  }
+
   if (event.type === "table_changed") {
     const lobbyConnections = Array.from(connections.values()).filter((connection) => connection.subscription.scope === "lobby");
     const tableConnections = Array.from(connections.values()).filter(
@@ -331,9 +343,12 @@ export async function attachLiveWebSocketServer(server: Server) {
     }
 
     const payload = verifyToken(token);
-    const user = await findUserById(payload.userId);
+    const [user, sessionActive] = await Promise.all([
+      findUserById(payload.userId),
+      isAuthSessionActive(payload.sessionId),
+    ]);
 
-    if (!user || !user.isActive) {
+    if (!user || !user.isActive || !sessionActive) {
       rejectUpgrade(socket, 401, "Unauthorized");
       return;
     }
@@ -357,6 +372,7 @@ export async function attachLiveWebSocketServer(server: Server) {
         id: randomUUID(),
         userId: payload.userId,
         clientIp,
+        sessionId: payload.sessionId,
         socket: ws,
         lastPongAt: Date.now(),
         messageWindow: { timestamps: [] },

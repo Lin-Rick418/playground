@@ -19,6 +19,8 @@ const router = createRouter({
 router.beforeEach(async (to) => {
   const authStore = useAuthStore();
 
+  await authStore.restoreSession();
+
   if (authStore.token && !authStore.user) {
     try {
       await authStore.fetchMe();
