@@ -96,6 +96,11 @@ VITE_API_BASE_URL=https://your-api-host.example.com
 
 每個 response 都會回傳 `X-Request-Id` header，內容與 error body 的 `requestId` 相同。Client 可傳入 1–128 字元、僅包含英數與 `._:-` 的 `X-Request-Id`；不符合格式時 server 會改用 UUID。回報 API 問題時應附上此 ID，以便對應 server structured error log。Unknown routes 與 malformed JSON 也遵循同一 contract，不會回傳 Express HTML 或 internal error details。
 
+## CI
+
+Pull request 的 required checks、本機驗證指令與 integration test database 注意事項請見
+[docs/ci.md](docs/ci.md)。
+
 ## 備註
 
 - 目前是測試幣模式，未接金流。
