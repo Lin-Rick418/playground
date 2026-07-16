@@ -1,8 +1,8 @@
 import { ensureSeedData, pool } from "../lib/db.js";
 
 try {
-  await ensureSeedData({ seedDemoUsers: true });
-  console.log("Seed completed");
+  await ensureSeedData({ seedDemoUsers: false });
+  console.log("Bootstrap completed");
 } finally {
   await pool.end();
 }

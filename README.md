@@ -23,6 +23,8 @@ Vue 3 + Pinia 前端，Node.js + Express 後端，PostgreSQL 資料庫。
 ```bash
 npm install
 npm run dev:db
+npm run db:migrate
+npm run db:bootstrap
 npm run db:seed
 npm run dev:all
 ```
@@ -83,4 +85,8 @@ VITE_API_BASE_URL=https://your-api-host.example.com
   - `round worker`
 - 桌況同步改成 WebSocket snapshot 推送，前端不再依賴收到事件後整包 refresh。
 - 正式環境啟動時不會自動建立 demo 帳號；若要開發測試帳號，請手動執行 `npm run db:seed`。
+- API、worker、bootstrap 與 seed 都不會自動執行 DDL；第一次啟動及拉取新版本後，必須先執行 `npm run db:migrate`。
+- 第一次建立環境時，執行 `npm run db:bootstrap` 建立必要桌別與牌靴；`db:seed` 另外加入開發用 demo 帳號。
+- 可用 `npm run db:migrate:status` 檢查目前版本；schema 落後時會回傳非零 exit code。
+- 正式環境的 migration 順序、相容性與 rollback 策略請見 [deploy/database-migrations.md](deploy/database-migrations.md)。
 - 若未來要多人同步牌桌、路單分析、會員管理、操作審計，可在此基礎擴充。

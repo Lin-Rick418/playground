@@ -21,6 +21,4 @@ export const env = {
   // `false` disables cross-origin requests entirely (same-origin deployments
   // behind the nginx proxy need no CORS at all).
   corsOrigin: process.env.CORS_ORIGIN ?? (isProduction ? false : "*"),
-  databaseUrl: process.env.DATABASE_URL ?? "postgres://postgres:postgres@127.0.0.1:5432/baccarat",
-  databaseSsl: process.env.DATABASE_SSL ?? "false",
 };

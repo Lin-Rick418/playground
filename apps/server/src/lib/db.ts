@@ -1,7 +1,6 @@
 import { randomUUID } from "node:crypto";
 import bcrypt from "bcryptjs";
-import { Pool, PoolClient, type QueryResultRow } from "pg";
-import { env } from "../config/env.js";
+import type { Pool, PoolClient, QueryResultRow } from "pg";
 import type {
   BetType,
   GameRoundRecord,
@@ -12,27 +11,13 @@ import type {
   UserRole,
 } from "../types/domain.js";
 import { createMassachusettsShoeState, type Card, type TableShoeState } from "./baccarat.js";
+import { pool } from "./database.js";
+import { assertDatabaseSchemaCurrent } from "./migration-runner.js";
+
+export { pool } from "./database.js";
 
 type DbExecutor = Pool | PoolClient;
 type DbRow = Record<string, unknown>;
-
-// DATABASE_SSL=true verifies the server certificate; use "no-verify" to opt
-// out explicitly (e.g. self-signed certs), never as a silent default.
-const sslConfig =
-  env.databaseSsl === "true"
-    ? { rejectUnauthorized: true }
-    : env.databaseSsl === "no-verify"
-      ? { rejectUnauthorized: false }
-      : undefined;
-
-export const pool = new Pool({
-  connectionString: env.databaseUrl,
-  ssl: sslConfig,
-});
-
-pool.on("error", (error: Error) => {
-  console.error("Postgres pool error", error);
-});
 
 function toIsoString(value: unknown) {
   if (value instanceof Date) {
@@ -94,91 +79,6 @@ export async function withTransaction<T>(handler: (client: PoolClient) => Promis
   } finally {
     client.release();
   }
-}
-
-export async function initializeDatabase() {
-  await pool.query(`
-    CREATE TABLE IF NOT EXISTS game_tables (
-      id TEXT PRIMARY KEY,
-      code TEXT NOT NULL UNIQUE,
-      name TEXT NOT NULL,
-      display_order INTEGER NOT NULL DEFAULT 0,
-      round_duration_ms INTEGER NOT NULL DEFAULT 30000,
-      round_phase_offset_ms INTEGER NOT NULL DEFAULT 0,
-      round_schedule_version INTEGER NOT NULL DEFAULT 0,
-      min_bet INTEGER NOT NULL DEFAULT 100,
-      max_bet INTEGER NOT NULL DEFAULT 10000,
-      current_shoe_id TEXT NOT NULL DEFAULT '',
-      shoe_state JSONB NOT NULL DEFAULT '{}'::jsonb,
-      created_at TIMESTAMPTZ NOT NULL
-    );
-
-    CREATE TABLE IF NOT EXISTS users (
-      id TEXT PRIMARY KEY,
-      username TEXT NOT NULL UNIQUE,
-      password_hash TEXT NOT NULL,
-      role TEXT NOT NULL,
-      is_active BOOLEAN NOT NULL DEFAULT TRUE,
-      balance INTEGER NOT NULL DEFAULT 0,
-      created_at TIMESTAMPTZ NOT NULL,
-      updated_at TIMESTAMPTZ NOT NULL
-    );
-
-    CREATE TABLE IF NOT EXISTS game_rounds (
-      id TEXT PRIMARY KEY,
-      table_id TEXT NOT NULL,
-      shoe_id TEXT NOT NULL DEFAULT '',
-      player_cards JSONB NOT NULL DEFAULT '[]'::jsonb,
-      banker_cards JSONB NOT NULL DEFAULT '[]'::jsonb,
-      player_total INTEGER NOT NULL,
-      banker_total INTEGER NOT NULL,
-      winner TEXT NOT NULL,
-      player_pair BOOLEAN NOT NULL DEFAULT FALSE,
-      banker_pair BOOLEAN NOT NULL DEFAULT FALSE,
-      status TEXT NOT NULL DEFAULT 'SETTLED',
-      betting_opens_at TIMESTAMPTZ NOT NULL,
-      betting_closes_at TIMESTAMPTZ NOT NULL,
-      settled_at TIMESTAMPTZ,
-      created_at TIMESTAMPTZ NOT NULL
-    );
-
-    CREATE TABLE IF NOT EXISTS bets (
-      id TEXT PRIMARY KEY,
-      user_id TEXT NOT NULL,
-      round_id TEXT NOT NULL,
-      bet_type TEXT NOT NULL,
-      amount INTEGER NOT NULL,
-      payout INTEGER NOT NULL,
-      created_at TIMESTAMPTZ NOT NULL
-    );
-
-    CREATE TABLE IF NOT EXISTS balance_adjustments (
-      id TEXT PRIMARY KEY,
-      admin_id TEXT NOT NULL,
-      user_id TEXT NOT NULL,
-      amount INTEGER NOT NULL,
-      note TEXT,
-      created_at TIMESTAMPTZ NOT NULL
-    );
-
-    ALTER TABLE game_tables
-      ADD COLUMN IF NOT EXISTS round_phase_offset_ms INTEGER NOT NULL DEFAULT 0;
-    ALTER TABLE game_tables
-      ADD COLUMN IF NOT EXISTS round_schedule_version INTEGER NOT NULL DEFAULT 0;
-
-    CREATE INDEX IF NOT EXISTS idx_game_rounds_active
-      ON game_rounds (table_id, status, created_at DESC);
-    CREATE INDEX IF NOT EXISTS idx_game_rounds_settled
-      ON game_rounds (table_id, status, settled_at DESC);
-    CREATE INDEX IF NOT EXISTS idx_game_rounds_shoe_settled
-      ON game_rounds (table_id, shoe_id, status, settled_at DESC);
-    CREATE INDEX IF NOT EXISTS idx_bets_user_round_created
-      ON bets (user_id, round_id, created_at ASC);
-    CREATE INDEX IF NOT EXISTS idx_bets_round_created
-      ON bets (round_id, created_at ASC);
-    CREATE INDEX IF NOT EXISTS idx_balance_adjustments_created
-      ON balance_adjustments (created_at DESC);
-  `);
 }
 
 function mapUser(row: DbRow): UserRecord {
@@ -949,7 +849,7 @@ async function seedDemoUsers(executor: DbExecutor) {
 }
 
 export async function ensureSeedData(options?: { seedDemoUsers?: boolean }) {
-  const shouldSeedDemoUsers = options?.seedDemoUsers ?? !env.isProduction;
+  const shouldSeedDemoUsers = options?.seedDemoUsers ?? false;
   const configuredTables = [
     { code: "A01", name: "極速廳 A01", displayOrder: 1, roundDurationMs: 15000, roundPhaseOffsetMs: 0, minBet: 100, maxBet: 10000 },
     { code: "A02", name: "極速廳 A02", displayOrder: 2, roundDurationMs: 15000, roundPhaseOffsetMs: 2000, minBet: 100, maxBet: 10000 },
@@ -957,9 +857,9 @@ export async function ensureSeedData(options?: { seedDemoUsers?: boolean }) {
     { code: "H01", name: "高額廳 H01", displayOrder: 4, roundDurationMs: 30000, roundPhaseOffsetMs: 6000, minBet: 1000, maxBet: 50000 },
   ] as const;
 
-  await withAdvisoryLock(INIT_LOCK_KEY, async (client) => {
-    await initializeDatabase();
+  await assertDatabaseSchemaCurrent(pool);
 
+  await withAdvisoryLock(INIT_LOCK_KEY, async (client) => {
     if (shouldSeedDemoUsers) {
       await seedDemoUsers(client);
     }
