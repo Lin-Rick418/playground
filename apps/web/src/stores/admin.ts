@@ -1,5 +1,5 @@
 import { defineStore } from "pinia";
-import { api } from "../lib/api";
+import { api, createIdempotencyKey, shouldReuseIdempotencyKey } from "../lib/api";
 import type { Adjustment, AdminUser, RoundBetDetail, RoundWinner } from "../types/domain";
 
 export const useAdminStore = defineStore("admin", {
@@ -16,6 +16,7 @@ export const useAdminStore = defineStore("admin", {
       bets: RoundBetDetail[];
     },
     loading: false,
+    pendingAdjustmentIdempotencyKeys: {} as Record<string, string>,
   }),
   actions: {
     async fetchDashboard() {
@@ -34,11 +35,23 @@ export const useAdminStore = defineStore("admin", {
       }
     },
     async adjustBalance(userId: string, amount: number, note: string) {
-      await api.post("/admin/adjust-balance", {
-        userId,
-        amount,
-        note: note || undefined,
-      });
+      const request = { userId, amount, note: note || undefined };
+      const requestSignature = JSON.stringify(request);
+      const idempotencyKey =
+        this.pendingAdjustmentIdempotencyKeys[requestSignature] ?? createIdempotencyKey();
+      this.pendingAdjustmentIdempotencyKeys[requestSignature] = idempotencyKey;
+
+      try {
+        await api.post("/admin/adjust-balance", request, {
+          headers: { "Idempotency-Key": idempotencyKey },
+        });
+        delete this.pendingAdjustmentIdempotencyKeys[requestSignature];
+      } catch (error) {
+        if (!shouldReuseIdempotencyKey(error)) {
+          delete this.pendingAdjustmentIdempotencyKeys[requestSignature];
+        }
+        throw error;
+      }
 
       await this.fetchDashboard();
     },

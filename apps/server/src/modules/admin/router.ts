@@ -4,6 +4,8 @@ import { z } from "zod";
 import { requireRole } from "../../lib/auth.js";
 import { authenticate, type AuthenticatedRequest } from "../../middleware/authenticate.js";
 import {
+  claimIdempotencyKey,
+  completeIdempotencyKey,
   createBalanceAdjustment,
   createPlayer,
   findRoundById,
@@ -16,6 +18,7 @@ import {
   updateUserBalance,
   withTransaction,
 } from "../../lib/db.js";
+import { fingerprintIdempotencyRequest, parseIdempotencyKey } from "../../lib/idempotency.js";
 import { publishLiveEvent } from "../../lib/live-events.js";
 import { toPublicUser } from "../../lib/public-user.js";
 
@@ -117,15 +120,50 @@ adminRouter.post("/adjust-balance", async (req: AuthenticatedRequest, res) => {
     return res.status(400).json({ message: "Invalid payload" });
   }
 
+  const requestedIdempotencyKey = parseIdempotencyKey(req.get("Idempotency-Key"));
+  if (!requestedIdempotencyKey) {
+    return res.status(400).json({ message: "A valid Idempotency-Key header is required" });
+  }
+  const idempotencyKey: string = requestedIdempotencyKey;
+
+  const actorId = req.currentUser!.id;
+  const scope = "admin.adjust-balance";
+  const requestHash = fingerprintIdempotencyRequest(parsed.data);
+
   const payload = await withTransaction(async (client) => {
+    const claim = await claimIdempotencyKey<Record<string, unknown>>(
+      { actorId, scope, key: idempotencyKey, requestHash },
+      client,
+    );
+
+    if (claim.kind === "replay") {
+      return { statusCode: claim.statusCode, body: claim.response } as const;
+    }
+
+    if (claim.kind === "conflict") {
+      return {
+        statusCode: 409,
+        body: { message: "Idempotency-Key was already used for a different request" },
+      } as const;
+    }
+
+    async function fail(statusCode: number, message: string) {
+      const body = { message };
+      await completeIdempotencyKey(
+        { actorId, scope, key: idempotencyKey, requestHash, statusCode, response: body },
+        client,
+      );
+      return { statusCode, body } as const;
+    }
+
     const targetUser = await findUserById(parsed.data.userId, client, { forUpdate: true });
 
     if (!targetUser) {
-      return { error: { status: 404, message: "Target user not found" } } as const;
+      return fail(404, "Target user not found");
     }
 
     if (targetUser.balance + parsed.data.amount < 0) {
-      return { error: { status: 400, message: "Balance cannot be negative" } } as const;
+      return fail(400, "Balance cannot be negative");
     }
 
     const user = await updateUserBalance(targetUser.id, targetUser.balance + parsed.data.amount, client);
@@ -139,19 +177,24 @@ adminRouter.post("/adjust-balance", async (req: AuthenticatedRequest, res) => {
       client,
     );
 
-    return { user, adjustment, userId: targetUser.id } as const;
+    const { passwordHash: _passwordHash, ...publicUser } = user;
+    const body = { user: publicUser, adjustment };
+    await publishLiveEvent(
+      {
+        type: "user_changed",
+        userId: targetUser.id,
+        reason: "balance_adjusted",
+        at: new Date().toISOString(),
+      },
+      client,
+    );
+    await completeIdempotencyKey(
+      { actorId, scope, key: idempotencyKey, requestHash, statusCode: 200, response: body },
+      client,
+    );
+
+    return { statusCode: 200, body } as const;
   });
 
-  if ("error" in payload && payload.error) {
-    return res.status(payload.error.status).json({ message: payload.error.message });
-  }
-
-  await publishLiveEvent({
-    type: "user_changed",
-    userId: payload.userId,
-    reason: "balance_adjusted",
-    at: new Date().toISOString(),
-  });
-
-  return res.json({ user: toPublicUser(payload.user), adjustment: payload.adjustment });
+  return res.status(payload.statusCode).json(payload.body);
 });
