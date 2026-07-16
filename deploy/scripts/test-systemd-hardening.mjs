@@ -183,7 +183,7 @@ function runSystemdAnalyze() {
       const sanitized = readFileSync(sourcePath, "utf8")
         .replace(/^WorkingDirectory=.*$/m, "WorkingDirectory=/")
         .replace(/^EnvironmentFile=.*$/m, "EnvironmentFile=-/dev/null")
-        .replace(/^ExecStart=.*$/m, "ExecStart=/usr/bin/true");
+        .replace(/^(ExecStart(?:Post)?)=.*$/gm, "$1=/usr/bin/true");
       writeFileSync(targetPath, sanitized);
       temporaryUnits.push(targetPath);
     }
