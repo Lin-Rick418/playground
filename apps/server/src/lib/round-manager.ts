@@ -82,7 +82,7 @@ async function createOpenRound(
   return round;
 }
 
-async function settleActiveRound(roundId: string, tableId: string) {
+export async function settleActiveRound(roundId: string, tableId: string) {
   const affectedUserIds = new Set<string>();
 
   const settled = await withTransaction(async (client) => {

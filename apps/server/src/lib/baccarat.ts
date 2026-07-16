@@ -135,7 +135,7 @@ export function getMassachusettsCutCardConfig() {
   };
 }
 
-function shouldBankerDraw(bankerTotal: number, playerThirdCard: Card | null): boolean {
+export function shouldBankerDraw(bankerTotal: number, playerThirdCard: Card | null): boolean {
   if (!playerThirdCard) {
     return bankerTotal <= 5;
   }

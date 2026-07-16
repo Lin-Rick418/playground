@@ -74,6 +74,11 @@ VITE_API_BASE_URL=https://your-api-host.example.com
 - 後端: Node.js, Express, JWT, WebSocket
 - 資料庫: PostgreSQL
 
+## CI
+
+Pull request 的 required checks、本機驗證指令與 integration test database 注意事項請見
+[docs/ci.md](docs/ci.md)。
+
 ## 備註
 
 - 目前是測試幣模式，未接金流。
