@@ -3,6 +3,7 @@ import { computed, onMounted, ref } from "vue";
 import { useRouter } from "vue-router";
 import BigRoadBoard from "../components/BigRoadBoard.vue";
 import { BET_TYPE_LABELS, WINNER_LABELS, toBaccaratPairType } from "../const/game";
+import { useDialogFocus } from "../composables/useDialogFocus";
 import { useLiveChannel } from "../composables/useLiveChannel";
 import { useAuthStore } from "../stores/auth";
 import { useGameStore } from "../stores/game";
@@ -15,6 +16,8 @@ const router = useRouter();
 const tables = computed(() => gameStore.tables);
 const isHistoryOpen = ref(false);
 const isLobbyLoading = ref(true);
+const historyDialogRef = ref<HTMLElement | null>(null);
+const historyCloseButtonRef = ref<HTMLElement | null>(null);
 
 function openTable(tableId: string) {
   router.push(`/game/${tableId}`);
@@ -33,6 +36,13 @@ async function openHistory() {
 function closeHistory() {
   isHistoryOpen.value = false;
 }
+
+const { onDialogKeydown: onHistoryDialogKeydown } = useDialogFocus({
+  isOpen: () => isHistoryOpen.value,
+  dialogRef: historyDialogRef,
+  close: closeHistory,
+  initialFocusRef: historyCloseButtonRef,
+});
 
 useLiveChannel({
   getSubscribeMessage: () => ({ type: "subscribe_lobby" }),
@@ -114,7 +124,7 @@ function historyBetSummary(item: Pick<RoundHistoryItem, "bets">) {
   <main class="page-shell lobby-page">
     <transition name="lobby-loading-fade">
       <div v-if="isLobbyLoading" class="lobby-loading-overlay">
-        <div class="lobby-loading-panel panel">
+        <div class="lobby-loading-panel panel" role="status" aria-live="polite" aria-atomic="true">
           <div class="lobby-loading-spinner" aria-hidden="true" />
           <p class="topbar-label">Loading Lobby</p>
           <strong>載入大廳中</strong>
@@ -129,7 +139,13 @@ function historyBetSummary(item: Pick<RoundHistoryItem, "bets">) {
         <p>Live Baccarat</p>
         <h1>遊戲大廳</h1>
       </div>
-      <button class="history-button" type="button" @click="openHistory" aria-label="最近 20 筆下注紀錄">
+      <button
+        class="history-button"
+        type="button"
+        @click="openHistory"
+        aria-haspopup="dialog"
+        aria-label="最近 20 筆下注紀錄"
+      >
         <svg viewBox="0 0 24 24" aria-hidden="true">
           <path d="M12 7v5l3 2M21 12a9 9 0 1 1-2.64-6.36M21 4v5h-5" />
         </svg>
@@ -137,15 +153,12 @@ function historyBetSummary(item: Pick<RoundHistoryItem, "bets">) {
     </header>
 
     <section class="table-cards">
-      <article
+      <button
         v-for="item in tables"
         :key="item.table.id"
+        type="button"
         class="panel table-card"
-        role="button"
-        tabindex="0"
         @click="openTable(item.table.id)"
-        @keydown.enter="openTable(item.table.id)"
-        @keydown.space.prevent="openTable(item.table.id)"
       >
         <div class="card-head">
           <div>
@@ -165,17 +178,33 @@ function historyBetSummary(item: Pick<RoundHistoryItem, "bets">) {
         <div class="lobby-road">
           <BigRoadBoard :big-road="toBigRoad(item.roadRounds)" :cols="13" :rows="6" />
         </div>
-      </article>
+      </button>
     </section>
 
-    <div v-if="isHistoryOpen" class="modal-backdrop">
-      <section class="panel history-modal">
+    <div v-if="isHistoryOpen" class="modal-backdrop" @click.self="closeHistory">
+      <section
+        ref="historyDialogRef"
+        class="panel history-modal"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="history-modal-title"
+        tabindex="-1"
+        @keydown="onHistoryDialogKeydown"
+      >
         <div class="card-head">
           <div>
             <p class="topbar-label">History</p>
-            <h2>最近 20 筆</h2>
+            <h2 id="history-modal-title">最近 20 筆</h2>
           </div>
-          <button class="history-close-button" @click="closeHistory" aria-label="關閉下注紀錄">✕</button>
+          <button
+            ref="historyCloseButtonRef"
+            class="history-close-button"
+            type="button"
+            @click="closeHistory"
+            aria-label="關閉下注紀錄"
+          >
+            ✕
+          </button>
         </div>
 
         <div class="history-list">
@@ -310,8 +339,8 @@ function historyBetSummary(item: Pick<RoundHistoryItem, "bets">) {
 
 .back-button,
 .history-button {
-  width: 42px;
-  height: 42px;
+  width: 44px;
+  height: 44px;
   border: 0;
   border-radius: 999px;
   touch-action: manipulation;
@@ -353,8 +382,11 @@ function historyBetSummary(item: Pick<RoundHistoryItem, "bets">) {
 }
 
 .table-card {
+  width: 100%;
   padding: $space-5;
   cursor: pointer;
+  color: inherit;
+  text-align: left;
   background: linear-gradient(180deg, rgba(7, 48, 33, 0.74), rgba(5, 34, 23, 0.82));
   border-color: $color-border-soft;
   transition: transform 140ms ease, border-color 140ms ease, background 140ms ease;
@@ -439,8 +471,9 @@ function historyBetSummary(item: Pick<RoundHistoryItem, "bets">) {
 }
 
 .history-close-button {
-  width: 40px;
-  height: 40px;
+  flex: 0 0 auto;
+  width: 44px;
+  height: 44px;
   border: 0;
   border-radius: 999px;
   background: rgba(182, 34, 34, 0.92);

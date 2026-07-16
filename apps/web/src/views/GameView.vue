@@ -4,6 +4,7 @@ import axios from "axios";
 import { useRoute, useRouter } from "vue-router";
 import RoadmapPanel from "../components/RoadmapPanel.vue";
 import { BET_OPTIONS, CHIP_VALUES, DEAL_ANIMATION_TIMINGS, DEFAULT_CHIP_VALUE, WINNER_LABELS } from "../const/game";
+import { useDialogFocus } from "../composables/useDialogFocus";
 import { useLiveChannel } from "../composables/useLiveChannel";
 import { loadVoiceAnnouncementEnabled, saveVoiceAnnouncementEnabled } from "../lib/settings";
 import { playVoiceClips, preloadVoiceClips, stopVoicePlayback, unlockVoicePlayback } from "../lib/voice";
@@ -29,7 +30,12 @@ const isRoadSettingsOpen = ref(false);
 const isRoadmapOpen = ref(false);
 const isTableLoading = ref(true);
 const isVoiceAnnouncementEnabled = ref(loadVoiceAnnouncementEnabled());
-const betGridRef = ref<HTMLElement | null>(null);
+const settlementDialogRef = ref<HTMLElement | null>(null);
+const settlementCloseButtonRef = ref<HTMLElement | null>(null);
+const roadmapDialogRef = ref<HTMLElement | null>(null);
+const roadmapCloseButtonRef = ref<HTMLElement | null>(null);
+const settingsDialogRef = ref<HTMLElement | null>(null);
+const settingsCloseButtonRef = ref<HTMLElement | null>(null);
 
 const displayedPlayerCards = ref<DisplayCard[]>([]);
 const displayedBankerCards = ref<DisplayCard[]>([]);
@@ -51,6 +57,24 @@ type SettlementScreen = SettlementInfo & {
 const settlementPopup = ref<null | SettlementScreen>(null);
 const settlementPopupTimer = ref<number | null>(null);
 const pendingSettlement = ref<SettlementInfo | null>(null);
+const { onDialogKeydown: onSettlementDialogKeydown } = useDialogFocus({
+  isOpen: () => Boolean(settlementPopup.value),
+  dialogRef: settlementDialogRef,
+  close: dismissSettlementPopup,
+  initialFocusRef: settlementCloseButtonRef,
+});
+const { onDialogKeydown: onRoadmapDialogKeydown } = useDialogFocus({
+  isOpen: () => isRoadmapOpen.value,
+  dialogRef: roadmapDialogRef,
+  close: closeRoadmap,
+  initialFocusRef: roadmapCloseButtonRef,
+});
+const { onDialogKeydown: onSettingsDialogKeydown } = useDialogFocus({
+  isOpen: () => isRoadSettingsOpen.value,
+  dialogRef: settingsDialogRef,
+  close: closeRoadSettings,
+  initialFocusRef: settingsCloseButtonRef,
+});
 const lastResolvedRoundId = ref("");
 const lastAnnouncedRoundId = ref("");
 const latestParticipatedRoundId = ref("");
@@ -73,7 +97,6 @@ const serverTimeOffsetMs = ref(0);
 let clockTimer: number | null = null;
 let refreshGameDataPromise: Promise<void> | null = null;
 let refreshGameDataQueued = false;
-let lastBetGridTouchEndMs = 0;
 let messageTimer: number | null = null;
 const VOICE_UNLOCK_EVENTS = ["pointerdown", "touchstart", "keydown"] as const;
 
@@ -150,6 +173,7 @@ const isBettingOpen = computed(() => {
   const closesAt = new Date(currentRound.value.bettingClosesAt).getTime();
   return serverTime >= opensAt && serverTime < closesAt;
 });
+const bettingStatusAnnouncement = computed(() => (isBettingOpen.value ? "下注已開放" : "目前停止下注"));
 const isLastHandRound = computed(() => Boolean(gameStore.shoeStatus?.isLastHand));
 const playerScoreDisplay = computed(() => {
   if (showDealOverlay.value) {
@@ -331,6 +355,12 @@ function formatBetDisplayAmount(amount: number) {
 
   const compactAmount = amount / 1000;
   return `${Number.isInteger(compactAmount) ? compactAmount : compactAmount.toFixed(1).replace(/\.0$/, "")}k`;
+}
+
+function betAreaAriaLabel(option: (typeof BET_OPTIONS)[number]) {
+  const amount = currentBetAmount(option.key);
+  const amountText = amount ? `，目前下注 ${amount.toLocaleString()}` : "，目前尚未下注";
+  return `${option.label}，賠率 ${option.payout}，每次增加 ${selectedChip.value.toLocaleString()}${amountText}`;
 }
 
 function stageBet(target: BetKey) {
@@ -836,15 +866,6 @@ function closeRoadmap() {
   isRoadmapOpen.value = false;
 }
 
-function preventBetGridDoubleTapZoom(event: TouchEvent) {
-  const now = event.timeStamp || Date.now();
-  if (now - lastBetGridTouchEndMs < 320) {
-    event.preventDefault();
-  }
-
-  lastBetGridTouchEndMs = now;
-}
-
 function resetPendingBetAmounts() {
   pendingBetAmounts.value = { PLAYER: 0, BANKER: 0, TIE: 0, PLAYER_PAIR: 0, BANKER_PAIR: 0 };
 }
@@ -915,7 +936,6 @@ onMounted(async () => {
   clockTimer = window.setInterval(() => {
     clockNow.value = Date.now();
   }, 250);
-  betGridRef.value?.addEventListener("touchend", preventBetGridDoubleTapZoom, { passive: false });
   VOICE_UNLOCK_EVENTS.forEach((eventName) =>
     window.addEventListener(eventName, unlockVoicePlayback, { once: true, passive: true }),
   );
@@ -933,7 +953,6 @@ onUnmounted(() => {
   if (clockTimer) {
     window.clearInterval(clockTimer);
   }
-  betGridRef.value?.removeEventListener("touchend", preventBetGridDoubleTapZoom);
   VOICE_UNLOCK_EVENTS.forEach((eventName) => window.removeEventListener(eventName, unlockVoicePlayback));
 });
 
@@ -987,7 +1006,7 @@ watch(
   <main class="page-shell game-page">
     <transition name="table-loading-fade">
       <div v-if="isTableLoading" class="table-loading-overlay">
-        <div class="table-loading-panel panel">
+        <div class="table-loading-panel panel" role="status" aria-live="polite" aria-atomic="true">
           <div class="table-loading-spinner" aria-hidden="true" />
           <p class="topbar-label">Loading Table</p>
           <strong>進入牌桌中</strong>
@@ -997,7 +1016,7 @@ watch(
     </transition>
 
     <header class="table-nav">
-      <button class="nav-icon-button" @click="backToLobby" aria-label="返回大廳">‹</button>
+      <button class="nav-icon-button" type="button" @click="backToLobby" aria-label="返回大廳">‹</button>
       <div class="table-nav-title">
         <h1>{{ currentTable?.name ?? "遊戲桌" }}</h1>
         <p>
@@ -1005,12 +1024,12 @@ watch(
           {{ currentTable?.minBet?.toLocaleString() ?? "--" }}-{{ currentTable?.maxBet?.toLocaleString() ?? "--" }}
         </p>
       </div>
-      <button class="nav-text-button" @click="openRoadSettings">設定</button>
+      <button class="nav-text-button" type="button" @click="openRoadSettings" aria-haspopup="dialog">設定</button>
     </header>
 
     <div class="table-toolbar">
       <transition name="last-hand-fade">
-        <div v-if="isLastHandRound" class="last-hand-pill">最後一局</div>
+        <div v-if="isLastHandRound" class="last-hand-pill" role="status" aria-live="polite">最後一局</div>
       </transition>
       <div class="toolbar-actions">
         <button type="button" class="toolbar-round-button" @click="openRoadmap" aria-haspopup="dialog" aria-label="開啟路單">
@@ -1024,6 +1043,7 @@ watch(
           class="toolbar-round-button sound-button"
           :class="{ muted: !isVoiceAnnouncementEnabled }"
           @click="isVoiceAnnouncementEnabled = !isVoiceAnnouncementEnabled"
+          :aria-pressed="isVoiceAnnouncementEnabled"
           :aria-label="isVoiceAnnouncementEnabled ? '關閉語音播報' : '開啟語音播報'"
         >
           <svg viewBox="0 0 24 24" aria-hidden="true">
@@ -1036,9 +1056,26 @@ watch(
     </div>
 
     <transition name="settlement-pop">
-      <div v-if="settlementPopup" class="settlement-screen" role="dialog" aria-label="本局結算" @click="dismissSettlementPopup">
-        <div class="settlement-card panel">
-          <p class="settlement-eyebrow">本局結算</p>
+      <div v-if="settlementPopup" class="settlement-screen" @click.self="dismissSettlementPopup">
+        <section
+          ref="settlementDialogRef"
+          class="settlement-card panel"
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="settlement-title"
+          tabindex="-1"
+          @keydown="onSettlementDialogKeydown"
+        >
+          <button
+            ref="settlementCloseButtonRef"
+            type="button"
+            class="settlement-close-button"
+            @click="dismissSettlementPopup"
+            aria-label="關閉本局結算"
+          >
+            ✕
+          </button>
+          <p id="settlement-title" class="settlement-eyebrow">本局結算</p>
           <p class="settlement-result" :class="settlementPopup.winner === 'PLAYER' ? 'player' : settlementPopup.winner === 'BANKER' ? 'banker' : 'tie'">
             {{ WINNER_LABELS[settlementPopup.winner] }}
           </p>
@@ -1072,17 +1109,17 @@ watch(
               <span class="amt">0</span>
             </template>
           </div>
-        </div>
+        </section>
       </div>
     </transition>
 
     <transition name="game-message-pop">
-      <div v-if="gameStore.message" class="game-message-toast">
+      <div v-if="gameStore.message" class="game-message-toast" role="status" aria-live="polite" aria-atomic="true">
         {{ gameStore.message }}
       </div>
     </transition>
 
-    <div class="score-row" aria-label="本局點數">
+    <div class="score-row" aria-label="本局點數" aria-live="polite" aria-atomic="true">
       <span class="score-side player">閒</span>
       <div v-if="showDealOverlay" class="score-flaps">
         <div class="score-flap"><strong>{{ playerScoreDisplay }}</strong></div>
@@ -1093,6 +1130,9 @@ watch(
     </div>
 
     <div class="table-stage">
+      <p class="sr-only" role="status" aria-live="polite" aria-atomic="true">
+        {{ bettingStatusAnnouncement }}
+      </p>
       <template v-if="showDealOverlay">
         <div class="felt-cards">
           <div class="felt-hand player-hand" :class="{ 'has-bonus': feltPlayerCards.length >= 3 }">
@@ -1147,14 +1187,17 @@ watch(
       </div>
     </div>
 
-    <div ref="betGridRef" class="bet-zone" :class="{ closed: !isBettingOpen }">
+    <div class="bet-zone" :class="{ closed: !isBettingOpen }">
       <div class="bet-row side-row">
-        <article
+        <button
           v-for="option in sideBetRow"
           :key="option.key"
+          type="button"
           class="bet-cell"
           :class="option.accent"
-          @pointerdown.prevent="stageBet(option.key)"
+          :disabled="!isBettingOpen || isPlacingBet"
+          :aria-label="betAreaAriaLabel(option)"
+          @click="stageBet(option.key)"
         >
           <h3>{{ option.label }}</h3>
           <p>{{ option.payout }}</p>
@@ -1164,15 +1207,18 @@ watch(
           >
             {{ currentBetAmount(option.key) ? formatBetDisplayAmount(currentBetAmount(option.key)) : "" }}
           </span>
-        </article>
+        </button>
       </div>
       <div class="bet-row main-row">
-        <article
+        <button
           v-for="option in mainBetRow"
           :key="option.key"
+          type="button"
           class="bet-cell"
           :class="option.accent"
-          @pointerdown.prevent="stageBet(option.key)"
+          :disabled="!isBettingOpen || isPlacingBet"
+          :aria-label="betAreaAriaLabel(option)"
+          @click="stageBet(option.key)"
         >
           <h3>{{ option.label }}</h3>
           <p>{{ option.payout }}</p>
@@ -1182,8 +1228,12 @@ watch(
           >
             {{ currentBetAmount(option.key) ? formatBetDisplayAmount(currentBetAmount(option.key)) : "" }}
           </span>
-        </article>
+        </button>
       </div>
+
+      <p class="sr-only" role="status" aria-live="polite" aria-atomic="true">
+        {{ hasStagedBets ? `已選下注總額 ${totalStagedAmount.toLocaleString()}` : "尚未選擇下注" }}
+      </p>
 
       <transition name="confirm-fab-pop">
         <div v-if="hasStagedBets" class="confirm-actions">
@@ -1191,7 +1241,7 @@ watch(
             type="button"
             class="confirm-fab cancel"
             :disabled="isPlacingBet"
-            @pointerdown.prevent="clearStagedBets"
+            @click="clearStagedBets"
             aria-label="取消下注"
           >
             <svg viewBox="0 0 24 24" fill="none" aria-hidden="true">
@@ -1208,7 +1258,7 @@ watch(
             type="button"
             class="confirm-fab confirm"
             :disabled="!isBettingOpen || isPlacingBet"
-            @pointerdown.prevent="confirmStagedBets"
+            @click="confirmStagedBets"
             aria-label="確認下注"
           >
             <svg viewBox="0 0 24 24" fill="none" aria-hidden="true">
@@ -1229,9 +1279,12 @@ watch(
       <button
         v-for="chip in availableChips"
         :key="chip"
+        type="button"
         class="chip"
         :class="{ active: selectedChip === chip }"
         :disabled="!isBettingOpen"
+        :aria-pressed="selectedChip === chip"
+        :aria-label="`選擇 ${chip.toLocaleString()} 籌碼`"
         @click="selectedChip = chip"
       >
         {{ chipLabel(chip) }}
@@ -1247,7 +1300,7 @@ watch(
     </section>
 
     <footer class="wallet-bar">
-      <div class="wallet-panel" aria-label="玩家餘額">
+      <div class="wallet-panel" aria-label="玩家餘額" aria-live="polite" aria-atomic="true">
         <span class="coin-symbol">$</span>
         <div class="wallet-copy">
           <span>餘額</span>
@@ -1263,8 +1316,22 @@ watch(
     </footer>
 
     <div v-if="isRoadmapOpen" class="modal-backdrop" @click.self="closeRoadmap">
-      <section class="road-modal panel" role="dialog" aria-modal="true" aria-labelledby="road-modal-title">
-        <button class="settings-close-button" type="button" @click="closeRoadmap" aria-label="關閉路圖">
+      <section
+        ref="roadmapDialogRef"
+        class="road-modal panel"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="road-modal-title"
+        tabindex="-1"
+        @keydown="onRoadmapDialogKeydown"
+      >
+        <button
+          ref="roadmapCloseButtonRef"
+          class="settings-close-button"
+          type="button"
+          @click="closeRoadmap"
+          aria-label="關閉路圖"
+        >
           ✕
         </button>
 
@@ -1279,9 +1346,23 @@ watch(
       </section>
     </div>
 
-    <div v-if="isRoadSettingsOpen" class="modal-backdrop">
-      <section class="settings-modal panel" role="dialog" aria-modal="true" aria-labelledby="road-settings-title">
-        <button class="settings-close-button" type="button" @click="closeRoadSettings" aria-label="關閉設定">
+    <div v-if="isRoadSettingsOpen" class="modal-backdrop" @click.self="closeRoadSettings">
+      <section
+        ref="settingsDialogRef"
+        class="settings-modal panel"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="road-settings-title"
+        tabindex="-1"
+        @keydown="onSettingsDialogKeydown"
+      >
+        <button
+          ref="settingsCloseButtonRef"
+          class="settings-close-button"
+          type="button"
+          @click="closeRoadSettings"
+          aria-label="關閉設定"
+        >
           ✕
         </button>
 
@@ -1297,6 +1378,7 @@ watch(
               type="button"
               class="settings-item"
               :class="{ active: isVoiceAnnouncementEnabled }"
+              :aria-pressed="isVoiceAnnouncementEnabled"
               @click="isVoiceAnnouncementEnabled = !isVoiceAnnouncementEnabled"
             >
               <span>點數播報</span>
@@ -1345,8 +1427,8 @@ watch(
 }
 
 .nav-icon-button {
-  width: 40px;
-  height: 40px;
+  width: 44px;
+  height: 44px;
   border: 0;
   border-radius: 999px;
   background: rgba(0, 0, 0, 0.14);
@@ -1386,6 +1468,8 @@ watch(
 }
 
 .nav-text-button {
+  min-width: 44px;
+  min-height: 44px;
   border: 0;
   padding: $space-2 0;
   background: transparent;
@@ -1425,8 +1509,8 @@ watch(
 }
 
 .toolbar-round-button {
-  width: 38px;
-  height: 38px;
+  width: 44px;
+  height: 44px;
   border: 1px solid rgba(255, 255, 255, 0.34);
   border-radius: 999px;
   background: rgba(255, 255, 255, 0.92);
@@ -1932,6 +2016,7 @@ watch(
 }
 
 .bet-cell {
+  width: 100%;
   min-height: 78px;
   padding: $space-2;
   border-radius: 14px;
@@ -1947,6 +2032,9 @@ watch(
   touch-action: manipulation;
   -webkit-tap-highlight-color: transparent;
   user-select: none;
+  color: inherit;
+  font: inherit;
+  text-align: center;
   transition: transform 120ms ease, filter 120ms ease, background 120ms ease;
 }
 
@@ -2201,10 +2289,10 @@ watch(
   padding: $space-6;
   background: rgba(3, 9, 7, 0.34);
   pointer-events: auto;
-  cursor: pointer;
 }
 
 .settlement-card {
+  position: relative;
   width: min(100%, 300px);
   padding: $space-6 $space-5;
   display: flex;
@@ -2212,6 +2300,20 @@ watch(
   align-items: center;
   gap: $space-3;
   text-align: center;
+}
+
+.settlement-close-button {
+  position: absolute;
+  top: $space-3;
+  right: $space-3;
+  width: 44px;
+  height: 44px;
+  border: 0;
+  border-radius: 999px;
+  background: rgba(8, 18, 14, 0.12);
+  color: $color-text-primary;
+  font-size: 18px;
+  font-weight: 900;
 }
 
 .settlement-eyebrow {
@@ -2417,8 +2519,8 @@ watch(
   position: absolute;
   top: $space-4;
   right: $space-4;
-  width: 34px;
-  height: 34px;
+  width: 44px;
+  height: 44px;
   border: 0;
   border-radius: 999px;
   background: rgba(182, 34, 34, 0.92);
