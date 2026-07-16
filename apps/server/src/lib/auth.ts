@@ -4,6 +4,7 @@ import type { Response, NextFunction } from "express";
 import { env } from "../config/env.js";
 import type { AuthenticatedRequest } from "../middleware/authenticate.js";
 import { hasRequiredRole } from "./authorization-state.js";
+import { sendApiError } from "./api-errors.js";
 import type { UserRole } from "../types/domain.js";
 import { ACCESS_TOKEN_TTL_SECONDS } from "./session-token.js";
 
@@ -38,7 +39,7 @@ export function requireRole(
   role: UserRole,
 ) {
   if (!hasRequiredRole(req.currentUser, role)) {
-    return res.status(403).json({ message: "Forbidden" });
+    return sendApiError(req, res, 403, "FORBIDDEN", "Forbidden");
   }
 
   return next();

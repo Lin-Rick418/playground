@@ -15,7 +15,6 @@ Vue 3 + Pinia 前端，Node.js + Express 後端，PostgreSQL 資料庫。
 ## 開發用預設帳號
 
 執行 `npm run db:seed` 後才會建立：
-- `admin / admin123`
 - `player1 / player123`
 
 ## 開發
@@ -79,7 +78,23 @@ VITE_API_BASE_URL=https://your-api-host.example.com
 
 ## 金額異動 API 的 idempotency
 
-下注與 Admin 餘額調整請求必須帶 8–128 字元的 `Idempotency-Key` header。client 在回應不確定時，應以相同 key 與完全相同的 payload 重試；server 會回傳第一次已提交的結果，而不會再次扣款或調整餘額。同一使用者、同一操作範圍若以相同 key 傳送不同 payload，server 會回傳 `409`。
+下注請求必須帶 8–128 字元的 `Idempotency-Key` header。client 在回應不確定時，應以相同 key 與完全相同的 payload 重試；server 會回傳第一次已提交的結果，而不會再次扣款。同一使用者、同一操作範圍若以相同 key 傳送不同 payload，server 會回傳 `409`。
+
+此 repository 僅提供 player app；admin 頁面、API 與登入權限已移除。既有 admin／adjustment／ledger 資料仍保留，供未來獨立後台承接。
+
+## API error contract
+
+所有 HTTP API errors 都使用 JSON，並保留既有的 top-level `message` 欄位：
+
+```json
+{
+  "code": "VALIDATION_ERROR",
+  "message": "Invalid payload",
+  "requestId": "3d1334d8-cb00-4cd7-b614-3c66ec67babc"
+}
+```
+
+每個 response 都會回傳 `X-Request-Id` header，內容與 error body 的 `requestId` 相同。Client 可傳入 1–128 字元、僅包含英數與 `._:-` 的 `X-Request-Id`；不符合格式時 server 會改用 UUID。回報 API 問題時應附上此 ID，以便對應 server structured error log。Unknown routes 與 malformed JSON 也遵循同一 contract，不會回傳 Express HTML 或 internal error details。
 
 ## 備註
 

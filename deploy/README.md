@@ -95,7 +95,7 @@ sudo -u baccarat env $(cat /etc/baccarat/baccarat.env | xargs) npm run db:seed
 注意：
 
 - `npm run db:seed` 只應在你確定需要建立開發/測試用 demo 帳號時執行
-- 正式環境的 `api` 與 `worker` 啟動時只會初始化資料表、桌別與牌靴，不會自動建立 `admin/admin123` 或 `player1/player123`
+- 正式環境的 `api` 與 `worker` 啟動時只會初始化資料表、桌別與牌靴，不會自動建立 demo player；player app 不提供 admin 登入或管理介面
 
 ## 7. 安裝 systemd services
 

@@ -1524,15 +1524,7 @@ async function seedDemoUser(
 }
 
 async function seedDemoUsers(executor: PoolClient) {
-  const [adminPasswordHash, playerPasswordHash] = await Promise.all([
-    bcrypt.hash("admin123", 10),
-    bcrypt.hash("player123", 10),
-  ]);
-
-  await seedDemoUser(
-    { username: "admin", passwordHash: adminPasswordHash, role: "ADMIN", balance: 0 },
-    executor,
-  );
+  const playerPasswordHash = await bcrypt.hash("player123", 10);
   await seedDemoUser(
     { username: "player1", passwordHash: playerPasswordHash, role: "PLAYER", balance: 10000 },
     executor,

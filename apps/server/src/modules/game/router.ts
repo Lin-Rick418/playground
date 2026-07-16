@@ -4,6 +4,7 @@ import { env } from "../../config/env.js";
 import { authenticate, type AuthenticatedRequest } from "../../middleware/authenticate.js";
 import { requireRole } from "../../lib/auth.js";
 import { getBusinessDayWindow } from "../../lib/business-day.js";
+import { sendApiError } from "../../lib/api-errors.js";
 import {
   applyBalanceMutation,
   buildLobbyTables,
@@ -58,11 +59,11 @@ gameRouter.get("/tables/:tableId/state", async (req: AuthenticatedRequest, res) 
   const publicState = await buildTablePublicState(tableId);
 
   if (!publicState) {
-    return res.status(404).json({ message: "Table not found" });
+    return sendApiError(req, res, 404, "NOT_FOUND", "Table not found");
   }
 
   if (!publicState.round) {
-    return res.status(503).json({ message: "No active round for table" });
+    return sendApiError(req, res, 503, "SERVICE_UNAVAILABLE", "No active round for table");
   }
 
   const userState = await buildTableUserState(req.currentUser!.id, tableId);
@@ -100,7 +101,7 @@ gameRouter.post("/tables/:tableId/bet", async (req: AuthenticatedRequest, res) =
   const parsed = placeBetSchema.safeParse(req.body);
 
   if (!parsed.success) {
-    return res.status(400).json({ message: "Invalid bet payload" });
+    return sendApiError(req, res, 400, "VALIDATION_ERROR", "Invalid bet payload");
   }
 
   const requestedIdempotencyKey = parseIdempotencyKey(req.get("Idempotency-Key"));

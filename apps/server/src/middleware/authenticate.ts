@@ -2,6 +2,7 @@ import type { NextFunction, Request, Response } from "express";
 import { verifyToken, type JwtPayload } from "../lib/auth.js";
 import { validatePersistedSession } from "../lib/authorization-state.js";
 import { findUserById, isAuthSessionActive } from "../lib/db.js";
+import { sendApiError } from "../lib/api-errors.js";
 import type { UserRecord } from "../types/domain.js";
 
 export type AuthenticatedRequest = Request & {
@@ -16,7 +17,7 @@ export async function authenticate(req: AuthenticatedRequest, res: Response, nex
   const token = authHeader?.startsWith("Bearer ") ? authHeader.slice("Bearer ".length) : null;
 
   if (!token) {
-    return res.status(401).json({ message: "Unauthorized" });
+    return sendApiError(req, res, 401, "AUTHENTICATION_REQUIRED", "Authentication is required");
   }
 
   let payload: JwtPayload;
@@ -24,7 +25,7 @@ export async function authenticate(req: AuthenticatedRequest, res: Response, nex
   try {
     payload = verifyToken(token);
   } catch {
-    return res.status(401).json({ message: "Invalid token" });
+    return sendApiError(req, res, 401, "INVALID_TOKEN", "Invalid token");
   }
 
   try {
@@ -34,13 +35,19 @@ export async function authenticate(req: AuthenticatedRequest, res: Response, nex
     ]);
 
     if (!sessionActive) {
-      return res.status(401).json({ message: "Session expired" });
+      return sendApiError(req, res, 401, "INVALID_TOKEN", "Session expired");
     }
 
     const decision = validatePersistedSession(persistedUser);
 
     if (!decision.authorized) {
-      return res.status(decision.httpStatus).json({ message: decision.message });
+      return sendApiError(
+        req,
+        res,
+        decision.httpStatus,
+        decision.httpStatus === 401 ? "INVALID_TOKEN" : "ACCOUNT_DISABLED",
+        decision.message,
+      );
     }
 
     // Canonicalize both request identities from the database. The JWT role is

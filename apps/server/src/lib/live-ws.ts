@@ -386,7 +386,7 @@ export async function attachLiveWebSocketServer(server: Server) {
       isAuthSessionActive(payload.sessionId),
     ]);
 
-    if (!user || !user.isActive || !sessionActive) {
+    if (!user || !user.isActive || user.role !== "PLAYER" || !sessionActive) {
       rejectUpgrade(socket, 401, "Unauthorized");
       return;
     }

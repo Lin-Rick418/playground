@@ -3,6 +3,7 @@ import { randomUUID } from "node:crypto";
 import { z } from "zod";
 import { signToken } from "../../lib/auth.js";
 import { env } from "../../config/env.js";
+import { sendApiError } from "../../lib/api-errors.js";
 import { authenticate, type AuthenticatedRequest } from "../../middleware/authenticate.js";
 import {
   createAuthSession,
@@ -77,7 +78,7 @@ authRouter.post("/login", async (req, res) => {
   const parsed = loginSchema.safeParse(req.body);
 
   if (!parsed.success) {
-    return res.status(400).json({ message: "Invalid login payload" });
+    return sendApiError(req, res, 400, "VALIDATION_ERROR", "Invalid login payload");
   }
 
   const attempt = createLoginRateLimitAttempt(parsed.data.username, req.ip);
@@ -87,7 +88,7 @@ authRouter.post("/login", async (req, res) => {
     // A hard account/account+IP block still performs bcrypt work, but avoids
     // querying the real password hash so known and unknown users look alike.
     await verifyLoginPassword(parsed.data.password, undefined);
-    return res.status(429).json({ message: "Too many login attempts, try again later" });
+    return sendApiError(req, res, 429, "RATE_LIMITED", "Too many login attempts, try again later");
   }
 
   const user = await findUserByUsername(parsed.data.username);
@@ -97,10 +98,10 @@ authRouter.post("/login", async (req, res) => {
     const failureLimit = await loginRateLimiter.recordFailure(attempt);
 
     if (failureLimit.limitedScopes.length > 0) {
-      return res.status(429).json({ message: "Too many login attempts, try again later" });
+      return sendApiError(req, res, 429, "RATE_LIMITED", "Too many login attempts, try again later");
     }
 
-    return res.status(401).json({ message: "Invalid credentials" });
+    return sendApiError(req, res, 401, "INVALID_CREDENTIALS", "Invalid credentials");
   }
 
   await loginRateLimiter.recordSuccess(attempt);
@@ -108,7 +109,11 @@ authRouter.post("/login", async (req, res) => {
   // Only revealed after the password is verified, so it cannot be used to
   // enumerate accounts.
   if (!user.isActive) {
-    return res.status(403).json({ message: "Account is disabled" });
+    return sendApiError(req, res, 403, "ACCOUNT_DISABLED", "Account is disabled");
+  }
+
+  if (user.role !== "PLAYER") {
+    return sendApiError(req, res, 403, "FORBIDDEN", "Account is not available in the player application");
   }
 
   const sessionId = randomUUID();
@@ -128,7 +133,7 @@ authRouter.post("/refresh", async (req, res) => {
   const currentRefreshToken = readCookie(req.headers.cookie, REFRESH_COOKIE_NAME);
   if (!currentRefreshToken) {
     clearRefreshCookie(res);
-    return res.status(401).json({ message: "Session expired" });
+    return sendApiError(req, res, 401, "INVALID_TOKEN", "Session expired");
   }
 
   const nextRefreshToken = createRefreshToken();
@@ -139,14 +144,14 @@ authRouter.post("/refresh", async (req, res) => {
 
   if (!session) {
     clearRefreshCookie(res);
-    return res.status(401).json({ message: "Session expired" });
+    return sendApiError(req, res, 401, "INVALID_TOKEN", "Session expired");
   }
 
   const user = await findUserById(session.userId);
-  if (!user || !user.isActive) {
+  if (!user || !user.isActive || user.role !== "PLAYER") {
     await revokeAuthSessionByRefreshTokenHash(hashRefreshToken(nextRefreshToken));
     clearRefreshCookie(res);
-    return res.status(401).json({ message: "Session expired" });
+    return sendApiError(req, res, 401, "INVALID_TOKEN", "Session expired");
   }
 
   setRefreshCookie(res, nextRefreshToken);
@@ -177,7 +182,11 @@ authRouter.get("/me", authenticate, async (req: AuthenticatedRequest, res) => {
   const user = req.currentUser;
 
   if (!user) {
-    return res.status(401).json({ message: "Unauthorized" });
+    return sendApiError(req, res, 401, "INVALID_TOKEN", "Unauthorized");
+  }
+
+  if (user.role !== "PLAYER") {
+    return sendApiError(req, res, 403, "FORBIDDEN", "Account is not available in the player application");
   }
 
   return res.json({

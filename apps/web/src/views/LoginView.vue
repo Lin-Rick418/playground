@@ -12,8 +12,8 @@ const form = reactive({
 });
 
 async function onSubmit() {
-  const user = await authStore.login(form.username, form.password);
-  router.push(user.role === "ADMIN" ? "/admin" : "/lobby");
+  await authStore.login(form.username, form.password);
+  router.push("/lobby");
 }
 </script>
 

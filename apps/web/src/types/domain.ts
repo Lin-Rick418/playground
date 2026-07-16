@@ -1,4 +1,4 @@
-export type UserRole = "ADMIN" | "PLAYER";
+export type UserRole = "PLAYER";
 export type RoundWinner = "PLAYER" | "BANKER" | "TIE";
 export type RoundStatus = "OPEN" | "LOCKED" | "SETTLED";
 export type BetType = "PLAYER" | "BANKER" | "TIE" | "PLAYER_PAIR" | "BANKER_PAIR";
@@ -107,39 +107,6 @@ export type DailyProfitSummary = {
   totalPayout: number;
   netProfit: number;
   calculatedAt: string;
-};
-
-export type AdminUser = {
-  id: string;
-  username: string;
-  role: UserRole;
-  isActive: boolean;
-  balance: number;
-  createdAt: string;
-};
-
-export type Adjustment = {
-  id: string;
-  amount: number;
-  note?: string;
-  createdAt: string;
-  admin: {
-    username: string;
-  };
-  user: {
-    username: string;
-  };
-};
-
-export type RoundBetDetail = {
-  id: string;
-  userId: string;
-  username: string;
-  roundId: string;
-  betType: BetType;
-  amount: number;
-  payout: number;
-  createdAt: string;
 };
 
 export type RoadVisibilitySettings = {
