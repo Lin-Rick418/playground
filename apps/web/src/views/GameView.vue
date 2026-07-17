@@ -1014,7 +1014,7 @@ watch(
     </transition>
 
     <header class="table-nav">
-      <button class="nav-icon-button" type="button" @click="backToLobby" aria-label="返回大廳">‹</button>
+      <button class="nav-icon-button" type="button" aria-label="返回大廳" @click="backToLobby">‹</button>
       <div class="table-nav-title">
         <h1>{{ currentTable?.name ?? "遊戲桌" }}</h1>
         <p>
@@ -1022,7 +1022,7 @@ watch(
           {{ currentTable?.minBet?.toLocaleString() ?? "--" }}-{{ currentTable?.maxBet?.toLocaleString() ?? "--" }}
         </p>
       </div>
-      <button class="nav-text-button" type="button" @click="openRoadSettings" aria-haspopup="dialog">設定</button>
+      <button class="nav-text-button" type="button" aria-haspopup="dialog" @click="openRoadSettings">設定</button>
     </header>
 
     <div class="table-toolbar">
@@ -1030,7 +1030,7 @@ watch(
         <div v-if="isLastHandRound" class="last-hand-pill" role="status" aria-live="polite">最後一局</div>
       </transition>
       <div class="toolbar-actions">
-        <button type="button" class="toolbar-round-button" @click="openRoadmap" aria-haspopup="dialog" aria-label="開啟路單">
+        <button type="button" class="toolbar-round-button" aria-haspopup="dialog" aria-label="開啟路單" @click="openRoadmap">
           <span class="road-dots" aria-hidden="true">
             <i class="dot player" /><i class="dot banker" /><i class="dot tie" /><i class="dot gold" />
           </span>
@@ -1040,9 +1040,9 @@ watch(
           type="button"
           class="toolbar-round-button sound-button"
           :class="{ muted: !isVoiceAnnouncementEnabled }"
-          @click="isVoiceAnnouncementEnabled = !isVoiceAnnouncementEnabled"
           :aria-pressed="isVoiceAnnouncementEnabled"
           :aria-label="isVoiceAnnouncementEnabled ? '關閉語音播報' : '開啟語音播報'"
+          @click="isVoiceAnnouncementEnabled = !isVoiceAnnouncementEnabled"
         >
           <svg viewBox="0 0 24 24" aria-hidden="true">
             <path d="M4 9v6h4l5 4V5L8 9H4Z" />
@@ -1068,8 +1068,8 @@ watch(
             ref="settlementCloseButtonRef"
             type="button"
             class="settlement-close-button"
-            @click="dismissSettlementPopup"
             aria-label="關閉本局結算"
+            @click="dismissSettlementPopup"
           >
             ✕
           </button>
@@ -1239,8 +1239,8 @@ watch(
             type="button"
             class="confirm-fab cancel"
             :disabled="isPlacingBet"
-            @click="clearStagedBets"
             aria-label="取消下注"
+            @click="clearStagedBets"
           >
             <svg viewBox="0 0 24 24" fill="none" aria-hidden="true">
               <path
@@ -1256,8 +1256,8 @@ watch(
             type="button"
             class="confirm-fab confirm"
             :disabled="!isBettingOpen || isPlacingBet"
-            @click="confirmStagedBets"
             aria-label="確認下注"
+            @click="confirmStagedBets"
           >
             <svg viewBox="0 0 24 24" fill="none" aria-hidden="true">
               <path
@@ -1329,8 +1329,8 @@ watch(
           ref="roadmapCloseButtonRef"
           class="settings-close-button"
           type="button"
-          @click="closeRoadmap"
           aria-label="關閉路圖"
+          @click="closeRoadmap"
         >
           ✕
         </button>
@@ -1360,8 +1360,8 @@ watch(
           ref="settingsCloseButtonRef"
           class="settings-close-button"
           type="button"
-          @click="closeRoadSettings"
           aria-label="關閉設定"
+          @click="closeRoadSettings"
         >
           ✕
         </button>

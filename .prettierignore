@@ -1,0 +1,8 @@
+dist
+node_modules
+coverage
+package-lock.json
+apps/web/public
+apps/web/dist
+*.mp3
+*.svg

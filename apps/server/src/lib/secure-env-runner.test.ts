@@ -48,7 +48,7 @@ describe("secure env-file command runner", () => {
     const secretSentinel = "argv-leak-sentinel-734c8d";
     const secret =
       `${secretSentinel} space # equals= dollar$ subshell$(touch ${injectionMarker}) ` +
-      `backtick\`touch ${injectionMarker}\` double\" backslash\\`;
+      `backtick\`touch ${injectionMarker}\` double" backslash\\`;
     const envFile = join(temporaryDirectory, "service.env");
     await writeFile(envFile, `SPECIAL_SECRET='${secret}'\nSAFE_MARKER=loaded\n`, { mode: 0o600 });
 
@@ -112,7 +112,7 @@ describe("secure env-file command runner", () => {
 
     for (const pid of [runner.pid, childDetails.pid]) {
       assert.ok(pid);
-      const commandLine = await processCommandLine(pid!);
+      const commandLine = await processCommandLine(pid);
       assert.ok(!commandLine.includes(secret), `secret appeared in argv for pid ${pid}`);
       assert.ok(!commandLine.includes(secretSentinel), `secret fragment appeared in argv for pid ${pid}`);
     }
