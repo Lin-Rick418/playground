@@ -9,6 +9,7 @@ User=baccarat-api
 Group=baccarat
 WorkingDirectory=/opt/baccarat/current
 Environment=NODE_ENV=production
+Environment=BACCARAT_SERVICE_NAME=baccarat-api
 Environment=HOME=/nonexistent
 EnvironmentFile=/etc/baccarat/baccarat.env
 ExecStart=/usr/bin/node /opt/baccarat/current/apps/server/dist/index.js
@@ -16,6 +17,8 @@ Restart=always
 RestartSec=3
 KillSignal=SIGTERM
 TimeoutStartSec=60
+# The process enforces a 15-second graceful-shutdown deadline; systemd keeps
+# five seconds of headroom before sending SIGKILL.
 TimeoutStopSec=20
 
 # The API accepts HTTP/WebSocket traffic and opens PostgreSQL/DNS sockets. It

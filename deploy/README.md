@@ -10,7 +10,7 @@
 
 ```bash
 sudo apt update
-sudo apt install -y nginx postgresql postgresql-contrib curl
+sudo apt install -y nginx postgresql postgresql-contrib curl certbot jq
 ```
 
 安裝 `.nvmrc` 指定的 Node `22.19.0` 與 npm `10.9.3`，固定於 `/usr/bin/node` 可取得的位置，然後確認：
@@ -63,17 +63,68 @@ sudo install -o root -g root -m 0644 deploy/systemd/baccarat-api.service /etc/sy
 sudo install -o root -g root -m 0644 deploy/systemd/baccarat-worker.service /etc/systemd/system/
 sudo install -o root -g root -m 0644 deploy/systemd/baccarat-backup.service /etc/systemd/system/
 sudo install -o root -g root -m 0644 deploy/systemd/baccarat-backup.timer /etc/systemd/system/
+sudo install -o root -g root -m 0644 deploy/systemd/baccarat-maintenance.service /etc/systemd/system/
+sudo install -o root -g root -m 0644 deploy/systemd/baccarat-maintenance.timer /etc/systemd/system/
 sudo systemd-analyze verify /etc/systemd/system/baccarat-*.service
 sudo systemctl daemon-reload
-sudo systemctl enable baccarat-api baccarat-worker baccarat-backup.timer
-
-sudo install -o root -g root -m 0644 deploy/nginx/baccarat.conf /etc/nginx/sites-available/baccarat.conf
-sudo ln -s /etc/nginx/sites-available/baccarat.conf /etc/nginx/sites-enabled/baccarat.conf
-sudo nginx -t
-sudo systemctl reload nginx
+sudo systemctl enable baccarat-api baccarat-worker baccarat-backup.timer baccarat-maintenance.timer
 ```
 
-把 nginx `server_name` 改為正式網域並設定 TLS。只允許一個 worker instance，避免重複推局。
+nginx 是本部署模式唯一支援的 TLS edge。先確認正式網域 DNS 已指向主機，
+再用不依賴既有憑證的 bootstrap config 取得第一張憑證：
+
+```bash
+sudo install -d -o root -g www-data -m 0750 /var/www/certbot
+sudo install -o root -g root -m 0644 \
+  deploy/nginx/baccarat-acme-bootstrap.conf /etc/nginx/sites-available/baccarat.conf
+sudo sed -i 's/example.com/your-domain.example/g' /etc/nginx/sites-available/baccarat.conf
+sudo ln -sfn /etc/nginx/sites-available/baccarat.conf /etc/nginx/sites-enabled/baccarat.conf
+sudo nginx -t
+sudo systemctl reload nginx
+
+sudo certbot certonly --webroot --webroot-path /var/www/certbot \
+  --domain your-domain.example --agree-tos --email ops@your-domain.example
+```
+
+取得憑證後，把正式 TLS config 的 `server_name`、`ssl_certificate` 與
+`ssl_certificate_key` 全部替換成實際網域／路徑，再啟用：
+
+```bash
+sudo install -o root -g root -m 0644 deploy/nginx/baccarat.conf /etc/nginx/sites-available/baccarat.conf
+sudo sed -i 's/example.com/your-domain.example/g' /etc/nginx/sites-available/baccarat.conf
+sudo nginx -t
+sudo systemctl reload nginx
+sudo certbot renew --dry-run
+systemctl list-timers certbot.timer
+```
+
+最後驗證 HTTP 只做 redirect、HTTPS 才有 HSTS，並確認 refresh cookie 與
+WebSocket 都使用安全連線：
+
+```bash
+curl -I http://your-domain.example/
+curl -I https://your-domain.example/
+```
+
+預設 HSTS 只有 `max-age`。只有確認該網域的所有現在與未來子網域都永久
+支援 HTTPS 後，才能加入 `includeSubDomains`；完成 preload requirements 與
+撤回風險評估前不得加入 `preload`。
+
+純 HTTP 的 production 部署不受支援：production refresh cookie 固定為
+`Secure`，瀏覽器不會透過 HTTP 回送。無法使用公有 CA 的內網環境應使用
+受所有 client 信任的內部 CA，仍須保留 HTTPS。
+
+CDN／load balancer 置於本 nginx 前方目前也不受支援。若未來新增外部 edge，
+必須另外設計 nginx `real_ip` trust boundary、Express `trust proxy`、由 edge
+發送 HSTS，並重新驗證 login/WS 的 per-IP rate limiting。
+
+只允許一個 worker instance，避免重複推局。
+
+預設 web、API 與 WebSocket 都由同一個 nginx origin 提供，因此 CSP 的
+`connect-src 'self'` 已涵蓋 `/api` 與同源 `wss://`。不要加入裸的 `ws:` 或
+`wss:`，那會允許連線到任意主機。若另行設定 `VITE_API_BASE_URL` 指向不同
+origin，必須在 CSP 加入該完整且固定的 `https://`／`wss://` origin，並同步
+設定 server 的 `CORS_ORIGIN`；部署後需確認 browser console 沒有 CSP violation。
 
 ## 3. Release 前置檢查
 
@@ -172,6 +223,16 @@ sudo -u baccarat-backup /opt/baccarat/current/deploy/scripts/backup.sh prune \
 ```
 
 Backup 是 PostgreSQL custom-format `.dump` 與相鄰 `.sha256`，以 temporary file + rename 發佈，權限 `0600`。prune 預設只列出，review 後才加 `--apply`；daily systemd timer 會明確使用 `--keep 14 --apply`。
+
+過期 idempotency/session metadata 由獨立 hourly timer 分批清除，不和 API 或 round worker 綁在同一個 process：
+
+```bash
+systemctl status baccarat-maintenance.timer
+sudo systemctl start baccarat-maintenance.service
+journalctl -u baccarat-maintenance.service -o cat --since '-1 day' | jq .
+```
+
+保留期限、永久保存資料與停用 cleanup 的 rollback 作法見 [data-retention.md](../docs/data-retention.md)。
 
 至少每月 restore 到全新空白 scratch database。restore env 必須設定 `ALLOW_RESTORE_VERIFICATION=true`、`RESTORE_VERIFY_DATABASE_URL` 與完全相符的 `RESTORE_VERIFY_EXPECTED_DATABASE`。不要將 production URL 放入 restore verification env，也不要對 production 執行 `pg_restore --clean`。
 

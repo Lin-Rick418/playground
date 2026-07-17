@@ -1,6 +1,7 @@
 import type { Notification, PoolClient } from "pg";
 import { pool } from "./db.js";
 import { dispatchSafely } from "./async-handler.js";
+import { logger, toLogError } from "./logger.js";
 
 const LIVE_EVENT_CHANNEL = "baccarat_live";
 
@@ -52,20 +53,33 @@ export async function startLiveEventSubscriber(onEvent: (event: LiveEvent) => Pr
         try {
           const event = JSON.parse(message.payload) as LiveEvent;
           void dispatchSafely(onEvent, event, (error) => {
-            console.error("Live event handler failed", error);
+            logger.error({
+              event: "live_event_handler_failed",
+              liveEventType: event.type,
+              err: toLogError(error),
+            }, "Live event handler failed");
           });
         } catch (error) {
-          console.error("Failed to parse live event payload", error);
+          logger.error({
+            event: "live_event_payload_invalid",
+            err: toLogError(error),
+          }, "Failed to parse live event payload");
         }
       });
 
       client.on("error", (error: Error) => {
-        console.error("Live event subscriber connection lost", error);
+        logger.error({
+          event: "live_event_subscriber_connection_lost",
+          err: toLogError(error),
+        }, "Live event subscriber connection lost");
         cleanupClient(client);
         scheduleReconnect();
       });
     } catch (error) {
-      console.error("Live event subscriber failed to connect", error);
+      logger.error({
+        event: "live_event_subscriber_connect_failed",
+        err: toLogError(error),
+      }, "Live event subscriber failed to connect");
       scheduleReconnect();
     }
   }
@@ -81,7 +95,11 @@ export async function startLiveEventSubscriber(onEvent: (event: LiveEvent) => Pr
     if (stopped || reconnectTimer) return;
     const delayMs = Math.min(1000 * 2 ** reconnectAttempts, 30000);
     reconnectAttempts++;
-    console.log(`Live event subscriber reconnecting in ${delayMs}ms (attempt ${reconnectAttempts})`);
+    logger.info({
+      event: "live_event_subscriber_reconnecting",
+      delayMs,
+      attempt: reconnectAttempts,
+    }, "Live event subscriber reconnecting");
     reconnectTimer = setTimeout(() => {
       reconnectTimer = null;
       void connect();

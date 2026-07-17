@@ -50,7 +50,15 @@ GET /api/game/shoes/:shoeId/audit
 Authorization: Bearer <token>
 ```
 
-找不到時回 `404 { "message": "Shoe audit not found" }`。
+找不到時回傳共用 error contract，例如：
+
+```json
+{
+  "code": "NOT_FOUND",
+  "message": "Shoe audit not found",
+  "requestId": "request-correlation-id"
+}
+```
 
 active shoe 回傳 commitment、已完成的 deals、`reveal: null`、`verification: null`，且 `cutCardRemaining` 為 `null`。不得在 active response 新增 `seed` 或 remaining cards。
 

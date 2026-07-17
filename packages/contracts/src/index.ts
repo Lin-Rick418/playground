@@ -163,6 +163,146 @@ export const tableStateResponseSchema = tableSnapshotSchema.extend({
   config: roundConfigSchema,
 });
 
+export const roundHistoryItemSchema = z
+  .object({
+    id: idSchema,
+    createdAt: isoDateTimeSchema,
+    totalAmount: z.number().int().nonnegative(),
+    totalPayout: z.number().int().nonnegative(),
+    bets: z.array(currentBetSchema),
+    round: z
+      .object({
+        id: idSchema,
+        tableId: idSchema,
+        winner: roundWinnerSchema,
+        playerCards: z.array(cardSchema),
+        bankerCards: z.array(cardSchema),
+        playerTotal: z.number().int().min(0).max(9),
+        bankerTotal: z.number().int().min(0).max(9),
+        playerPair: z.boolean(),
+        bankerPair: z.boolean(),
+      })
+      .strict(),
+  })
+  .strict();
+
+export const historyResponseSchema = z
+  .object({
+    items: z.array(roundHistoryItemSchema),
+    nextCursor: z.string().min(1).nullable(),
+  })
+  .strict();
+
+export const dailyProfitResponseSchema = z
+  .object({
+    date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+    timeZone: z.string().min(1),
+    windowStart: isoDateTimeSchema,
+    windowEnd: isoDateTimeSchema,
+    formula: z.literal("TOTAL_PAYOUT_MINUS_TOTAL_BET"),
+    recognitionTime: z.literal("ROUND_SETTLED_AT"),
+    totalBet: z.number().int().nonnegative(),
+    totalPayout: z.number().int().nonnegative(),
+    netProfit: z.number().int(),
+    calculatedAt: isoDateTimeSchema,
+  })
+  .strict();
+
+const auditedRoundResultSchema = z
+  .object({
+    playerCards: z.array(cardSchema),
+    bankerCards: z.array(cardSchema),
+    playerTotal: z.number().int().min(0).max(9),
+    bankerTotal: z.number().int().min(0).max(9),
+    winner: roundWinnerSchema,
+    playerPair: z.boolean(),
+    bankerPair: z.boolean(),
+  })
+  .strict();
+
+const shoeDealAuditSchema = z
+  .object({
+    dealIndex: z.number().int().nonnegative(),
+    roundId: idSchema,
+    dealtCards: z.array(cardSchema),
+    result: auditedRoundResultSchema,
+    recordedAt: isoDateTimeSchema,
+  })
+  .strict();
+
+const shoeRevealSchema = z
+  .object({
+    seed: z.string().regex(/^[0-9a-f]{64}$/),
+    reason: z.string().min(1),
+    revealedAt: isoDateTimeSchema,
+  })
+  .strict();
+
+const shoeAuditVerificationSchema = z
+  .object({
+    valid: z.boolean(),
+    status: z.enum(["VALID", "INVALID", "CANCELLED", "UNREVEALED"]),
+    commitmentValid: z.boolean(),
+    dealSequenceValid: z.boolean(),
+    lifecycleValid: z.boolean(),
+    verifiedDeals: z.number().int().nonnegative(),
+    verifiedCards: z.number().int().nonnegative(),
+    remainingCards: z.number().int().nonnegative(),
+    errors: z.array(z.string()),
+  })
+  .strict();
+
+export const shoeAuditResponseSchema = z
+  .object({
+    version: z.number().int().positive(),
+    shoeId: idSchema,
+    tableId: idSchema,
+    shuffleAlgorithm: z.string().min(1),
+    dealAlgorithm: z.string().min(1),
+    deckCount: z.number().int().positive(),
+    commitment: z.string().regex(/^[0-9a-f]{64}$/),
+    committedAt: isoDateTimeSchema,
+    cutCardRemaining: z.number().int().nonnegative().nullable(),
+    reveal: shoeRevealSchema.nullable(),
+    deals: z.array(shoeDealAuditSchema),
+    verification: shoeAuditVerificationSchema.nullable(),
+  })
+  .strict();
+
+export const placeBetResponseSchema = z
+  .object({
+    table: gameTableSchema,
+    round: activeRoundSchema,
+    bets: z.array(currentBetSchema),
+    balance: z.number().int().nonnegative(),
+  })
+  .strict();
+
+export const apiErrorCodeSchema = z.enum([
+  "MALFORMED_JSON",
+  "PAYLOAD_TOO_LARGE",
+  "UNSUPPORTED_MEDIA_TYPE",
+  "VALIDATION_ERROR",
+  "AUTHENTICATION_REQUIRED",
+  "INVALID_TOKEN",
+  "INVALID_CREDENTIALS",
+  "FORBIDDEN",
+  "ACCOUNT_DISABLED",
+  "NOT_FOUND",
+  "CONFLICT",
+  "RATE_LIMITED",
+  "SERVICE_UNAVAILABLE",
+  "INTERNAL_ERROR",
+]);
+
+export const apiErrorResponseSchema = z
+  .object({
+    code: apiErrorCodeSchema,
+    message: z.string().min(1),
+    requestId: z.string().min(1),
+  })
+  .strict();
+
 export const tableUserSnapshotSchema = z
   .object({
     tableId: idSchema,
@@ -222,6 +362,13 @@ export type PresentationWindow = z.infer<typeof presentationWindowSchema>;
 export type ShoeStatus = z.infer<typeof shoeStatusSchema>;
 export type TableSnapshot = z.infer<typeof tableSnapshotSchema>;
 export type TableStateResponse = z.infer<typeof tableStateResponseSchema>;
+export type RoundHistoryItem = z.infer<typeof roundHistoryItemSchema>;
+export type HistoryResponse = z.infer<typeof historyResponseSchema>;
+export type DailyProfitResponse = z.infer<typeof dailyProfitResponseSchema>;
+export type ShoeAuditResponse = z.infer<typeof shoeAuditResponseSchema>;
+export type PlaceBetResponse = z.infer<typeof placeBetResponseSchema>;
+export type ApiErrorCode = z.infer<typeof apiErrorCodeSchema>;
+export type ApiErrorResponse = z.infer<typeof apiErrorResponseSchema>;
 export type TableUserSnapshot = z.infer<typeof tableUserSnapshotSchema>;
 export type UserSnapshot = z.infer<typeof userSnapshotSchema>;
 export type LiveClientMessage = z.infer<typeof liveClientMessageSchema>;

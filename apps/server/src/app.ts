@@ -12,6 +12,7 @@ import {
 import { readBuildMetadata } from "./lib/build-metadata.js";
 import { getServiceHeartbeat } from "./lib/db.js";
 import { evaluateReadiness, withTimeout } from "./lib/health.js";
+import { logger as serviceLogger } from "./lib/logger.js";
 import { authRouter } from "./modules/auth/router.js";
 import { gameRouter } from "./modules/game/router.js";
 
@@ -25,7 +26,7 @@ type CreateAppOptions = {
 
 export function createApp(options: CreateAppOptions = {}) {
   const app = express();
-  const logger = options.logger ?? console;
+  const logger = options.logger ?? serviceLogger;
   app.disable("x-powered-by");
 
   // Trust X-Forwarded-For only from the local reverse proxy (nginx) so login

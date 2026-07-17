@@ -1,4 +1,6 @@
 import axios from "axios";
+import { apiErrorResponseSchema, loginResponseSchema } from "@baccarat/contracts";
+import { parseRuntimeContract } from "./contracts";
 import { clearStoredToken, getStoredToken, setStoredToken } from "./settings";
 
 const baseURL = import.meta.env.VITE_API_BASE_URL ?? "/api";
@@ -16,8 +18,36 @@ export function shouldReuseIdempotencyKey(error: unknown) {
   return !axios.isAxiosError(error) || !error.response || error.response.status >= 500;
 }
 
-const sessionApi = axios.create({ baseURL, withCredentials: true });
+// Kept separate so refresh requests cannot recursively enter the primary
+// client's 401 interceptor. Exported to allow adapter-level regression tests.
+export const sessionApi = axios.create({ baseURL, withCredentials: true });
 let refreshPromise: Promise<string> | null = null;
+
+function validateApiError(error: unknown) {
+  if (!axios.isAxiosError(error) || !error.response) {
+    return error;
+  }
+
+  const method = error.config?.method?.toUpperCase() ?? "API";
+  const url = error.config?.url ?? "request";
+  try {
+    error.response.data = parseRuntimeContract(
+      apiErrorResponseSchema,
+      error.response.data,
+      `${method} ${url} error`,
+    );
+  } catch {
+    // Responses that never reached the API (e.g. a proxy-level 502 with an
+    // HTML body) cannot satisfy the error contract; keep the original axios
+    // error so callers still see the real status and payload. The contract
+    // violation itself is already logged by parseRuntimeContract.
+  }
+  return error;
+}
+
+sessionApi.interceptors.response.use(undefined, (error) => {
+  throw validateApiError(error);
+});
 
 api.interceptors.request.use((config) => {
   const token = getStoredToken();
@@ -30,6 +60,7 @@ api.interceptors.request.use((config) => {
 });
 
 api.interceptors.response.use(undefined, async (error) => {
+  error = validateApiError(error);
   const request = error.config as (typeof error.config & { _sessionRetry?: boolean }) | undefined;
   const skipsRefresh =
     typeof request?.url === "string" &&
@@ -41,8 +72,13 @@ api.interceptors.response.use(undefined, async (error) => {
 
   request._sessionRetry = true;
   refreshPromise ??= sessionApi
-    .post<{ token: string }>("/auth/refresh")
-    .then(({ data }) => {
+    .post("/auth/refresh")
+    .then((response) => {
+      const data = parseRuntimeContract(
+        loginResponseSchema,
+        response.data,
+        "POST /auth/refresh",
+      );
       setStoredToken(data.token);
       return data.token;
     })

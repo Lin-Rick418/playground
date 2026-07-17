@@ -3,7 +3,7 @@ import { Router, type Response } from "express";
 import bcrypt from "bcryptjs";
 import { loginRequestSchema, loginResponseSchema, userSchema } from "@baccarat/contracts";
 import { env } from "../../config/env.js";
-import { sendApiError } from "../../lib/api-errors.js";
+import { getRequestId, sendApiError } from "../../lib/api-errors.js";
 import {
   changePasswordSchema,
   getPasswordPolicyViolation,
@@ -28,6 +28,7 @@ import {
 } from "../../lib/login-rate-limit.js";
 import { verifyLoginPassword } from "../../lib/login-password.js";
 import { publishLiveEvent } from "../../lib/live-events.js";
+import { logger } from "../../lib/logger.js";
 import { PostgresLoginRateLimitStore } from "../../lib/postgres-login-rate-limit-store.js";
 import {
   ACCESS_TOKEN_TTL_SECONDS,
@@ -42,6 +43,7 @@ import { authenticate, type AuthenticatedRequest } from "../../middleware/authen
 import type { UserRecord } from "../../types/domain.js";
 
 const loginRateLimiter = new LoginRateLimiter(new PostgresLoginRateLimitStore(pool));
+const securityLogger = logger.child({ component: "auth" });
 
 function setRefreshCookie(res: Response, token: string) {
   res.cookie(REFRESH_COOKIE_NAME, token, {
@@ -89,6 +91,12 @@ authRouter.post("/login", async (req, res) => {
   const existingLimit = await loginRateLimiter.inspect(attempt);
   if (existingLimit.hardBlocked) {
     await verifyLoginPassword(parsed.data.password, undefined);
+    securityLogger.warn({
+      event: "login_rate_limited",
+      requestId: getRequestId(req),
+      clientIp: req.ip,
+      limitedScopes: existingLimit.limitedScopes,
+    }, "Login rate limited");
     return sendApiError(req, res, 429, "RATE_LIMITED", "Too many login attempts, try again later");
   }
 
@@ -96,6 +104,13 @@ authRouter.post("/login", async (req, res) => {
   const isValid = await verifyLoginPassword(parsed.data.password, user?.passwordHash);
   if (!user || !isValid) {
     const failureLimit = await loginRateLimiter.recordFailure(attempt);
+    securityLogger.warn({
+      event: "login_failed",
+      requestId: getRequestId(req),
+      clientIp: req.ip,
+      userId: user?.id,
+      limitedScopes: failureLimit.limitedScopes,
+    }, "Login failed");
     if (failureLimit.limitedScopes.length > 0) {
       return sendApiError(req, res, 429, "RATE_LIMITED", "Too many login attempts, try again later");
     }
@@ -104,9 +119,23 @@ authRouter.post("/login", async (req, res) => {
 
   await loginRateLimiter.recordSuccess(attempt);
   if (!user.isActive) {
+    securityLogger.warn({
+      event: "login_rejected",
+      requestId: getRequestId(req),
+      clientIp: req.ip,
+      userId: user.id,
+      reason: "account_disabled",
+    }, "Login rejected");
     return sendApiError(req, res, 403, "ACCOUNT_DISABLED", "Account is disabled");
   }
   if (user.role !== "PLAYER") {
+    securityLogger.warn({
+      event: "login_rejected",
+      requestId: getRequestId(req),
+      clientIp: req.ip,
+      userId: user.id,
+      reason: "role_forbidden",
+    }, "Login rejected");
     return sendApiError(req, res, 403, "FORBIDDEN", "Account is not available in the player application");
   }
 
@@ -125,6 +154,12 @@ authRouter.post("/login", async (req, res) => {
 authRouter.post("/refresh", async (req, res) => {
   const currentRefreshToken = readCookie(req.headers.cookie, REFRESH_COOKIE_NAME);
   if (!currentRefreshToken) {
+    securityLogger.warn({
+      event: "auth_session_rejected",
+      requestId: getRequestId(req),
+      clientIp: req.ip,
+      reason: "missing_refresh_cookie",
+    }, "Refresh rejected");
     return sendApiError(req, res, 401, "INVALID_TOKEN", "Session expired");
   }
 
@@ -137,6 +172,12 @@ authRouter.post("/refresh", async (req, res) => {
   // A losing concurrent refresh must not clear the cookie written by the
   // request that successfully rotated the same token.
   if (!session) {
+    securityLogger.warn({
+      event: "auth_session_rejected",
+      requestId: getRequestId(req),
+      clientIp: req.ip,
+      reason: "invalid_refresh_token",
+    }, "Refresh rejected");
     return sendApiError(req, res, 401, "INVALID_TOKEN", "Session expired");
   }
 
@@ -144,6 +185,13 @@ authRouter.post("/refresh", async (req, res) => {
   if (!user || !user.isActive || user.role !== "PLAYER") {
     await revokeAuthSessionByRefreshTokenHash(hashRefreshToken(nextRefreshToken));
     clearRefreshCookie(res);
+    securityLogger.warn({
+      event: "auth_session_rejected",
+      requestId: getRequestId(req),
+      clientIp: req.ip,
+      userId: session.userId,
+      reason: "account_unavailable",
+    }, "Refresh rejected");
     return sendApiError(req, res, 401, "INVALID_TOKEN", "Session expired");
   }
 
@@ -206,6 +254,13 @@ authRouter.post("/change-password", authenticate, async (req: AuthenticatedReque
       return { error: { status: 400, code: "VALIDATION_ERROR", message: violation } } as const;
     }
     if (!(await bcrypt.compare(parsed.data.currentPassword, user.passwordHash))) {
+      securityLogger.warn({
+        event: "password_change_failed",
+        requestId: getRequestId(req),
+        clientIp: req.ip,
+        userId: user.id,
+        reason: "invalid_current_password",
+      }, "Password change rejected");
       return { error: { status: 401, code: "INVALID_CREDENTIALS", message: "Current password is incorrect" } } as const;
     }
 

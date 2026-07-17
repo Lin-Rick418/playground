@@ -25,6 +25,7 @@ import {
   isAuthSessionActive,
 } from "./db.js";
 import { startLiveEventSubscriber, type LiveEvent } from "./live-events.js";
+import { logger, toLogError } from "./logger.js";
 import {
   MAX_WEBSOCKET_MESSAGES_PER_WINDOW,
   MAX_WEBSOCKET_PAYLOAD_BYTES,
@@ -61,6 +62,7 @@ const HEARTBEAT_INTERVAL_MS = 30_000;
 const HEARTBEAT_TIMEOUT_MS = 10_000;
 const WS_UNAUTHORIZED_CLOSE_CODE = 4401;
 const WS_FORBIDDEN_CLOSE_CODE = 4403;
+const wsLogger = logger.child({ component: "live-ws" });
 
 function sendMessage(socket: WebSocket, message: LiveServerMessage) {
   if (socket.readyState !== WebSocket.OPEN) {
@@ -70,10 +72,11 @@ function sendMessage(socket: WebSocket, message: LiveServerMessage) {
   const parsed = liveServerMessageSchema.safeParse(message);
 
   if (!parsed.success) {
-    console.error("WebSocket response contract validation failed", {
+    wsLogger.error({
+      event: "websocket_response_contract_failed",
       type: message.type,
       issues: contractIssues(parsed.error),
-    });
+    }, "WebSocket response contract validation failed");
   }
 
   const payload = parsed.success
@@ -83,12 +86,18 @@ function sendMessage(socket: WebSocket, message: LiveServerMessage) {
   try {
     socket.send(JSON.stringify(payload), (error) => {
       if (error) {
-        console.error("Live WebSocket send failed", error);
+        wsLogger.error({
+          event: "websocket_send_failed",
+          err: toLogError(error),
+        }, "Live WebSocket send failed");
         socket.terminate();
       }
     });
   } catch (error) {
-    console.error("Live WebSocket send failed", error);
+    wsLogger.error({
+      event: "websocket_send_failed",
+      err: toLogError(error),
+    }, "Live WebSocket send failed");
     socket.terminate();
   }
 }
@@ -304,22 +313,28 @@ async function handleLiveEvent(event: LiveEvent) {
   }
 }
 
-function parseClientMessage(data: string): LiveClientMessage | null {
+function parseClientMessage(data: string, connection: LiveSocketConnection): LiveClientMessage | null {
   try {
     const parsed = liveClientMessageSchema.safeParse(JSON.parse(data));
 
     if (!parsed.success) {
-      console.warn("WebSocket request contract validation failed", {
+      wsLogger.warn({
+        event: "websocket_request_contract_failed",
+        connectionId: connection.id,
+        userId: connection.userId,
         issues: contractIssues(parsed.error),
-      });
+      }, "WebSocket request contract validation failed");
       return null;
     }
 
     return parsed.data;
   } catch {
-    console.warn("WebSocket request contract validation failed", {
+    wsLogger.warn({
+      event: "websocket_request_contract_failed",
+      connectionId: connection.id,
+      userId: connection.userId,
       issues: [{ code: "invalid_json", path: "" }],
-    });
+    }, "WebSocket request contract validation failed");
     return null;
   }
 }
@@ -374,7 +389,10 @@ export async function attachLiveWebSocketServer(server: Server) {
     handleProtocols: (protocols) => (protocols.has(WS_AUTH_PROTOCOL) ? WS_AUTH_PROTOCOL : false),
   });
   wss.on("error", (error) => {
-    console.error("Live WebSocket server error", error);
+    wsLogger.error({
+      event: "websocket_server_error",
+      err: toLogError(error),
+    }, "Live WebSocket server error");
   });
   let heartbeatInterval: ReturnType<typeof setInterval> | null = null;
 
@@ -395,7 +413,12 @@ export async function attachLiveWebSocketServer(server: Server) {
       }
       ws.ping();
       void revalidateLiveConnection(connection).catch((error) => {
-        console.error("Live WebSocket authorization revalidation failed", error);
+        wsLogger.error({
+          event: "websocket_authorization_revalidation_failed",
+          connectionId: connection.id,
+          userId: connection.userId,
+          err: toLogError(error),
+        }, "Live WebSocket authorization revalidation failed");
       });
     }
   }, HEARTBEAT_INTERVAL_MS);
@@ -419,6 +442,12 @@ export async function attachLiveWebSocketServer(server: Server) {
         WEBSOCKET_UPGRADE_WINDOW_MS,
       )
     ) {
+      wsLogger.warn({
+        event: "websocket_upgrade_rejected",
+        reason: "ip_rate_limit",
+        clientIp,
+        statusCode: 429,
+      }, "WebSocket upgrade rejected");
       rejectUpgrade(socket, 429, "Too Many Requests");
       return;
     }
@@ -427,12 +456,24 @@ export async function attachLiveWebSocketServer(server: Server) {
       (connection) => connection.clientIp === clientIp,
     ).length;
     if (isConnectionLimitExceeded({ total: connections.size, forIp: connectionsForIp })) {
+      wsLogger.warn({
+        event: "websocket_upgrade_rejected",
+        reason: "capacity",
+        clientIp,
+        statusCode: 503,
+      }, "WebSocket upgrade rejected");
       rejectUpgrade(socket, 503, "WebSocket Capacity Reached");
       return;
     }
 
     const token = extractTokenFromProtocolHeader(request.headers["sec-websocket-protocol"]);
     if (!token) {
+      wsLogger.warn({
+        event: "websocket_upgrade_rejected",
+        reason: "missing_token",
+        clientIp,
+        statusCode: 401,
+      }, "WebSocket upgrade rejected");
       rejectUpgrade(socket, 401, "Unauthorized");
       return;
     }
@@ -444,6 +485,13 @@ export async function attachLiveWebSocketServer(server: Server) {
     ]);
 
     if (!user || !user.isActive || user.role !== "PLAYER" || !sessionActive) {
+      wsLogger.warn({
+        event: "websocket_upgrade_rejected",
+        reason: "invalid_session",
+        clientIp,
+        userId: payload.userId,
+        statusCode: 401,
+      }, "WebSocket upgrade rejected");
       rejectUpgrade(socket, 401, "Unauthorized");
       return;
     }
@@ -458,6 +506,13 @@ export async function attachLiveWebSocketServer(server: Server) {
         forUser: connectionsForUser,
       })
     ) {
+      wsLogger.warn({
+        event: "websocket_upgrade_rejected",
+        reason: "connection_limit",
+        clientIp,
+        userId: payload.userId,
+        statusCode: 429,
+      }, "WebSocket upgrade rejected");
       rejectUpgrade(socket, 429, "Connection Limit Reached");
       return;
     }
@@ -476,6 +531,11 @@ export async function attachLiveWebSocketServer(server: Server) {
       };
 
       connections.set(connection.id, connection);
+      wsLogger.info({
+        event: "websocket_connected",
+        connectionId: connection.id,
+        userId: connection.userId,
+      }, "Live WebSocket connected");
       sendMessage(ws, {
         type: "connected",
         serverTime: new Date().toISOString(),
@@ -512,7 +572,7 @@ export async function attachLiveWebSocketServer(server: Server) {
           return;
         }
 
-        const message = parseClientMessage(raw.toString());
+        const message = parseClientMessage(raw.toString(), connection);
         if (!message) {
           sendMessage(ws, {
             type: "error",
@@ -522,7 +582,12 @@ export async function attachLiveWebSocketServer(server: Server) {
         }
 
         void handleSubscriptionMessage(connection, message).catch((error: unknown) => {
-          console.error("Live WebSocket message handler failed", error);
+          wsLogger.error({
+            event: "websocket_message_handler_failed",
+            connectionId: connection.id,
+            userId: connection.userId,
+            err: toLogError(error),
+          }, "Live WebSocket message handler failed");
           sendMessage(ws, { type: "error", message: "Live update failed" });
           ws.close(1011, "Live update failed");
         });
@@ -530,10 +595,20 @@ export async function attachLiveWebSocketServer(server: Server) {
 
       ws.on("close", () => {
         connections.delete(connection.id);
+        wsLogger.info({
+          event: "websocket_disconnected",
+          connectionId: connection.id,
+          userId: connection.userId,
+        }, "Live WebSocket disconnected");
       });
 
       ws.on("error", (error) => {
-        console.error("Live WebSocket connection error", error);
+        wsLogger.error({
+          event: "websocket_connection_error",
+          connectionId: connection.id,
+          userId: connection.userId,
+          err: toLogError(error),
+        }, "Live WebSocket connection error");
         connections.delete(connection.id);
       });
     });
@@ -541,7 +616,10 @@ export async function attachLiveWebSocketServer(server: Server) {
 
   const onUpgrade = (request: IncomingMessage, socket: Duplex, head: Buffer) => {
     void handleUpgrade(request, socket, head).catch((error: unknown) => {
-      console.error("Live WebSocket upgrade failed", error);
+      wsLogger.error({
+        event: "websocket_upgrade_failed",
+        err: toLogError(error),
+      }, "Live WebSocket upgrade failed");
       rejectUpgrade(socket, 401, "Unauthorized");
     });
   };
@@ -554,12 +632,14 @@ export async function attachLiveWebSocketServer(server: Server) {
       heartbeatInterval = null;
     }
     for (const connection of connections.values()) {
-      connection.socket.close();
+      connection.socket.close(1001, "Server shutting down");
     }
-    connections.clear();
     upgradeWindows.clear();
     await stopSubscriber?.();
     stopSubscriber = null;
-    wss.close();
+    await new Promise<void>((resolve, reject) => {
+      wss.close((error) => (error ? reject(error) : resolve()));
+    });
+    connections.clear();
   };
 }

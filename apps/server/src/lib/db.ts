@@ -46,6 +46,7 @@ import {
 } from "./shoe-audit.js";
 import { pool } from "./database.js";
 import { assertDatabaseSchemaCurrent } from "./migration-runner.js";
+import { encodeHistoryCursor, type HistoryCursor } from "./history-pagination.js";
 
 export { pool } from "./database.js";
 
@@ -1171,7 +1172,16 @@ export async function createBet(
   return { id, ...input, payout: 0, createdAt };
 }
 
-export async function listUserHistory(userId: string, executor: DbExecutor = pool) {
+export async function listUserHistory(
+  userId: string,
+  options: { limit?: number; cursor?: HistoryCursor | null } = {},
+  executor: DbExecutor = pool,
+) {
+  const limit = options.limit ?? 20;
+  if (!Number.isSafeInteger(limit) || limit < 1 || limit > 50) {
+    throw new RangeError("History page limit must be between 1 and 50");
+  }
+  const cursor = options.cursor ?? null;
   const rows = await queryRows(
     executor,
     `SELECT
@@ -1201,13 +1211,25 @@ export async function listUserHistory(userId: string, executor: DbExecutor = poo
     FROM game_rounds g
     JOIN bets b ON b.round_id = g.id AND b.user_id = $1
     WHERE g.status = 'SETTLED'
+      AND g.settled_at IS NOT NULL
+      AND (
+        $2::timestamptz IS NULL OR
+        (g.settled_at, g.created_at, g.id) < ($2::timestamptz, $3::timestamptz, $4::text)
+      )
     GROUP BY g.id
-    ORDER BY g.settled_at DESC, g.created_at DESC
-    LIMIT 20`,
-    [userId],
+    ORDER BY g.settled_at DESC, g.created_at DESC, g.id DESC
+    LIMIT $5`,
+    [
+      userId,
+      cursor?.settledAt ?? null,
+      cursor?.createdAt ?? null,
+      cursor?.roundId ?? null,
+      limit + 1,
+    ],
   );
 
-  return rows.map((row: DbRow) => {
+  const pageRows = rows.slice(0, limit);
+  const items = pageRows.map((row: DbRow) => {
     const bets = parseJsonValue<{ id: string; betType: BetType; amount: number; payout: number; createdAt: string }[]>(row.bets);
     const totalAmount = bets.reduce((sum: number, bet) => sum + bet.amount, 0);
     const totalPayout = bets.reduce((sum: number, bet) => sum + bet.payout, 0);
@@ -1231,6 +1253,18 @@ export async function listUserHistory(userId: string, executor: DbExecutor = poo
       },
     };
   });
+
+  const lastRow = pageRows.at(-1);
+  return {
+    items,
+    nextCursor: rows.length > limit && lastRow
+      ? encodeHistoryCursor({
+          settledAt: toIsoString(lastRow.settled_at),
+          createdAt: toIsoString(lastRow.created_at),
+          roundId: String(lastRow.round_id),
+        })
+      : null,
+  };
 }
 
 export async function getUserDailyProfit(

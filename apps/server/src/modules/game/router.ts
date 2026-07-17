@@ -1,7 +1,17 @@
 import { Router } from "express";
-import { lobbyResponseSchema, tableStateResponseSchema } from "@baccarat/contracts";
+import {
+  apiErrorCodeSchema,
+  apiErrorResponseSchema,
+  dailyProfitResponseSchema,
+  historyResponseSchema,
+  lobbyResponseSchema,
+  placeBetResponseSchema,
+  shoeAuditResponseSchema,
+  tableStateResponseSchema,
+  type ApiErrorCode,
+} from "@baccarat/contracts";
 import { env } from "../../config/env.js";
-import { sendApiError } from "../../lib/api-errors.js";
+import { getRequestId, sendApiError } from "../../lib/api-errors.js";
 import {
   getMaximumPayout,
   getSafeBalanceAfterChange,
@@ -32,12 +42,59 @@ import {
   withTransaction,
 } from "../../lib/db.js";
 import { fingerprintIdempotencyRequest, parseIdempotencyKey } from "../../lib/idempotency.js";
+import { parseHistoryPageQuery } from "../../lib/history-pagination.js";
 import { publishLiveEvent } from "../../lib/live-events.js";
 import { getRoundConfig } from "../../lib/round-manager.js";
 import { toPublicShoeAudit } from "../../lib/shoe-audit.js";
 import { authenticate, type AuthenticatedRequest } from "../../middleware/authenticate.js";
 
 const BETTING_OPEN_GRACE_MS = 400;
+
+function defaultBetErrorCode(statusCode: number): ApiErrorCode {
+  if (statusCode === 403) return "FORBIDDEN";
+  if (statusCode === 404) return "NOT_FOUND";
+  if (statusCode === 409) return "CONFLICT";
+  if (statusCode === 503) return "SERVICE_UNAVAILABLE";
+  return "VALIDATION_ERROR";
+}
+
+function buildBetErrorResponse(
+  statusCode: number,
+  body: Record<string, unknown>,
+  requestId: string,
+) {
+  const parsedCode = apiErrorCodeSchema.safeParse(body.code);
+
+  return {
+    code: parsedCode.success ? parsedCode.data : defaultBetErrorCode(statusCode),
+    message: typeof body.message === "string" && body.message ? body.message : "Bet request failed",
+    requestId,
+  };
+}
+
+function buildBetSuccessResponse(body: Record<string, unknown>) {
+  const bets = Array.isArray(body.bets)
+    ? body.bets.map((value) => {
+        const bet = typeof value === "object" && value !== null
+          ? value as Record<string, unknown>
+          : {};
+        return {
+          id: bet.id,
+          betType: bet.betType,
+          amount: bet.amount,
+          payout: bet.payout,
+          createdAt: bet.createdAt,
+        };
+      })
+    : body.bets;
+
+  return {
+    table: body.table,
+    round: body.round,
+    bets,
+    balance: body.balance,
+  };
+}
 
 export const gameRouter = Router();
 
@@ -75,14 +132,24 @@ gameRouter.get("/tables/:tableId/state", async (req: AuthenticatedRequest, res) 
 });
 
 gameRouter.get("/history", async (req: AuthenticatedRequest, res) => {
-  return res.json(await listUserHistory(req.currentUser!.id));
+  const page = parseHistoryPageQuery(req.query);
+  if (!page.success) {
+    return sendApiError(req, res, 400, "VALIDATION_ERROR", "Invalid history pagination");
+  }
+
+  return sendContractResponse(
+    res,
+    "game.history",
+    historyResponseSchema,
+    await listUserHistory(req.currentUser!.id, page.data),
+  );
 });
 
 gameRouter.get("/daily-profit", async (req: AuthenticatedRequest, res) => {
   const calculatedAt = new Date();
   const window = getBusinessDayWindow(calculatedAt, env.businessTimeZone);
   const totals = await getUserDailyProfit(req.currentUser!.id, window);
-  return res.json({
+  return sendContractResponse(res, "game.daily-profit", dailyProfitResponseSchema, {
     date: window.date,
     timeZone: window.timeZone,
     windowStart: window.start.toISOString(),
@@ -101,7 +168,12 @@ gameRouter.get("/shoes/:shoeId/audit", async (req, res) => {
     return sendApiError(req, res, 404, "NOT_FOUND", "Shoe audit not found");
   }
 
-  return res.json(toPublicShoeAudit(audit));
+  return sendContractResponse(
+    res,
+    "game.shoe-audit",
+    shoeAuditResponseSchema,
+    toPublicShoeAudit(audit),
+  );
 });
 
 gameRouter.post("/tables/:tableId/bet", async (req: AuthenticatedRequest, res) => {
@@ -136,11 +208,17 @@ gameRouter.post("/tables/:tableId/bet", async (req: AuthenticatedRequest, res) =
       return { statusCode: claim.statusCode, body: claim.response } as const;
     }
     if (claim.kind === "conflict") {
-      return { statusCode: 409, body: { message: "Idempotency-Key was already used for a different request" } } as const;
+      return {
+        statusCode: 409,
+        body: {
+          code: "CONFLICT",
+          message: "Idempotency-Key was already used for a different request",
+        },
+      } as const;
     }
 
-    async function fail(statusCode: number, message: string) {
-      const body = { message };
+    async function fail(statusCode: number, code: ApiErrorCode, message: string) {
+      const body = { code, message };
       await completeIdempotencyKey(
         { actorId, scope, key: idempotencyKey, requestHash, statusCode, response: body },
         client,
@@ -149,28 +227,36 @@ gameRouter.post("/tables/:tableId/bet", async (req: AuthenticatedRequest, res) =
     }
 
     const table = await findTableById(tableId, client);
-    if (!table) return fail(404, "Table not found");
+    if (!table) return fail(404, "NOT_FOUND", "Table not found");
     if (!isValidTableMoneyPolicy(table.minBet, table.maxBet)) {
-      return fail(503, "Table betting policy is invalid");
+      return fail(503, "SERVICE_UNAVAILABLE", "Table betting policy is invalid");
     }
 
     const activeRound = await getActiveRound(table.id, client, { forUpdate: true });
-    if (!activeRound || activeRound.status !== "OPEN") return fail(400, "Betting is closed");
+    if (!activeRound || activeRound.status !== "OPEN") {
+      return fail(400, "VALIDATION_ERROR", "Betting is closed");
+    }
 
     const now = Date.now();
     if (
       now < new Date(activeRound.bettingOpensAt).getTime() - BETTING_OPEN_GRACE_MS ||
       now >= new Date(activeRound.bettingClosesAt).getTime()
     ) {
-      return fail(400, "Betting is closed");
+      return fail(400, "VALIDATION_ERROR", "Betting is closed");
     }
     if (parsed.data.bets.some((bet) => !isValidBetForTable(bet.amount, table.minBet, table.maxBet))) {
-      return fail(400, `Each bet must be between ${table.minBet} and ${table.maxBet} in supported denominations`);
+      return fail(
+        400,
+        "VALIDATION_ERROR",
+        `Each bet must be between ${table.minBet} and ${table.maxBet} in supported denominations`,
+      );
     }
 
     const user = await findUserById(actorId, client, { forUpdate: true });
-    if (!user) return fail(404, "User not found");
-    if (!user.isActive || user.role !== "PLAYER") return fail(403, "Account is not allowed to bet");
+    if (!user) return fail(404, "NOT_FOUND", "User not found");
+    if (!user.isActive || user.role !== "PLAYER") {
+      return fail(403, "FORBIDDEN", "Account is not allowed to bet");
+    }
 
     const existingRoundBets = await listUserRoundBets(user.id, activeRound.id, client);
     const existingBetTotals = new Map<string, number>();
@@ -179,12 +265,16 @@ gameRouter.post("/tables/:tableId/bet", async (req: AuthenticatedRequest, res) =
     }
     for (const bet of parsed.data.bets) {
       const nextTotal = (existingBetTotals.get(bet.betType) ?? 0) + bet.amount;
-      if (nextTotal > table.maxBet) return fail(400, `單一玩法最高下注 ${table.maxBet}`);
+      if (nextTotal > table.maxBet) {
+        return fail(400, "VALIDATION_ERROR", `單一玩法最高下注 ${table.maxBet}`);
+      }
     }
 
-    if (user.balance < totalBet) return fail(400, "Insufficient balance");
+    if (user.balance < totalBet) return fail(400, "VALIDATION_ERROR", "Insufficient balance");
     const balanceAfterStake = getSafeBalanceAfterChange(user.balance, -totalBet);
-    if (balanceAfterStake === null) return fail(400, "Bet would make balance invalid");
+    if (balanceAfterStake === null) {
+      return fail(400, "VALIDATION_ERROR", "Bet would make balance invalid");
+    }
 
     const [existingUnsettledMaximumPayout, newMaximumPayout] = await Promise.all([
       getUserUnsettledMaximumPayout(user.id, client),
@@ -192,7 +282,7 @@ gameRouter.post("/tables/:tableId/bet", async (req: AuthenticatedRequest, res) =
     ]);
     const maximumPossibleBalance = balanceAfterStake + existingUnsettledMaximumPayout + newMaximumPayout;
     if (!Number.isSafeInteger(maximumPossibleBalance) || maximumPossibleBalance > MAX_ACCOUNT_BALANCE) {
-      return fail(400, "Bet could exceed the supported account balance");
+      return fail(400, "VALIDATION_ERROR", "Bet could exceed the supported account balance");
     }
 
     const bets = [];
@@ -202,7 +292,13 @@ gameRouter.post("/tables/:tableId/bet", async (req: AuthenticatedRequest, res) =
         { userId: user.id, roundId: activeRound.id, betType: bet.betType, amount: bet.amount },
         client,
       );
-      bets.push(createdBet);
+      bets.push({
+        id: createdBet.id,
+        betType: createdBet.betType,
+        amount: createdBet.amount,
+        payout: createdBet.payout,
+        createdAt: createdBet.createdAt,
+      });
       const mutation = await applyBalanceMutation(
         {
           userId: user.id,
@@ -231,5 +327,25 @@ gameRouter.post("/tables/:tableId/bet", async (req: AuthenticatedRequest, res) =
     return { statusCode: 200, body } as const;
   });
 
-  return res.status(result.statusCode).json(result.body);
+  if (result.statusCode >= 400) {
+    return sendContractResponse(
+      res,
+      "game.bet.error",
+      apiErrorResponseSchema,
+      buildBetErrorResponse(
+        result.statusCode,
+        result.body as Record<string, unknown>,
+        getRequestId(req),
+      ),
+      result.statusCode,
+    );
+  }
+
+  return sendContractResponse(
+    res,
+    "game.bet.success",
+    placeBetResponseSchema,
+    buildBetSuccessResponse(result.body as Record<string, unknown>),
+    result.statusCode,
+  );
 });

@@ -69,7 +69,7 @@ describe("daily profit PostgreSQL aggregation", { skip: !shouldRun }, () => {
     );
   }
 
-  it("aggregates every settled bet in [day start, next day start), independent of history LIMIT 20", async () => {
+  it("aggregates every settled bet in [day start, next day start), independent of history page size", async () => {
     const window = getBusinessDayWindow(new Date("2026-07-16T04:00:00.000Z"), "Asia/Taipei");
 
     for (let index = 0; index < 25; index += 1) {
@@ -84,7 +84,8 @@ describe("daily profit PostgreSQL aggregation", { skip: !shouldRun }, () => {
       database.listUserHistory(userId),
     ]);
 
-    assert.equal(recentHistory.length, 20);
+    assert.equal(recentHistory.items.length, 20);
+    assert.ok(recentHistory.nextCursor);
     assert.deepEqual(profit, {
       totalBet: 2500,
       totalPayout: 3000,

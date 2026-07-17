@@ -2,6 +2,7 @@ import dotenv from "dotenv";
 import { requireStrongJwtSecret } from "./jwt-secret.js";
 import { assertValidTimeZone } from "../lib/business-day.js";
 import { parseBoundedInteger } from "./env-number.js";
+import { parseCorsOrigin, parseDatabaseSsl, parseHost } from "./env-values.js";
 
 dotenv.config();
 
@@ -21,14 +22,14 @@ const jwtSecret = isProduction
 
 export const env = {
   isProduction,
-  port: Number(process.env.PORT ?? 4000),
-  host: process.env.HOST ?? "0.0.0.0",
+  port: parseBoundedInteger("PORT", process.env.PORT, 4000, { min: 1, max: 65_535 }),
+  host: parseHost(process.env.HOST),
   jwtSecret,
   // `false` disables cross-origin requests entirely (same-origin deployments
   // behind the nginx proxy need no CORS at all).
-  corsOrigin: process.env.CORS_ORIGIN ?? (isProduction ? false : "*"),
+  corsOrigin: parseCorsOrigin(process.env.CORS_ORIGIN, { isProduction }),
   databaseUrl: process.env.DATABASE_URL ?? "postgres://postgres:postgres@127.0.0.1:5432/baccarat",
-  databaseSsl: process.env.DATABASE_SSL ?? "false",
+  databaseSsl: parseDatabaseSsl(process.env.DATABASE_SSL),
   businessTimeZone,
   databasePoolMax: parseBoundedInteger("DATABASE_POOL_MAX", process.env.DATABASE_POOL_MAX, 20, { min: 1, max: 100 }),
   databaseConnectionTimeoutMs: parseBoundedInteger(
@@ -48,5 +49,17 @@ export const env = {
     process.env.DATABASE_STATEMENT_TIMEOUT_MS,
     5_000,
     { min: 500, max: 60_000 },
+  ),
+  idempotencyRetentionDays: parseBoundedInteger(
+    "IDEMPOTENCY_RETENTION_DAYS",
+    process.env.IDEMPOTENCY_RETENTION_DAYS,
+    7,
+    { min: 1, max: 3_650 },
+  ),
+  authSessionRetentionDays: parseBoundedInteger(
+    "AUTH_SESSION_RETENTION_DAYS",
+    process.env.AUTH_SESSION_RETENTION_DAYS,
+    30,
+    { min: 1, max: 3_650 },
   ),
 };

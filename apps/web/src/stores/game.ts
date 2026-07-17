@@ -1,5 +1,11 @@
 import { defineStore } from "pinia";
-import { lobbyResponseSchema, tableStateResponseSchema } from "@baccarat/contracts";
+import {
+  dailyProfitResponseSchema,
+  historyResponseSchema,
+  lobbyResponseSchema,
+  placeBetResponseSchema,
+  tableStateResponseSchema,
+} from "@baccarat/contracts";
 import { api, createIdempotencyKey, shouldReuseIdempotencyKey } from "../lib/api";
 import { parseRuntimeContract } from "../lib/contracts";
 import type {
@@ -10,7 +16,6 @@ import type {
   GameTable,
   LobbySnapshot,
   LobbyTable,
-  PlaceBetResponse,
   PresentationWindow,
   RoundHistoryItem,
   ShoeStatus,
@@ -22,6 +27,9 @@ export const useGameStore = defineStore("game", {
     tables: [] as LobbyTable[],
     currentTable: null as GameTable | null,
     history: [] as RoundHistoryItem[],
+    historyNextCursor: null as string | null,
+    historyLoadingMore: false,
+    historyLoadMoreError: "",
     dailyProfit: null as DailyProfitSummary | null,
     currentRound: null as ActiveRound | null,
     previousRound: null as ActiveRound | null,
@@ -105,21 +113,60 @@ export const useGameStore = defineStore("game", {
     },
     async fetchHistory() {
       this.loading = true;
+      this.historyLoadMoreError = "";
 
       try {
         const [historyResult, dailyProfitResult] = await Promise.allSettled([
-          api.get<RoundHistoryItem[]>("/game/history"),
-          api.get<DailyProfitSummary>("/game/daily-profit"),
+          api.get("/game/history"),
+          api.get("/game/daily-profit"),
         ]);
 
         if (historyResult.status === "rejected") {
           throw historyResult.reason;
         }
 
-        this.history = historyResult.value.data;
-        this.dailyProfit = dailyProfitResult.status === "fulfilled" ? dailyProfitResult.value.data : null;
+        const historyPage = parseRuntimeContract(
+          historyResponseSchema,
+          historyResult.value.data,
+          "GET /game/history",
+        );
+        this.history = historyPage.items;
+        this.historyNextCursor = historyPage.nextCursor;
+        this.dailyProfit = dailyProfitResult.status === "fulfilled"
+          ? parseRuntimeContract(
+              dailyProfitResponseSchema,
+              dailyProfitResult.value.data,
+              "GET /game/daily-profit",
+            )
+          : null;
       } finally {
         this.loading = false;
+      }
+    },
+    async fetchMoreHistory() {
+      if (!this.historyNextCursor || this.historyLoadingMore) {
+        return;
+      }
+
+      this.historyLoadingMore = true;
+      this.historyLoadMoreError = "";
+      const cursor = this.historyNextCursor;
+
+      try {
+        const response = await api.get("/game/history", { params: { cursor } });
+        const page = parseRuntimeContract(
+          historyResponseSchema,
+          response.data,
+          "GET /game/history?cursor",
+        );
+        const existingIds = new Set(this.history.map((item) => item.id));
+        this.history.push(...page.items.filter((item) => !existingIds.has(item.id)));
+        this.historyNextCursor = page.nextCursor;
+      } catch (error) {
+        this.historyLoadMoreError = "載入更早紀錄失敗，請重試。";
+        throw error;
+      } finally {
+        this.historyLoadingMore = false;
       }
     },
     async placeBet(tableId: string, payload: { betType: BetType; amount: number }[]) {
@@ -128,10 +175,15 @@ export const useGameStore = defineStore("game", {
       this.pendingBetIdempotencyKeys[requestSignature] = idempotencyKey;
 
       try {
-        const { data } = await api.post<PlaceBetResponse>(
+        const response = await api.post(
           `/game/tables/${tableId}/bet`,
           { bets: payload },
           { headers: { "Idempotency-Key": idempotencyKey } },
+        );
+        const data = parseRuntimeContract(
+          placeBetResponseSchema,
+          response.data,
+          "POST /game/tables/:tableId/bet",
         );
         delete this.pendingBetIdempotencyKeys[requestSignature];
         if (this.currentRound?.id === data.round.id) {

@@ -9,7 +9,7 @@
     "prebuild": "npm run build --workspace @baccarat/contracts",
     "build": "vue-tsc -b && vite build",
     "pretest": "npm run build --workspace @baccarat/contracts",
-    "test": "node --test src/tests/*.test.mjs && tsx --test src/**/*.test.ts",
+    "test": "vitest run && node --test src/tests/*.test.mjs",
     "preview": "vite preview"
   },
   "dependencies": {
@@ -22,12 +22,15 @@
   "devDependencies": {
     "@types/node": "^24.10.1",
     "@vitejs/plugin-vue": "^6.0.2",
+    "@vue/test-utils": "2.4.11",
     "@vue/tsconfig": "^0.8.1",
+    "axios-mock-adapter": "2.1.0",
+    "happy-dom": "20.10.6",
     "postcss-mobile-forever": "^5.0.0",
     "sass": "^1.98.0",
-    "tsx": "^4.19.3",
     "typescript": "~5.9.3",
     "vite": "^7.3.1",
+    "vitest": "3.2.7",
     "vue-tsc": "^3.1.5"
   }
 }

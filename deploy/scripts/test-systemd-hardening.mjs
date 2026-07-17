@@ -13,7 +13,8 @@ const applicationUnitPaths = [
   join(unitDirectory, "baccarat-worker.service"),
 ];
 const backupUnitPath = join(unitDirectory, "baccarat-backup.service");
-const unitPaths = [...applicationUnitPaths, backupUnitPath];
+const maintenanceUnitPath = join(unitDirectory, "baccarat-maintenance.service");
+const unitPaths = [...applicationUnitPaths, backupUnitPath, maintenanceUnitPath];
 const permissionValidatorPath = join(scriptDirectory, "validate-install-permissions.sh");
 const commandEnvironment = { ...process.env, LC_ALL: "C" };
 
@@ -141,6 +142,42 @@ function validateBackupHardening(path) {
   console.log(`PASS static hardening: ${unit}`);
 }
 
+function validateMaintenanceHardening(path) {
+  const unit = basename(path);
+  const entries = readService(path);
+  const expected = {
+    Type: "oneshot",
+    User: "baccarat-worker",
+    Group: "baccarat",
+    NoNewPrivileges: "true",
+    CapabilityBoundingSet: "",
+    AmbientCapabilities: "",
+    UMask: "0077",
+    ProtectSystem: "strict",
+    ProtectHome: "true",
+    PrivateTmp: "true",
+    PrivateDevices: "true",
+    RestrictNamespaces: "true",
+    ReadOnlyPaths: "/opt/baccarat/current /etc/baccarat/baccarat.env",
+    EnvironmentFile: "/etc/baccarat/baccarat.env",
+    RestrictAddressFamilies: "AF_UNIX AF_INET AF_INET6",
+    SystemCallFilter: "@system-service",
+    LimitCORE: "0",
+  };
+
+  for (const [directive, value] of Object.entries(expected)) {
+    expectSingle(entries, unit, directive, value);
+  }
+
+  assert.equal(entries.has("Service.ReadWritePaths"), false, `${unit}: no writable filesystem path`);
+  assert.match(
+    entries.get("Service.ExecStart")?.[0] ?? "",
+    /^\/usr\/bin\/node \/opt\/baccarat\/current\/apps\/server\/dist\/scripts\/maintenance\.js$/,
+    `${unit}: pinned maintenance command`,
+  );
+  console.log(`PASS static hardening: ${unit}`);
+}
+
 function commandExists(command) {
   return spawnSync(command, ["--version"], { encoding: "utf8", env: commandEnvironment }).status === 0;
 }
@@ -227,5 +264,6 @@ function runSystemdAnalyze() {
 
 for (const unitPath of applicationUnitPaths) validateStaticHardening(unitPath);
 validateBackupHardening(backupUnitPath);
+validateMaintenanceHardening(maintenanceUnitPath);
 validatePermissionValidator();
 runSystemdAnalyze();

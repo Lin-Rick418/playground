@@ -27,6 +27,22 @@ grep -q 'BUILD_COMMIT_SHA' "$ROOT/deploy/scripts/deploy.sh" || fail "deploy does
 grep -q 'verify-rollback-compatibility' "$ROOT/deploy/scripts/deploy.sh" || fail "missing rollback compatibility gate"
 grep -q 'db:migrate' "$ROOT/deploy/scripts/deploy.sh" || fail "missing migration feature detection"
 grep -q 'PGDATABASE="$DATABASE_URL"' "$ROOT/deploy/scripts/backup.sh" || fail "database URL must be passed via environment"
+grep -q "connect-src 'self';" "$ROOT/deploy/nginx/baccarat.conf" || fail "CSP must restrict connections to the deployment origin"
+grep -q 'listen 443 ssl http2;' "$ROOT/deploy/nginx/baccarat.conf" || fail "nginx TLS listener is missing"
+grep -q 'ssl_protocols TLSv1.2 TLSv1.3;' "$ROOT/deploy/nginx/baccarat.conf" || fail "nginx must require TLS 1.2 or newer"
+grep -q 'ssl_session_tickets off;' "$ROOT/deploy/nginx/baccarat.conf" || fail "nginx TLS session tickets must remain disabled"
+grep -q 'return 301 https://$host$request_uri;' "$ROOT/deploy/nginx/baccarat.conf" || fail "HTTP must redirect to HTTPS"
+grep -q '.well-known/acme-challenge' "$ROOT/deploy/nginx/baccarat.conf" || fail "ACME challenge route is missing"
+grep -q '.well-known/acme-challenge' "$ROOT/deploy/nginx/baccarat-acme-bootstrap.conf" || fail "ACME bootstrap route is missing"
+[[ "$(grep -c 'Strict-Transport-Security' "$ROOT/deploy/nginx/baccarat.conf")" -eq 1 ]] || fail "HSTS must appear only in the HTTPS server"
+if grep -q 'includeSubDomains\|preload' "$ROOT/deploy/nginx/baccarat.conf"; then
+  fail "HSTS subdomain or preload scope requires an explicit deployment decision"
+fi
+if grep -Eq "connect-src[^;]*[[:space:]](ws:|wss:)([[:space:]]|;)" "$ROOT/deploy/nginx/baccarat.conf"; then
+  fail "CSP must not allow arbitrary WebSocket origins"
+fi
+grep -q '^OnCalendar=hourly$' "$ROOT/deploy/systemd/baccarat-maintenance.timer" || fail "retention maintenance must run hourly"
+grep -q 'dist/scripts/maintenance.js' "$ROOT/deploy/systemd/baccarat-maintenance.service" || fail "retention maintenance command is missing"
 
 if grep -REn 'eval|env \$\(cat|xargs|--dbname=.*DATABASE_URL|--dbname=.*RESTORE_VERIFY_DATABASE_URL' \
   "$ROOT/deploy/scripts"; then

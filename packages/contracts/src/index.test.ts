@@ -1,10 +1,15 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import {
+  apiErrorResponseSchema,
+  dailyProfitResponseSchema,
+  historyResponseSchema,
   liveClientMessageSchema,
   liveServerMessageSchema,
   loginRequestSchema,
   loginResponseSchema,
+  placeBetResponseSchema,
+  shoeAuditResponseSchema,
   tableStateResponseSchema,
 } from "./index.js";
 
@@ -112,6 +117,112 @@ describe("shared API contracts", () => {
     assert.equal(
       liveServerMessageSchema.safeParse({ type: "auth_revoked", reason: "account_disabled" }).success,
       true,
+    );
+  });
+
+  it("validates history, profit, and bet response contracts", () => {
+    const settledRound = {
+      ...round,
+      status: "SETTLED",
+      settledAt: now,
+      playerCards: [{ rank: "A", suit: "S" }],
+      winner: "PLAYER",
+      playerTotal: 1,
+    } as const;
+    const bet = {
+      id: "bet-1",
+      betType: "PLAYER",
+      amount: 100,
+      payout: 200,
+      createdAt: now,
+    } as const;
+
+    assert.equal(
+      historyResponseSchema.safeParse({
+        items: [
+          {
+            id: settledRound.id,
+            createdAt: now,
+            totalAmount: 100,
+            totalPayout: 200,
+            bets: [bet],
+            round: {
+              id: settledRound.id,
+              tableId: settledRound.tableId,
+              winner: settledRound.winner,
+              playerCards: settledRound.playerCards,
+              bankerCards: settledRound.bankerCards,
+              playerTotal: settledRound.playerTotal,
+              bankerTotal: settledRound.bankerTotal,
+              playerPair: false,
+              bankerPair: false,
+            },
+          },
+        ],
+        nextCursor: "opaque-cursor",
+      }).success,
+      true,
+    );
+    assert.equal(historyResponseSchema.safeParse({ items: [], nextCursor: null }).success, true);
+    assert.equal(historyResponseSchema.safeParse([]).success, false);
+    assert.equal(
+      dailyProfitResponseSchema.safeParse({
+        date: "2026-07-16",
+        timeZone: "Asia/Taipei",
+        windowStart: now,
+        windowEnd: "2026-07-17T10:00:00.000Z",
+        formula: "TOTAL_PAYOUT_MINUS_TOTAL_BET",
+        recognitionTime: "ROUND_SETTLED_AT",
+        totalBet: 100,
+        totalPayout: 200,
+        netProfit: 100,
+        calculatedAt: now,
+      }).success,
+      true,
+    );
+    assert.equal(
+      placeBetResponseSchema.safeParse({ table, round, bets: [bet], balance: 900 }).success,
+      true,
+    );
+    assert.equal(
+      placeBetResponseSchema.safeParse({ table, round, bets: [bet], balance: 900, passwordHash: "leak" }).success,
+      false,
+    );
+  });
+
+  it("validates public shoe audit and API error contracts", () => {
+    assert.equal(
+      shoeAuditResponseSchema.safeParse({
+        version: 1,
+        shoeId: "shoe-1",
+        tableId: "table-1",
+        shuffleAlgorithm: "hmac-sha256-fisher-yates-v1",
+        dealAlgorithm: "baccarat-round-v1",
+        deckCount: 8,
+        commitment: "a".repeat(64),
+        committedAt: now,
+        cutCardRemaining: null,
+        reveal: null,
+        deals: [],
+        verification: null,
+      }).success,
+      true,
+    );
+    assert.equal(
+      apiErrorResponseSchema.safeParse({
+        code: "VALIDATION_ERROR",
+        message: "Invalid request",
+        requestId: "request-1",
+      }).success,
+      true,
+    );
+    assert.equal(
+      apiErrorResponseSchema.safeParse({
+        code: "UNKNOWN",
+        message: "Invalid request",
+        requestId: "request-1",
+      }).success,
+      false,
     );
   });
 });

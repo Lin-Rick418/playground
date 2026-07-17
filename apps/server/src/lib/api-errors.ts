@@ -1,21 +1,9 @@
 import { randomUUID } from "node:crypto";
 import type { ErrorRequestHandler, NextFunction, Request, RequestHandler, Response } from "express";
+import type { ApiErrorCode } from "@baccarat/contracts";
+import { logger } from "./logger.js";
 
-export type ApiErrorCode =
-  | "MALFORMED_JSON"
-  | "PAYLOAD_TOO_LARGE"
-  | "UNSUPPORTED_MEDIA_TYPE"
-  | "VALIDATION_ERROR"
-  | "AUTHENTICATION_REQUIRED"
-  | "INVALID_TOKEN"
-  | "INVALID_CREDENTIALS"
-  | "FORBIDDEN"
-  | "ACCOUNT_DISABLED"
-  | "NOT_FOUND"
-  | "CONFLICT"
-  | "RATE_LIMITED"
-  | "SERVICE_UNAVAILABLE"
-  | "INTERNAL_ERROR";
+export type { ApiErrorCode } from "@baccarat/contracts";
 
 type RequestWithId = Request & { requestId?: string };
 
@@ -53,14 +41,14 @@ export const requestIdMiddleware: RequestHandler = (req, res, next) => {
   next();
 };
 
-export function createRejectedRequestLogger(logger: ApiErrorLogger = console): RequestHandler {
+export function createRejectedRequestLogger(errorLogger: ApiErrorLogger = logger): RequestHandler {
   return (req, res, next) => {
     res.once("finish", () => {
       if (res.statusCode < 400 || res.locals.internalErrorLogged === true) {
         return;
       }
 
-      logger.warn({
+      errorLogger.warn({
         event: "http_request_rejected",
         requestId: getRequestId(req),
         method: req.method,
@@ -124,7 +112,7 @@ export function notFoundHandler(req: Request, res: Response) {
   return sendApiError(req, res, 404, "NOT_FOUND", "Route not found");
 }
 
-export function createGlobalErrorHandler(logger: ApiErrorLogger = console): ErrorRequestHandler {
+export function createGlobalErrorHandler(errorLogger: ApiErrorLogger = logger): ErrorRequestHandler {
   return (error: unknown, req: Request, res: Response, next: NextFunction) => {
     if (res.headersSent) {
       return next(error);
@@ -142,7 +130,7 @@ export function createGlobalErrorHandler(logger: ApiErrorLogger = console): Erro
 
     const requestId = getRequestId(req);
     res.locals.internalErrorLogged = true;
-    logger.error({
+    errorLogger.error({
       event: "http_request_failed",
       requestId,
       method: req.method,

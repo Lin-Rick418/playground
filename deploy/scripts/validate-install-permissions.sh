@@ -210,6 +210,7 @@ if require_path "$CURRENT_PATH" && require_path "$RELEASE_ROOT"; then
   check_no_mutable_release_entries "$resolved_current"
   check_readable_by_runtime "$resolved_current/apps/server/dist/index.js"
   check_readable_by_runtime "$resolved_current/apps/server/dist/worker.js"
+  check_readable_by_runtime "$resolved_current/apps/server/dist/scripts/maintenance.js"
   check_not_writable_by_runtime "$resolved_current"
   check_not_writable_by_runtime "$CURRENT_PATH"
 fi
@@ -228,6 +229,9 @@ fi
 check_unit baccarat-api.service
 check_unit baccarat-worker.service
 check_unit baccarat-backup.service
+check_unit baccarat-backup.timer
+check_unit baccarat-maintenance.service
+check_unit baccarat-maintenance.timer
 check_not_writable_by_runtime "$SYSTEMD_DIR"
 
 if require_path "$BACKUP_DIR"; then

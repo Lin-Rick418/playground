@@ -9,6 +9,7 @@ import { calculatePayout, type TableShoeState } from "../../src/lib/baccarat.js"
 import { applyBalanceMutation, pool, replaceTableShoe, withTransaction } from "../../src/lib/db.js";
 import { runMigrations } from "../../src/lib/migration-runner.js";
 import { settleActiveRound } from "../../src/lib/round-manager.js";
+import { runRetentionCleanup } from "../../src/lib/retention.js";
 
 type TestUser = {
   id: string;
@@ -131,6 +132,39 @@ async function insertRound(input: {
   return roundId;
 }
 
+async function insertSettledHistoryRound(input: {
+  tableId: string;
+  userId: string;
+  createdAt: Date;
+  settledAt: Date;
+}) {
+  const roundId = randomUUID();
+  const betId = randomUUID();
+  await pool.query(
+    `INSERT INTO game_rounds (
+       id, table_id, shoe_id, player_cards, banker_cards, player_total, banker_total,
+       winner, player_pair, banker_pair, status, betting_opens_at, betting_closes_at,
+       settled_at, created_at
+     ) VALUES (
+       $1, $2, 'history-shoe', '[]'::jsonb, '[]'::jsonb, 0, 0,
+       'TIE', FALSE, FALSE, 'SETTLED', $3, $4, $5, $3
+     )`,
+    [
+      roundId,
+      input.tableId,
+      input.createdAt.toISOString(),
+      new Date(input.createdAt.getTime() + 1_000).toISOString(),
+      input.settledAt.toISOString(),
+    ],
+  );
+  await pool.query(
+    `INSERT INTO bets (id, user_id, round_id, bet_type, amount, payout, created_at)
+     VALUES ($1, $2, $3, 'TIE', 100, 0, $4)`,
+    [betId, input.userId, roundId, input.createdAt.toISOString()],
+  );
+  return roundId;
+}
+
 async function request<T>(
   path: string,
   options: {
@@ -225,33 +259,85 @@ test("bet placement debits exactly once and insufficient balance rolls back", as
   const tableId = await insertTable();
   await insertRound({ tableId, status: "OPEN" });
   const token = await login(player);
+  const placedIdempotencyKey = randomUUID();
+  const placedPayload = {
+    bets: [
+      { betType: "PLAYER", amount: 100 },
+      { betType: "BANKER", amount: 200 },
+    ],
+  };
 
   const placed = await request<{ balance: number; bets: unknown[] }>(
     `/game/tables/${tableId}/bet`,
     {
       method: "POST",
       token,
-      body: {
-        bets: [
-          { betType: "PLAYER", amount: 100 },
-          { betType: "BANKER", amount: 200 },
-        ],
-      },
-      headers: { "idempotency-key": randomUUID() },
+      body: placedPayload,
+      headers: { "idempotency-key": placedIdempotencyKey },
     },
   );
   assert.equal(placed.status, 200);
   assert.equal(placed.body.balance, 700);
   assert.equal(placed.body.bets.length, 2);
 
-  const rejected = await request<{ message: string }>(`/game/tables/${tableId}/bet`, {
+  const rejected = await request<{ code: string; message: string; requestId: string }>(`/game/tables/${tableId}/bet`, {
     method: "POST",
     token,
     body: { bets: [{ betType: "TIE", amount: 800 }] },
-    headers: { "idempotency-key": randomUUID() },
+    headers: {
+      "idempotency-key": randomUUID(),
+      "x-request-id": "integration-insufficient-balance",
+    },
   });
   assert.equal(rejected.status, 400);
+  assert.equal(rejected.body.code, "VALIDATION_ERROR");
   assert.equal(rejected.body.message, "Insufficient balance");
+  assert.equal(rejected.body.requestId, "integration-insufficient-balance");
+
+  const staleIdempotencyKey = randomUUID();
+  const staleSessionId = randomUUID();
+  const staleAt = new Date(Date.now() - 40 * 24 * 60 * 60 * 1_000).toISOString();
+  await pool.query(
+    `INSERT INTO idempotency_keys (
+       actor_id, scope, idempotency_key, request_hash, status_code,
+       response_json, created_at, completed_at
+     ) VALUES ($1, 'integration.stale', $2, 'stale-hash', 200, '{}'::jsonb, $3, $3)`,
+    [player.id, staleIdempotencyKey, staleAt],
+  );
+  await pool.query(
+    `INSERT INTO auth_sessions (
+       id, user_id, refresh_token_hash, expires_at, revoked_at, created_at, last_used_at
+     ) VALUES ($1, $2, $3, $4, $4, $4, $4)`,
+    [staleSessionId, player.id, `stale-${randomUUID()}`, staleAt],
+  );
+
+  const cleanup = await runRetentionCleanup({
+    idempotencyRetentionDays: 7,
+    authSessionRetentionDays: 30,
+    batchSize: 1,
+  });
+  assert.ok(cleanup.idempotencyKeys >= 1);
+  assert.ok(cleanup.authSessions >= 1);
+  const staleRows = await pool.query<{ idempotency_count: string; session_count: string }>(
+    `SELECT
+       (SELECT COUNT(*)::text FROM idempotency_keys WHERE idempotency_key = $1) AS idempotency_count,
+       (SELECT COUNT(*)::text FROM auth_sessions WHERE id = $2) AS session_count`,
+    [staleIdempotencyKey, staleSessionId],
+  );
+  assert.deepEqual(staleRows.rows[0], { idempotency_count: "0", session_count: "0" });
+
+  const replayed = await request<{ balance: number; bets: unknown[] }>(
+    `/game/tables/${tableId}/bet`,
+    {
+      method: "POST",
+      token,
+      body: placedPayload,
+      headers: { "idempotency-key": placedIdempotencyKey },
+    },
+  );
+  assert.equal(replayed.status, 200);
+  assert.equal(replayed.body.balance, 700);
+  assert.equal(replayed.body.bets.length, 2);
 
   const persisted = await pool.query<{ balance: number; bet_count: string; staked: string }>(
     `SELECT u.balance, COUNT(b.id)::text AS bet_count,
@@ -267,6 +353,62 @@ test("bet placement debits exactly once and insufficient balance rolls back", as
     bet_count: "2",
     staked: "300",
   });
+});
+
+test("history cursor pagination returns every settled round once in stable order", async () => {
+  const player = await insertUser({ username: `history_ci_${runId}` });
+  const tableId = await insertTable();
+  const token = await login(player);
+  const baseTime = Date.now() - 300_000;
+
+  for (let index = 0; index < 23; index += 1) {
+    await insertSettledHistoryRound({
+      tableId,
+      userId: player.id,
+      createdAt: new Date(baseTime + index * 1_000),
+      settledAt: new Date(baseTime + 60_000 + Math.floor(index / 3) * 5_000),
+    });
+  }
+
+  const receivedIds: string[] = [];
+  let cursor: string | null = null;
+  do {
+    const suffix: string = cursor
+      ? `?limit=7&cursor=${encodeURIComponent(cursor)}`
+      : "?limit=7";
+    const page: {
+      status: number;
+      body: {
+        items: Array<{ id: string }>;
+        nextCursor: string | null;
+      };
+    } = await request<{
+      items: Array<{ id: string }>;
+      nextCursor: string | null;
+    }>(`/game/history${suffix}`, { token });
+    assert.equal(page.status, 200);
+    assert.ok(page.body.items.length > 0 && page.body.items.length <= 7);
+    receivedIds.push(...page.body.items.map((item) => item.id));
+    cursor = page.body.nextCursor;
+  } while (cursor);
+
+  const expected = await pool.query<{ id: string }>(
+    `SELECT g.id
+     FROM game_rounds g
+     JOIN bets b ON b.round_id = g.id AND b.user_id = $1
+     WHERE g.status = 'SETTLED'
+     ORDER BY g.settled_at DESC, g.created_at DESC, g.id DESC`,
+    [player.id],
+  );
+  assert.deepEqual(receivedIds, expected.rows.map(({ id }) => id));
+  assert.equal(new Set(receivedIds).size, 23);
+
+  const invalidLimit = await request<{ code: string }>("/game/history?limit=51", { token });
+  assert.equal(invalidLimit.status, 400);
+  assert.equal(invalidLimit.body.code, "VALIDATION_ERROR");
+  const invalidCursor = await request<{ code: string }>("/game/history?cursor=bm90LWpzb24", { token });
+  assert.equal(invalidCursor.status, 400);
+  assert.equal(invalidCursor.body.code, "VALIDATION_ERROR");
 });
 
 test("settlement credits the calculated payout once and only once", async () => {
@@ -335,4 +477,35 @@ test("settlement credits the calculated payout once and only once", async () => 
     balance: row.balance,
     payout: row.payout,
   });
+
+  const token = await login(player);
+  const history = await request<{
+    items: Array<{ id: string; round: { id: string } }>;
+    nextCursor: string | null;
+  }>("/game/history", { token });
+  assert.equal(history.status, 200);
+  assert.equal(history.body.items.some((item) => item.id === roundId && item.round.id === roundId), true);
+
+  const dailyProfit = await request<{
+    formula: string;
+    recognitionTime: string;
+    totalBet: number;
+    totalPayout: number;
+    netProfit: number;
+  }>("/game/daily-profit", { token });
+  assert.equal(dailyProfit.status, 200);
+  assert.equal(dailyProfit.body.formula, "TOTAL_PAYOUT_MINUS_TOTAL_BET");
+  assert.equal(dailyProfit.body.recognitionTime, "ROUND_SETTLED_AT");
+  assert.equal(dailyProfit.body.totalBet, 100);
+  assert.equal(dailyProfit.body.totalPayout, expectedPayout);
+  assert.equal(dailyProfit.body.netProfit, dailyProfit.body.totalPayout - dailyProfit.body.totalBet);
+
+  const audit = await request<{ shoeId: string; commitment: string; reveal: unknown }>(
+    `/game/shoes/${shoeId}/audit`,
+    { token },
+  );
+  assert.equal(audit.status, 200);
+  assert.equal(audit.body.shoeId, shoeId);
+  assert.match(audit.body.commitment, /^[0-9a-f]{64}$/);
+  assert.equal(audit.body.reveal, null);
 });
