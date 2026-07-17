@@ -1,6 +1,7 @@
+import axios from "axios";
 import MockAdapter from "axios-mock-adapter";
-import { afterEach, describe, expect, it } from "vitest";
-import { api, sessionApi } from "./api";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { api, sessionApi, shouldReuseIdempotencyKey } from "./api";
 import { clearStoredToken, getStoredToken, setStoredToken } from "./settings";
 
 const unauthorized = { code: "AUTHENTICATION_REQUIRED", message: "Authentication required", requestId: "request-1" };
@@ -59,6 +60,22 @@ describe("API session refresh", () => {
     } finally {
       apiMock.restore();
       sessionMock.restore();
+    }
+  });
+
+  it("preserves a proxy error when its response body is outside the API contract", async () => {
+    const apiMock = new MockAdapter(api);
+    const consoleError = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    apiMock.onGet("/upstream-failure").reply(502, "<html>Bad Gateway</html>");
+
+    try {
+      const error = await api.get("/upstream-failure").catch((caught: unknown) => caught);
+      expect(axios.isAxiosError(error)).toBe(true);
+      expect(error).toMatchObject({ response: { status: 502, data: "<html>Bad Gateway</html>" } });
+      expect(shouldReuseIdempotencyKey(error)).toBe(true);
+      expect(consoleError).toHaveBeenCalledOnce();
+    } finally {
+      apiMock.restore();
     }
   });
 });
