@@ -28,7 +28,10 @@ export default defineConfig({
       timeout: 60_000,
     },
     {
-      command: "npm run dev:web -- --host 127.0.0.1",
+      // Call the workspace script directly: routing through the root dev:web
+      // alias drops the "--host" flag at the inner "npm run" boundary, so
+      // Vite would treat 127.0.0.1 as its root directory and serve 404s.
+      command: "npm run dev --workspace web -- --host 127.0.0.1",
       url: "http://127.0.0.1:5173/login",
       reuseExistingServer: !process.env.CI,
       timeout: 60_000,
