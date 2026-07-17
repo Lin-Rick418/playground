@@ -22,6 +22,7 @@ import {
   withTransaction,
 } from "./db.js";
 import { publishLiveEvent } from "./live-events.js";
+import { logger, toLogError } from "./logger.js";
 import {
   type Clock,
   DEAL_ANIMATION_BUFFER_MS,
@@ -38,6 +39,7 @@ import type { GameTableRecord } from "../types/domain.js";
 const LOOP_INTERVAL_MS = 1000;
 const MIN_CARDS_TO_COMPLETE_ROUND = 6;
 const ROUND_SCHEDULE_VERSION = 1;
+const roundLogger = logger.child({ component: "round-manager" });
 
 const roundManagerState = globalThis as typeof globalThis & {
   __baccaratRoundManagerLoop?: SerializedIntervalRunner;
@@ -83,6 +85,12 @@ async function createOpenRound(
       reason: "round_opened",
       at: new Date().toISOString(),
     });
+    roundLogger.info({
+      event: "round_opened",
+      tableId: table.id,
+      roundId: round.id,
+      shoeId: round.shoeId,
+    }, "Round opened");
   }
 
   return round;
@@ -91,13 +99,13 @@ async function createOpenRound(
 export async function settleActiveRound(roundId: string, tableId: string) {
   const affectedUserIds = new Set<string>();
 
-  const settled = await withTransaction(async (client) => {
+  const settlementEvent = await withTransaction(async (client) => {
     // Guard against concurrent settlement (e.g. two worker processes): lock
     // the round row and bail out unless it is still awaiting settlement.
     const round = await findRoundById(roundId, client, { forUpdate: true });
 
     if (!round || round.status !== "LOCKED") {
-      return false;
+      return null;
     }
 
     const shoe = await getTableShoe(tableId, client, { forUpdate: true });
@@ -115,7 +123,13 @@ export async function settleActiveRound(roundId: string, tableId: string) {
     if (cancellationReason) {
       const refundedUserIds = await cancelRoundAndRefundBets(roundId, cancellationReason, client);
       for (const userId of refundedUserIds) affectedUserIds.add(userId);
-      return true;
+      return {
+        event: "round_cancelled_refunded",
+        tableId,
+        roundId,
+        cancellationReason,
+        refundedUserCount: refundedUserIds.length,
+      } as const;
     }
 
     if (!shoe) throw new Error("Validated shoe disappeared before settlement");
@@ -179,8 +193,18 @@ export async function settleActiveRound(roundId: string, tableId: string) {
     );
 
     if (wasLastHand) {
-      await replaceTableShoe(tableId, client, "CUT_CARD_LAST_HAND");
-      return true;
+      const nextShoe = await replaceTableShoe(tableId, client, "CUT_CARD_LAST_HAND");
+      return {
+        event: "round_settled",
+        tableId,
+        roundId,
+        shoeId: shoe.shoeId,
+        winner: result.winner,
+        betCount: bets.length,
+        totalAmount: bets.reduce((sum, bet) => sum + bet.amount, 0),
+        totalPayout: betPayouts.reduce((sum, bet) => sum + bet.payout, 0),
+        nextShoeId: nextShoe.shoeId,
+      } as const;
     }
 
     if (result.cutCardAppeared) {
@@ -188,11 +212,34 @@ export async function settleActiveRound(roundId: string, tableId: string) {
     }
 
     await saveTableShoe(tableId, shoe.shoeId, shoe, client);
-    return true;
+    return {
+      event: "round_settled",
+      tableId,
+      roundId,
+      shoeId: shoe.shoeId,
+      winner: result.winner,
+      betCount: bets.length,
+      totalAmount: bets.reduce((sum, bet) => sum + bet.amount, 0),
+      totalPayout: betPayouts.reduce((sum, bet) => sum + bet.payout, 0),
+    } as const;
   });
 
-  if (!settled) {
+  if (!settlementEvent) {
     return;
+  }
+
+  roundLogger.info(settlementEvent, settlementEvent.event === "round_settled"
+    ? "Round settled"
+    : "Round cancelled and bets refunded");
+  if ("nextShoeId" in settlementEvent) {
+    roundLogger.info({
+      event: "shoe_replaced",
+      tableId,
+      roundId,
+      previousShoeId: settlementEvent.shoeId,
+      shoeId: settlementEvent.nextShoeId,
+      reason: "CUT_CARD_LAST_HAND",
+    }, "Table shoe replaced");
   }
 
   await publishLiveEvent({
@@ -233,6 +280,12 @@ async function tickTable(table: GameTableRecord) {
       reason: "round_locked",
       at: new Date().toISOString(),
     });
+    roundLogger.info({
+      event: "round_locked",
+      tableId: table.id,
+      roundId: round.id,
+      shoeId: round.shoeId,
+    }, "Round locked");
   }
 
   if (round.status === "LOCKED" && now >= closesAt + REVEAL_WINDOW_MS) {
@@ -269,9 +322,13 @@ export async function startRoundManager(options?: {
       const tables = await listTables();
 
       const results = await Promise.allSettled(tables.map((table) => tickTable(table)));
-      for (const result of results) {
+      for (const [index, result] of results.entries()) {
         if (result.status === "rejected") {
-          console.error("Table tick failed", result.reason);
+          roundLogger.error({
+            event: "table_tick_failed",
+            tableId: tables[index]?.id,
+            err: toLogError(result.reason),
+          }, "Table tick failed");
         }
       }
       const rejectedCount = results.filter((result) => result.status === "rejected").length;
@@ -279,7 +336,10 @@ export async function startRoundManager(options?: {
         ? { healthy: true }
         : { healthy: false, detail: `${rejectedCount} table tick(s) failed` };
     } catch (error) {
-      console.error("Round manager tick failed", error);
+      roundLogger.error({
+        event: "round_manager_tick_failed",
+        err: toLogError(error),
+      }, "Round manager tick failed");
       tickResult = {
         healthy: false,
         detail: error instanceof Error ? error.message : String(error),
@@ -288,7 +348,10 @@ export async function startRoundManager(options?: {
       try {
         await options?.onTickComplete?.(tickResult);
       } catch (error) {
-        console.error("Round manager heartbeat failed", error);
+        roundLogger.error({
+          event: "round_manager_heartbeat_failed",
+          err: toLogError(error),
+        }, "Round manager heartbeat failed");
       }
     }
   };

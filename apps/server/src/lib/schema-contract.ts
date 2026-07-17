@@ -86,6 +86,8 @@ const requiredIndexes = [
   "idx_game_rounds_active", "idx_game_rounds_settled", "idx_game_rounds_shoe_settled", "idx_bets_user_round_created",
   "idx_bets_round_created", "idx_login_rate_limits_expires", "idx_financial_ledger_user_sequence",
   "idx_auth_sessions_user_active", "idx_shoe_commitments_table_created", "idx_shoe_deal_audits_shoe_index",
+  "idx_idempotency_keys_created", "idx_auth_sessions_expires", "idx_auth_sessions_revoked",
+  "idx_game_rounds_history_cursor",
 ] as const;
 
 const requiredTriggers = [

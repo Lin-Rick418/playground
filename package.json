@@ -38,9 +38,11 @@
     "release:build": "npm run release:preflight && npm run build && npm run release:verify",
     "test:ops": "bash deploy/tests/run.sh",
     "db:seed": "npm run db:seed --workspace server",
-    "test:deploy": "node deploy/scripts/test-systemd-hardening.mjs"
+    "test:deploy": "node deploy/scripts/test-systemd-hardening.mjs",
+    "test:e2e": "playwright test"
   },
   "devDependencies": {
+    "@playwright/test": "1.61.1",
     "concurrently": "^9.2.1"
   }
 }

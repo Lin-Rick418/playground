@@ -18,7 +18,9 @@ export function shouldReuseIdempotencyKey(error: unknown) {
   return !axios.isAxiosError(error) || !error.response || error.response.status >= 500;
 }
 
-const sessionApi = axios.create({ baseURL, withCredentials: true });
+// Kept separate so refresh requests cannot recursively enter the primary
+// client's 401 interceptor. Exported to allow adapter-level regression tests.
+export const sessionApi = axios.create({ baseURL, withCredentials: true });
 let refreshPromise: Promise<string> | null = null;
 
 function validateApiError(error: unknown) {

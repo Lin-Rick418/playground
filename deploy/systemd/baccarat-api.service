@@ -9,6 +9,7 @@ User=baccarat-api
 Group=baccarat
 WorkingDirectory=/opt/baccarat/current
 Environment=NODE_ENV=production
+Environment=BACCARAT_SERVICE_NAME=baccarat-api
 Environment=HOME=/nonexistent
 EnvironmentFile=/etc/baccarat/baccarat.env
 ExecStart=/usr/bin/node /opt/baccarat/current/apps/server/dist/index.js

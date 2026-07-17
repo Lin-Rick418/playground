@@ -1,8 +1,12 @@
 import type { Server } from "node:http";
+import { logger, toLogError } from "./logger.js";
 
 export type ShutdownReason = "SIGINT" | "SIGTERM" | "uncaughtException" | "unhandledRejection";
 
-type ShutdownLogger = Pick<Console, "error" | "info">;
+type ShutdownLogger = {
+  info(fields: Record<string, unknown>, message: string): void;
+  error(fields: Record<string, unknown>, message: string): void;
+};
 
 type ProcessEventSource = {
   once(event: string, listener: (...args: unknown[]) => void): unknown;
@@ -46,7 +50,7 @@ export function installProcessShutdownHandlers(options: {
   eventSource?: ProcessEventSource;
   exit?: (code: number) => void;
 }) {
-  const logger = options.logger ?? console;
+  const shutdownLogger = options.logger ?? logger;
   const eventSource = options.eventSource ?? process;
   const exit = options.exit ?? ((code: number) => process.exit(code));
   let shutdownPromise: Promise<void> | null = null;
@@ -55,9 +59,13 @@ export function installProcessShutdownHandlers(options: {
   const requestShutdown = (reason: ShutdownReason, error?: unknown) => {
     if (error !== undefined) {
       requestedExitCode = 1;
-      logger.error(`${options.serviceName} received ${reason}`, error);
+      shutdownLogger.error({
+        event: "service_fatal_error",
+        reason,
+        err: toLogError(error),
+      }, `${options.serviceName} received ${reason}`);
     } else {
-      logger.info(`${options.serviceName} received ${reason}; shutting down`);
+      shutdownLogger.info({ event: "service_shutdown_started", reason }, `${options.serviceName} shutting down`);
     }
 
     if (shutdownPromise) {
@@ -66,11 +74,15 @@ export function installProcessShutdownHandlers(options: {
 
     shutdownPromise = withShutdownTimeout(options.shutdown(reason), options.timeoutMs)
       .then(() => {
-        logger.info(`${options.serviceName} shutdown complete`);
+        shutdownLogger.info({ event: "service_shutdown_completed", reason }, `${options.serviceName} shutdown complete`);
         exit(requestedExitCode);
       })
       .catch((shutdownError: unknown) => {
-        logger.error(`${options.serviceName} graceful shutdown failed`, shutdownError);
+        shutdownLogger.error({
+          event: "service_shutdown_failed",
+          reason,
+          err: toLogError(shutdownError),
+        }, `${options.serviceName} graceful shutdown failed`);
         exit(1);
       });
   };

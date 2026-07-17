@@ -1,0 +1,11 @@
+[Unit]
+Description=Hourly Baccarat Data Retention Maintenance
+
+[Timer]
+OnCalendar=hourly
+RandomizedDelaySec=10m
+Persistent=true
+Unit=baccarat-maintenance.service
+
+[Install]
+WantedBy=timers.target

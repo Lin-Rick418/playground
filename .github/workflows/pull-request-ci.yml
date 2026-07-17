@@ -14,6 +14,23 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  web-unit:
+    name: web-unit
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    steps:
+      - name: Check out tested commit
+        uses: actions/checkout@v4
+      - name: Use pinned Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22.19.0
+          cache: npm
+      - name: Install locked dependencies
+        run: npm ci
+      - name: Run browser-facing unit tests
+        run: npm test --workspace web
+
   quality:
     name: quality
     runs-on: ubuntu-latest
@@ -57,8 +74,6 @@ jobs:
           BUILD_DIRTY: "false"
       - name: Unit tests
         run: npm test
-      - name: Web tests
-        run: npm test --workspace web
       - name: Release and deployment safety tests
         run: npm run test:release && npm run test:ops && npm run test:deploy
       - name: HTTP and PostgreSQL integration tests

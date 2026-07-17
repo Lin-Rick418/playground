@@ -186,7 +186,12 @@ export const roundHistoryItemSchema = z
   })
   .strict();
 
-export const historyResponseSchema = z.array(roundHistoryItemSchema);
+export const historyResponseSchema = z
+  .object({
+    items: z.array(roundHistoryItemSchema),
+    nextCursor: z.string().min(1).nullable(),
+  })
+  .strict();
 
 export const dailyProfitResponseSchema = z
   .object({

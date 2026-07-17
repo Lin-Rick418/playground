@@ -8,7 +8,7 @@ export type TableSnapshotMessage = Extract<LiveMessage, { type: "table_snapshot"
 export type TableUserSnapshotMessage = Extract<LiveMessage, { type: "table_user_snapshot" }>;
 export type UserSnapshotMessage = Extract<LiveMessage, { type: "user_snapshot" }>;
 
-type SocketCallbacks = {
+export type SocketCallbacks = {
   onMessage: (message: LiveMessage) => void;
   onOpen?: (socket: WebSocket) => void;
   onClose?: () => void;

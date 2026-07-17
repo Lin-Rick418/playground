@@ -138,28 +138,33 @@ describe("shared API contracts", () => {
     } as const;
 
     assert.equal(
-      historyResponseSchema.safeParse([
-        {
-          id: settledRound.id,
-          createdAt: now,
-          totalAmount: 100,
-          totalPayout: 200,
-          bets: [bet],
-          round: {
+      historyResponseSchema.safeParse({
+        items: [
+          {
             id: settledRound.id,
-            tableId: settledRound.tableId,
-            winner: settledRound.winner,
-            playerCards: settledRound.playerCards,
-            bankerCards: settledRound.bankerCards,
-            playerTotal: settledRound.playerTotal,
-            bankerTotal: settledRound.bankerTotal,
-            playerPair: false,
-            bankerPair: false,
+            createdAt: now,
+            totalAmount: 100,
+            totalPayout: 200,
+            bets: [bet],
+            round: {
+              id: settledRound.id,
+              tableId: settledRound.tableId,
+              winner: settledRound.winner,
+              playerCards: settledRound.playerCards,
+              bankerCards: settledRound.bankerCards,
+              playerTotal: settledRound.playerTotal,
+              bankerTotal: settledRound.bankerTotal,
+              playerPair: false,
+              bankerPair: false,
+            },
           },
-        },
-      ]).success,
+        ],
+        nextCursor: "opaque-cursor",
+      }).success,
       true,
     );
+    assert.equal(historyResponseSchema.safeParse({ items: [], nextCursor: null }).success, true);
+    assert.equal(historyResponseSchema.safeParse([]).success, false);
     assert.equal(
       dailyProfitResponseSchema.safeParse({
         date: "2026-07-16",

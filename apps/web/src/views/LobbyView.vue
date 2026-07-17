@@ -33,6 +33,10 @@ async function openHistory() {
   isHistoryOpen.value = true;
 }
 
+async function loadMoreHistory() {
+  await gameStore.fetchMoreHistory().catch(() => undefined);
+}
+
 function closeHistory() {
   isHistoryOpen.value = false;
 }
@@ -141,7 +145,7 @@ function historyBetSummary(item: Pick<RoundHistoryItem, "bets">) {
       </div>
       <div class="header-actions">
         <button class="account-button" type="button" @click="router.push('/account')" aria-label="帳號安全">⚙</button>
-        <button class="history-button" type="button" @click="openHistory" aria-haspopup="dialog" aria-label="最近 20 筆下注紀錄">
+        <button class="history-button" type="button" @click="openHistory" aria-haspopup="dialog" aria-label="下注紀錄">
           <svg viewBox="0 0 24 24" aria-hidden="true">
             <path d="M12 7v5l3 2M21 12a9 9 0 1 1-2.64-6.36M21 4v5h-5" />
           </svg>
@@ -191,7 +195,7 @@ function historyBetSummary(item: Pick<RoundHistoryItem, "bets">) {
         <div class="card-head">
           <div>
             <p class="topbar-label">History</p>
-            <h2 id="history-modal-title">最近 20 筆</h2>
+            <h2 id="history-modal-title">下注紀錄</h2>
           </div>
           <button
             ref="historyCloseButtonRef"
@@ -205,6 +209,7 @@ function historyBetSummary(item: Pick<RoundHistoryItem, "bets">) {
         </div>
 
         <div class="history-list">
+          <p v-if="gameStore.history.length === 0" class="history-empty" role="status">目前沒有已結算的下注紀錄。</p>
           <article v-for="item in gameStore.history" :key="item.id" class="history-item">
             <div class="history-main">
               <strong>{{ item.round.id.slice(0, 8) }}</strong>
@@ -218,6 +223,21 @@ function historyBetSummary(item: Pick<RoundHistoryItem, "bets">) {
               <span class="history-payout" :class="historyNetClass(item)">派彩 {{ historyNetText(item) }}</span>
             </div>
           </article>
+          <div class="history-footer">
+            <p v-if="gameStore.historyLoadMoreError" class="history-load-error" role="alert">
+              {{ gameStore.historyLoadMoreError }}
+            </p>
+            <button
+              v-if="gameStore.historyNextCursor"
+              class="history-load-more"
+              type="button"
+              :disabled="gameStore.historyLoadingMore"
+              @click="loadMoreHistory"
+            >
+              {{ gameStore.historyLoadingMore ? "載入中…" : "載入更早紀錄" }}
+            </button>
+            <p v-else-if="gameStore.history.length > 0" class="history-end" role="status">已顯示全部紀錄</p>
+          </div>
         </div>
       </section>
     </div>
@@ -498,6 +518,40 @@ function historyBetSummary(item: Pick<RoundHistoryItem, "bets">) {
   background: $color-surface-soft;
   border: 1px solid $color-border-soft;
   padding: $space-4;
+}
+
+.history-empty,
+.history-end,
+.history-load-error {
+  margin: 0;
+  color: $color-text-muted;
+  text-align: center;
+}
+
+.history-load-error {
+  color: $color-negative;
+}
+
+.history-footer {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: $space-2;
+}
+
+.history-load-more {
+  min-height: 44px;
+  padding: 0 $space-5;
+  border: 1px solid $color-gold;
+  border-radius: 999px;
+  background: rgba(244, 222, 155, 0.08);
+  color: $color-gold;
+  font-weight: 800;
+}
+
+.history-load-more:disabled {
+  cursor: wait;
+  opacity: 0.56;
 }
 
 .history-main,

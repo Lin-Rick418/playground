@@ -42,6 +42,7 @@ import {
   withTransaction,
 } from "../../lib/db.js";
 import { fingerprintIdempotencyRequest, parseIdempotencyKey } from "../../lib/idempotency.js";
+import { parseHistoryPageQuery } from "../../lib/history-pagination.js";
 import { publishLiveEvent } from "../../lib/live-events.js";
 import { getRoundConfig } from "../../lib/round-manager.js";
 import { toPublicShoeAudit } from "../../lib/shoe-audit.js";
@@ -131,11 +132,16 @@ gameRouter.get("/tables/:tableId/state", async (req: AuthenticatedRequest, res) 
 });
 
 gameRouter.get("/history", async (req: AuthenticatedRequest, res) => {
+  const page = parseHistoryPageQuery(req.query);
+  if (!page.success) {
+    return sendApiError(req, res, 400, "VALIDATION_ERROR", "Invalid history pagination");
+  }
+
   return sendContractResponse(
     res,
     "game.history",
     historyResponseSchema,
-    await listUserHistory(req.currentUser!.id),
+    await listUserHistory(req.currentUser!.id, page.data),
   );
 });
 

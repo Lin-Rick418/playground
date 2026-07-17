@@ -1,0 +1,51 @@
+[Unit]
+Description=Baccarat Data Retention Maintenance
+After=network-online.target postgresql.service
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=baccarat-worker
+Group=baccarat
+WorkingDirectory=/opt/baccarat/current
+Environment=NODE_ENV=production
+Environment=BACCARAT_SERVICE_NAME=baccarat-maintenance
+Environment=HOME=/nonexistent
+EnvironmentFile=/etc/baccarat/baccarat.env
+ExecStart=/usr/bin/node /opt/baccarat/current/apps/server/dist/scripts/maintenance.js
+TimeoutStartSec=30m
+UMask=0077
+
+NoNewPrivileges=true
+CapabilityBoundingSet=
+AmbientCapabilities=
+ProtectSystem=strict
+ProtectHome=true
+ReadOnlyPaths=/opt/baccarat/current /etc/baccarat/baccarat.env
+PrivateTmp=true
+PrivateDevices=true
+PrivateMounts=true
+ProtectClock=true
+ProtectControlGroups=true
+ProtectHostname=true
+ProtectKernelLogs=true
+ProtectKernelModules=true
+ProtectKernelTunables=true
+ProtectProc=invisible
+ProcSubset=pid
+RestrictNamespaces=true
+RestrictRealtime=true
+RestrictSUIDSGID=true
+LockPersonality=true
+RemoveIPC=true
+KeyringMode=private
+MemoryDenyWriteExecute=false
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+SystemCallArchitectures=native
+SystemCallFilter=@system-service
+SystemCallErrorNumber=EPERM
+LimitCORE=0
+LimitNOFILE=4096
+TasksMax=128
+StandardOutput=journal
+StandardError=journal

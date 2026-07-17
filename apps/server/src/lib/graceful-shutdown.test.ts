@@ -164,7 +164,7 @@ test("fatal errors are logged and escalate an in-progress shutdown to exit one",
   await nextTurn();
 
   assert.equal(shutdownCount, 1);
-  assert.equal(errors.some((entry) => String(entry[0]).includes("unhandledRejection")), true);
+  assert.equal(errors.some((entry) => JSON.stringify(entry).includes("unhandledRejection")), true);
   assert.deepEqual(exits, [1]);
   removeHandlers();
 });

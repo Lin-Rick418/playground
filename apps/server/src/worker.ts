@@ -3,6 +3,7 @@ import { randomUUID } from "node:crypto";
 import { ensureSeedData, pool, recordServiceHeartbeat } from "./lib/db.js";
 import { installProcessShutdownHandlers } from "./lib/graceful-shutdown.js";
 import { assertDatabaseSchemaCurrent } from "./lib/migration-runner.js";
+import { logger } from "./lib/logger.js";
 import { startRoundManager, stopRoundManager } from "./lib/round-manager.js";
 
 await assertDatabaseSchemaCurrent(pool);
@@ -64,4 +65,4 @@ await startRoundManager({
   },
 });
 
-console.log("Round worker started");
+logger.info({ event: "round_worker_started", workerInstanceId }, "Round worker started");

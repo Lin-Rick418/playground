@@ -50,4 +50,16 @@ export const env = {
     5_000,
     { min: 500, max: 60_000 },
   ),
+  idempotencyRetentionDays: parseBoundedInteger(
+    "IDEMPOTENCY_RETENTION_DAYS",
+    process.env.IDEMPOTENCY_RETENTION_DAYS,
+    7,
+    { min: 1, max: 3_650 },
+  ),
+  authSessionRetentionDays: parseBoundedInteger(
+    "AUTH_SESSION_RETENTION_DAYS",
+    process.env.AUTH_SESSION_RETENTION_DAYS,
+    30,
+    { min: 1, max: 3_650 },
+  ),
 };

@@ -1,15 +1,31 @@
 # CI 與必要檢查
 
 Pull request 與 `main` push 會執行 `.github/workflows/pull-request-ci.yml`。Repository 的 branch
-protection 應將下列兩個 job 設為 required checks：
+protection 應將下列三個 job 設為 required checks：
 
+- `web-unit`
 - `quality`
 - `dependency-audit`
 
+`web-unit` 平行且優先執行 Vitest/browser-facing unit tests，涵蓋 road derivation、API concurrent
+401 refresh consolidation、auth store，以及 WebSocket reconnect/session revocation。job budget 為 2 分鐘；
+若超過預算，應先改善安裝/cache 或測試隔離，不可直接把 browser E2E 塞進這個 job。
+
 `quality` 使用 Node.js `22.19.0`、`npm ci` 與 ephemeral PostgreSQL 16，依序執行 repository
-static checks、server/web typecheck、production build、server/web unit tests、release/deploy safety tests，以及真實 HTTP＋PostgreSQL
+static checks、server/web typecheck、production build、server unit tests、release/deploy safety tests，以及真實 HTTP＋PostgreSQL
 integration tests。`dependency-audit` 分別檢查 production dependencies 與包含 dev tooling 的完整
 dependency tree；任一 high/critical vulnerability 都會讓 check 失敗。
+
+## Player E2E
+
+`.github/workflows/e2e.yml` 以 Chromium、真實 API/worker 與 ephemeral PostgreSQL 驗證玩家登入、
+進桌、下注、結算及 history 主流程。它在每次 `main` push 以及每日 02:17（Asia/Taipei）執行，
+每個 run 最多 15 分鐘；失敗時保存 7 天 Playwright trace、screenshot、video 與 HTML report。
+
+E2E 初始觀察期不阻擋 pull request。最早於 2026-07-31，在連續 14 天 scheduled/main runs 無
+flaky retry、並完成失敗分類與 runtime 檢視後，maintainer 才可把 `pull_request` 加入 workflow trigger，
+並將 `player-main-flow` 設為 required check。若仍有 flaky failure，保留獨立排程並開 tracking issue，
+不可用增加 retry 掩蓋。
 
 ## 依賴更新與 vulnerability audit
 
@@ -18,11 +34,14 @@ minor/patch 更新會分組以降低 PR 數量；major 更新保持獨立 PR，�
 確認 runtime/API 相容性後再合併。Repository maintainer 負責 review；不得只因 PR 是
 Dependabot 建立就自動合併。每個更新仍須通過 `quality` 與 `dependency-audit`。
 
-`scheduled-dependency-audit` workflow 每日（09:30 Asia/Taipei）在 main 上執行
+上述 weekly schedule 只控制 version updates；Dependabot security updates 由新 advisory 事件觸發，
+不使用 `schedule.interval`。Repository 必須維持 vulnerability alerts 與 automated security fixes
+enabled，security update 會依 npm/GitHub Actions ecosystem 分組。
+
+`scheduled-dependency-audit` workflow 每日（09:30 Asia/Taipei）在 main 上重新執行
 `audit:prod` 與 `audit:full`，讓新公告的第一個紅燈出現在排程 job 而不是某個
 無關 PR 的 CI 上；失敗時會自動開立（或更新）標題為
-「Scheduled dependency audit is failing」的 tracking issue。Repository 亦應啟用
-Dependabot security updates，讓修補 PR 在公告發布後自動建立。
+「Scheduled dependency audit is failing」的 tracking issue。
 
 Dependabot PR 應保留自動產生的 lockfile，並確認：
 

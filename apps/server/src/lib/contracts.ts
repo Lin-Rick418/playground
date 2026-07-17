@@ -1,6 +1,7 @@
 import type { Response } from "express";
 import { apiErrorResponseSchema } from "@baccarat/contracts";
 import type { z } from "zod";
+import { logger, type AppLogger } from "./logger.js";
 
 export function contractIssues(error: z.ZodError) {
   return error.issues.map((issue) => ({
@@ -15,14 +16,16 @@ export function sendContractResponse<T>(
   schema: z.ZodType<T>,
   payload: unknown,
   status = 200,
+  contractLogger: Pick<AppLogger, "error"> = logger,
 ) {
   const parsed = schema.safeParse(payload);
 
   if (!parsed.success) {
-    console.error("API response contract validation failed", {
+    contractLogger.error({
+      event: "api_response_contract_failed",
       contract: contractName,
       issues: contractIssues(parsed.error),
-    });
+    }, "API response contract validation failed");
     const requestIdHeader = response.getHeader("X-Request-Id");
     const requestId = Array.isArray(requestIdHeader)
       ? String(requestIdHeader[0] ?? "unknown")

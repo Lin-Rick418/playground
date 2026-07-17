@@ -8,6 +8,7 @@ import {
 } from "./lib/graceful-shutdown.js";
 import { attachLiveWebSocketServer } from "./lib/live-ws.js";
 import { assertDatabaseSchemaCurrent } from "./lib/migration-runner.js";
+import { logger } from "./lib/logger.js";
 
 const SHUTDOWN_TIMEOUT_MS = 15_000;
 
@@ -47,5 +48,9 @@ installProcessShutdownHandlers({
 });
 
 server.listen(env.port, env.host, () => {
-  console.log(`Server listening on http://${env.host}:${env.port}`);
+  logger.info({
+    event: "http_server_started",
+    host: env.host,
+    port: env.port,
+  }, "Baccarat API listening");
 });
