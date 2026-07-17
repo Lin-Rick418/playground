@@ -10,6 +10,7 @@ import { applyBalanceMutation, pool, replaceTableShoe, withTransaction } from ".
 import { runMigrations } from "../../src/lib/migration-runner.js";
 import { settleActiveRound } from "../../src/lib/round-manager.js";
 import { runRetentionCleanup } from "../../src/lib/retention.js";
+import { authRefreshRateLimitPolicy } from "../../src/lib/endpoint-rate-limit.js";
 
 type TestUser = {
   id: string;
@@ -508,4 +509,72 @@ test("settlement credits the calculated payout once and only once", async () => 
   assert.equal(audit.body.shoeId, shoeId);
   assert.match(audit.body.commitment, /^[0-9a-f]{64}$/);
   assert.equal(audit.body.reveal, null);
+});
+
+test("change-password rate limits repeated wrong current-password attempts", async () => {
+  const player = await insertUser({ username: `pwbrute_${runId}`, password: "CorrectHorse!2026" });
+  const token = await login(player);
+  const clientIp = "203.0.113.71";
+
+  async function attempt(currentPassword: string) {
+    return request<{ code: string }>("/auth/change-password", {
+      method: "POST",
+      token,
+      headers: { "x-forwarded-for": clientIp },
+      body: { currentPassword, newPassword: "AnotherStrong!2026" },
+    });
+  }
+
+  // ACCOUNT_IP hard-blocks after 5 failures: the first four are plain 401s.
+  for (let i = 0; i < 4; i += 1) {
+    const rejected = await attempt("WrongGuess!2026");
+    assert.equal(rejected.status, 401);
+    assert.equal(rejected.body.code, "INVALID_CREDENTIALS");
+  }
+
+  const limited = await attempt("WrongGuess!2026");
+  assert.equal(limited.status, 429);
+  assert.equal(limited.body.code, "RATE_LIMITED");
+
+  // Once blocked, even the correct current password is refused up front.
+  const blockedWithCorrect = await attempt("CorrectHorse!2026");
+  assert.equal(blockedWithCorrect.status, 429);
+  assert.equal(blockedWithCorrect.body.code, "RATE_LIMITED");
+
+  // A different client IP for the same account is not collaterally blocked
+  // below the account-wide threshold.
+  const otherIp = await request<{ code: string }>("/auth/change-password", {
+    method: "POST",
+    token,
+    headers: { "x-forwarded-for": "203.0.113.99" },
+    body: { currentPassword: "WrongGuess!2026", newPassword: "AnotherStrong!2026" },
+  });
+  assert.equal(otherIp.status, 401);
+});
+
+test("refresh rate limits unauthenticated floods per client IP", async () => {
+  const clientIp = "203.0.113.72";
+
+  async function refresh() {
+    return request<{ code: string }>("/auth/refresh", {
+      method: "POST",
+      headers: { "x-forwarded-for": clientIp },
+    });
+  }
+
+  for (let i = 0; i < authRefreshRateLimitPolicy.maxRequests; i += 1) {
+    const response = await refresh();
+    assert.equal(response.status, 401, `request ${i + 1} should pass the limiter`);
+  }
+
+  const limited = await refresh();
+  assert.equal(limited.status, 429);
+  assert.equal(limited.body.code, "RATE_LIMITED");
+
+  // A different IP still has its own budget.
+  const otherIp = await request<{ code: string }>("/auth/refresh", {
+    method: "POST",
+    headers: { "x-forwarded-for": "203.0.113.98" },
+  });
+  assert.equal(otherIp.status, 401);
 });

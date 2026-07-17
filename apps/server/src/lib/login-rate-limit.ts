@@ -4,8 +4,10 @@ import { isIP } from "node:net";
 export const loginRateLimitScopes = ["ACCOUNT_IP", "ACCOUNT", "IP"] as const;
 export type LoginRateLimitScope = (typeof loginRateLimitScopes)[number];
 
+// Store keys are deliberately wider than the login scopes: the same table and
+// store back other fixed-window limiters (see endpoint-rate-limit.ts).
 export type LoginRateLimitKey = {
-  scope: LoginRateLimitScope;
+  scope: string;
   keyHash: string;
 };
 
@@ -167,8 +169,11 @@ export class LoginRateLimiter {
 
   private getDecision(states: LoginRateLimitState[]): LoginRateLimitDecision {
     const limitedScopes = states.flatMap((state) => {
-      const policy = this.policiesByScope.get(state.scope)!;
-      return state.failures >= policy.maxFailures ? [state.scope] : [];
+      // States are read back for this limiter's own keys, so the scope is
+      // always one of the login scopes despite the wider store type.
+      const scope = state.scope as LoginRateLimitScope;
+      const policy = this.policiesByScope.get(scope)!;
+      return state.failures >= policy.maxFailures ? [scope] : [];
     });
 
     return {
@@ -188,7 +193,7 @@ export class LoginRateLimiter {
   async recordFailure(attempt: LoginRateLimitAttempt): Promise<LoginRateLimitDecision> {
     const increments = attempt.keys.map((key) => ({
       ...key,
-      windowMs: this.policiesByScope.get(key.scope)!.windowMs,
+      windowMs: this.policiesByScope.get(key.scope as LoginRateLimitScope)!.windowMs,
     }));
     const states = await this.store.increment(increments, this.clock.now());
     return this.getDecision(states);
