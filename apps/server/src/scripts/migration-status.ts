@@ -1,4 +1,4 @@
-import { pool } from "../lib/database.js";
+import { pool } from "../lib/repositories/client.js";
 import { getMigrationStatus } from "../lib/migration-runner.js";
 
 try {
