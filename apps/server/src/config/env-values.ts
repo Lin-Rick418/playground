@@ -20,7 +20,7 @@ export function parseHost(value: string | undefined) {
     return host;
   }
 
-  if (!host || host.length > 253 || /[\s/:@\[\]]/.test(host)) {
+  if (!host || host.length > 253 || /[\s/:@[\]]/.test(host)) {
     throw new Error("HOST must be an IP address or DNS hostname");
   }
 

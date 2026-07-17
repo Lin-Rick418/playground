@@ -4,7 +4,9 @@ import { assertValidTimeZone } from "../lib/business-day.js";
 import { parseBoundedInteger } from "./env-number.js";
 import { parseCorsOrigin, parseDatabaseSsl, parseHost } from "./env-values.js";
 
-dotenv.config();
+// dotenv 17 prints an injection banner to stdout by default, which corrupts
+// consumers that parse this process's stdout (e.g. the env-loading tests).
+dotenv.config({ quiet: true });
 
 // Fail safe: only an explicit development/test NODE_ENV relaxes security
 // defaults, so forgetting to set NODE_ENV in a deployment cannot silently
