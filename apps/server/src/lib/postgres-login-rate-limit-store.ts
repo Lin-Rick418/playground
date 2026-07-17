@@ -2,7 +2,6 @@ import type { Pool } from "pg";
 import type {
   LoginRateLimitIncrement,
   LoginRateLimitKey,
-  LoginRateLimitScope,
   LoginRateLimitState,
   LoginRateLimitStore,
 } from "./login-rate-limit.js";
@@ -10,7 +9,7 @@ import type {
 type QueryExecutor = Pick<Pool, "query">;
 
 type RateLimitRow = {
-  scope: LoginRateLimitScope;
+  scope: string;
   key_hash: string;
   failures: number | string;
   expires_at: Date | string;
