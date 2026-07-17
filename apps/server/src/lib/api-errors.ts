@@ -82,7 +82,7 @@ type HttpErrorLike = {
 };
 
 function asErrorLike(error: unknown): HttpErrorLike {
-  return typeof error === "object" && error !== null ? (error as HttpErrorLike) : {};
+  return typeof error === "object" && error !== null ? error : {};
 }
 
 function parserErrorResponse(error: unknown) {

@@ -5,6 +5,7 @@ import { queryIndexesMigration } from "./004-query-indexes.js";
 import { currentPlatformSchemaMigration } from "./005-current-platform-schema.js";
 import { retentionIndexesMigration } from "./006-retention-indexes.js";
 import { historyCursorIndexMigration } from "./007-history-cursor-index.js";
+import { endpointRateLimitScopeMigration } from "./008-endpoint-rate-limit-scope.js";
 
 export const migrationDefinitions = [
   initialTablesMigration,
@@ -14,6 +15,7 @@ export const migrationDefinitions = [
   currentPlatformSchemaMigration,
   retentionIndexesMigration,
   historyCursorIndexMigration,
+  endpointRateLimitScopeMigration,
 ] as const;
 
 export type { MigrationDefinition } from "./types.js";

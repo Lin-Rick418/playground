@@ -20,9 +20,9 @@ jobs:
     timeout-minutes: 2
     steps:
       - name: Check out tested commit
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
       - name: Use pinned Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v7
         with:
           node-version: 22.19.0
           cache: npm
@@ -56,9 +56,9 @@ jobs:
       JWT_SECRET: ci-only-not-used-outside-the-ephemeral-test-run
     steps:
       - name: Check out tested commit
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
       - name: Use pinned Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v7
         with:
           node-version: 22.19.0
           cache: npm
@@ -66,6 +66,8 @@ jobs:
         run: npm ci
       - name: Static and type checks
         run: npm run check:static
+      - name: Lint
+        run: npm run lint
       - name: Production build
         run: npm run build
         env:
@@ -85,9 +87,9 @@ jobs:
     timeout-minutes: 10
     steps:
       - name: Check out tested commit
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
       - name: Use pinned Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v7
         with:
           node-version: 22.19.0
           cache: npm
