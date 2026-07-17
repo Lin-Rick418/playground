@@ -42,7 +42,7 @@ jobs:
       JWT_SECRET: e2e-only-not-used-outside-the-ephemeral-test-run
     steps:
       - name: Check out tested commit
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
       - name: Use pinned Node.js
         uses: actions/setup-node@v4
         with:

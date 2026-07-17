@@ -20,7 +20,7 @@ jobs:
     timeout-minutes: 2
     steps:
       - name: Check out tested commit
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
       - name: Use pinned Node.js
         uses: actions/setup-node@v4
         with:
@@ -56,7 +56,7 @@ jobs:
       JWT_SECRET: ci-only-not-used-outside-the-ephemeral-test-run
     steps:
       - name: Check out tested commit
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
       - name: Use pinned Node.js
         uses: actions/setup-node@v4
         with:
@@ -87,7 +87,7 @@ jobs:
     timeout-minutes: 10
     steps:
       - name: Check out tested commit
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
       - name: Use pinned Node.js
         uses: actions/setup-node@v4
         with:
