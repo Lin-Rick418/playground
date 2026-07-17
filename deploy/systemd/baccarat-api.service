@@ -16,6 +16,8 @@ Restart=always
 RestartSec=3
 KillSignal=SIGTERM
 TimeoutStartSec=60
+# The process enforces a 15-second graceful-shutdown deadline; systemd keeps
+# five seconds of headroom before sending SIGKILL.
 TimeoutStopSec=20
 
 # The API accepts HTTP/WebSocket traffic and opens PostgreSQL/DNS sockets. It

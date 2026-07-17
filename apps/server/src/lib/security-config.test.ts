@@ -11,4 +11,11 @@ test("production nginx config sets the required browser security headers", () =>
   assert.match(config, /X-Content-Type-Options nosniff/);
   assert.match(config, /Referrer-Policy strict-origin-when-cross-origin/);
   assert.match(config, /Permissions-Policy/);
+
+  const contentSecurityPolicy = config.match(/add_header Content-Security-Policy "([^"]+)"/)?.[1];
+  assert.ok(contentSecurityPolicy);
+  assert.match(contentSecurityPolicy, /connect-src 'self';/);
+  assert.match(contentSecurityPolicy, /manifest-src 'self';/);
+  assert.match(contentSecurityPolicy, /worker-src 'self';/);
+  assert.doesNotMatch(contentSecurityPolicy, /connect-src[^;]*\s(?:ws:|wss:)(?:\s|;)/);
 });

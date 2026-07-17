@@ -11,6 +11,38 @@ static checks、server/web typecheck、production build、server/web unit tests�
 integration tests。`dependency-audit` 分別檢查 production dependencies 與包含 dev tooling 的完整
 dependency tree；任一 high/critical vulnerability 都會讓 check 失敗。
 
+## 依賴更新與 vulnerability audit
+
+Dependabot 每週一檢查 root npm workspace（包含所有 workspaces）與 GitHub Actions。
+minor/patch 更新會分組以降低 PR 數量；major 更新保持獨立 PR，必須閱讀 migration guide、
+確認 runtime/API 相容性後再合併。Repository maintainer 負責 review；不得只因 PR 是
+Dependabot 建立就自動合併。每個更新仍須通過 `quality` 與 `dependency-audit`。
+
+Dependabot PR 應保留自動產生的 lockfile，並確認：
+
+1. production 與 development dependency 的變更範圍符合 PR 說明；
+2. major 或 security update 沒有未處理的 breaking change；
+3. CI 全綠，必要時補上受影響功能的 regression test；
+4. GitHub Actions 的更新來源仍是可信任的官方／既有 action。
+
+`dependency-audit` 因新公告失敗時，先在同一個 commit 本機執行：
+
+```bash
+npm run audit:prod
+npm run audit:full
+npm audit --json
+```
+
+優先升級 direct dependency 或更新 lockfile 到已修補版本，並以正常 PR 通過全部 CI。
+不得直接執行或提交未 review 的 `npm audit fix --force`，因為它可能導入 major breaking
+change。若只有 transitive dependency 且上游尚無修補版本，請建立或更新 tracking issue，
+附上 advisory、production 是否可達、受影響版本、mitigation、owner 與重新檢查日期。
+
+現行政策維持 PR 與 `main` 都阻擋 high/critical vulnerability。只有 maintainer 在確認公告
+不影響本專案、已有有效 mitigation 且記錄限期 follow-up 後，才能對單一 PR 做暫時性的
+required-check override；不得永久降低 audit level 或移除 `dependency-audit`。修補版本發布後
+應立即移除例外並合併更新。
+
 ## 本機驗證
 
 ```bash

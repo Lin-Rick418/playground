@@ -25,7 +25,7 @@
     "typecheck": "npm run typecheck --workspaces",
     "build": "npm run verify:runtime && npm run build --workspaces && node scripts/build-metadata.mjs write",
     "test:runtime": "node --test scripts/*.test.mjs",
-    "test": "npm test --workspace server",
+    "test": "npm test --workspace @baccarat/contracts && npm test --workspace server",
     "test:integration": "npm run test:integration --workspace server",
     "audit:prod": "npm audit --omit=dev --audit-level=high",
     "audit:full": "npm audit --audit-level=high",

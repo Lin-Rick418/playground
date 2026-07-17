@@ -1,4 +1,5 @@
 import type { Response } from "express";
+import { apiErrorResponseSchema } from "@baccarat/contracts";
 import type { z } from "zod";
 
 export function contractIssues(error: z.ZodError) {
@@ -22,7 +23,15 @@ export function sendContractResponse<T>(
       contract: contractName,
       issues: contractIssues(parsed.error),
     });
-    return response.status(500).json({ message: "Internal server error" });
+    const requestIdHeader = response.getHeader("X-Request-Id");
+    const requestId = Array.isArray(requestIdHeader)
+      ? String(requestIdHeader[0] ?? "unknown")
+      : String(requestIdHeader ?? "unknown");
+    return response.status(500).json(apiErrorResponseSchema.parse({
+      code: "INTERNAL_ERROR",
+      message: "Internal server error",
+      requestId,
+    }));
   }
 
   return response.status(status).json(parsed.data);

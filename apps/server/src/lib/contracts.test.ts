@@ -15,6 +15,9 @@ function createResponse() {
       state.payload = payload;
       return response;
     },
+    getHeader(name: string) {
+      return name.toLowerCase() === "x-request-id" ? "contract-test-request" : undefined;
+    },
   } as Response;
 
   return { response, state };
@@ -48,7 +51,11 @@ describe("server contract responses", () => {
       });
 
       assert.equal(state.status, 500);
-      assert.deepEqual(state.payload, { message: "Internal server error" });
+      assert.deepEqual(state.payload, {
+        code: "INTERNAL_ERROR",
+        message: "Internal server error",
+        requestId: "contract-test-request",
+      });
       assert.equal(consoleError.mock.callCount(), 1);
       assert.ok(!JSON.stringify(consoleError.mock.calls).includes(secret));
       assert.match(JSON.stringify(consoleError.mock.calls), /auth\.login/);

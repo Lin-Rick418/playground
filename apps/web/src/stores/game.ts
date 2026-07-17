@@ -1,5 +1,11 @@
 import { defineStore } from "pinia";
-import { lobbyResponseSchema, tableStateResponseSchema } from "@baccarat/contracts";
+import {
+  dailyProfitResponseSchema,
+  historyResponseSchema,
+  lobbyResponseSchema,
+  placeBetResponseSchema,
+  tableStateResponseSchema,
+} from "@baccarat/contracts";
 import { api, createIdempotencyKey, shouldReuseIdempotencyKey } from "../lib/api";
 import { parseRuntimeContract } from "../lib/contracts";
 import type {
@@ -10,7 +16,6 @@ import type {
   GameTable,
   LobbySnapshot,
   LobbyTable,
-  PlaceBetResponse,
   PresentationWindow,
   RoundHistoryItem,
   ShoeStatus,
@@ -108,16 +113,26 @@ export const useGameStore = defineStore("game", {
 
       try {
         const [historyResult, dailyProfitResult] = await Promise.allSettled([
-          api.get<RoundHistoryItem[]>("/game/history"),
-          api.get<DailyProfitSummary>("/game/daily-profit"),
+          api.get("/game/history"),
+          api.get("/game/daily-profit"),
         ]);
 
         if (historyResult.status === "rejected") {
           throw historyResult.reason;
         }
 
-        this.history = historyResult.value.data;
-        this.dailyProfit = dailyProfitResult.status === "fulfilled" ? dailyProfitResult.value.data : null;
+        this.history = parseRuntimeContract(
+          historyResponseSchema,
+          historyResult.value.data,
+          "GET /game/history",
+        );
+        this.dailyProfit = dailyProfitResult.status === "fulfilled"
+          ? parseRuntimeContract(
+              dailyProfitResponseSchema,
+              dailyProfitResult.value.data,
+              "GET /game/daily-profit",
+            )
+          : null;
       } finally {
         this.loading = false;
       }
@@ -128,10 +143,15 @@ export const useGameStore = defineStore("game", {
       this.pendingBetIdempotencyKeys[requestSignature] = idempotencyKey;
 
       try {
-        const { data } = await api.post<PlaceBetResponse>(
+        const response = await api.post(
           `/game/tables/${tableId}/bet`,
           { bets: payload },
           { headers: { "Idempotency-Key": idempotencyKey } },
+        );
+        const data = parseRuntimeContract(
+          placeBetResponseSchema,
+          response.data,
+          "POST /game/tables/:tableId/bet",
         );
         delete this.pendingBetIdempotencyKeys[requestSignature];
         if (this.currentRound?.id === data.round.id) {

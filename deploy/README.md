@@ -75,6 +75,12 @@ sudo systemctl reload nginx
 
 把 nginx `server_name` 改為正式網域並設定 TLS。只允許一個 worker instance，避免重複推局。
 
+預設 web、API 與 WebSocket 都由同一個 nginx origin 提供，因此 CSP 的
+`connect-src 'self'` 已涵蓋 `/api` 與同源 `wss://`。不要加入裸的 `ws:` 或
+`wss:`，那會允許連線到任意主機。若另行設定 `VITE_API_BASE_URL` 指向不同
+origin，必須在 CSP 加入該完整且固定的 `https://`／`wss://` origin，並同步
+設定 server 的 `CORS_ORIGIN`；部署後需確認 browser console 沒有 CSP violation。
+
 ## 3. Release 前置檢查
 
 `release.config.json` 的 authoritative branch 是 `main`、remote 是 `origin`。release source 必須是乾淨 worktree、正確 upstream，且 local SHA 與 remote 完全一致：

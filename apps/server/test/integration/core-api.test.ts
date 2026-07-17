@@ -244,14 +244,19 @@ test("bet placement debits exactly once and insufficient balance rolls back", as
   assert.equal(placed.body.balance, 700);
   assert.equal(placed.body.bets.length, 2);
 
-  const rejected = await request<{ message: string }>(`/game/tables/${tableId}/bet`, {
+  const rejected = await request<{ code: string; message: string; requestId: string }>(`/game/tables/${tableId}/bet`, {
     method: "POST",
     token,
     body: { bets: [{ betType: "TIE", amount: 800 }] },
-    headers: { "idempotency-key": randomUUID() },
+    headers: {
+      "idempotency-key": randomUUID(),
+      "x-request-id": "integration-insufficient-balance",
+    },
   });
   assert.equal(rejected.status, 400);
+  assert.equal(rejected.body.code, "VALIDATION_ERROR");
   assert.equal(rejected.body.message, "Insufficient balance");
+  assert.equal(rejected.body.requestId, "integration-insufficient-balance");
 
   const persisted = await pool.query<{ balance: number; bet_count: string; staked: string }>(
     `SELECT u.balance, COUNT(b.id)::text AS bet_count,
@@ -335,4 +340,32 @@ test("settlement credits the calculated payout once and only once", async () => 
     balance: row.balance,
     payout: row.payout,
   });
+
+  const token = await login(player);
+  const history = await request<Array<{ id: string; round: { id: string } }>>("/game/history", { token });
+  assert.equal(history.status, 200);
+  assert.equal(history.body.some((item) => item.id === roundId && item.round.id === roundId), true);
+
+  const dailyProfit = await request<{
+    formula: string;
+    recognitionTime: string;
+    totalBet: number;
+    totalPayout: number;
+    netProfit: number;
+  }>("/game/daily-profit", { token });
+  assert.equal(dailyProfit.status, 200);
+  assert.equal(dailyProfit.body.formula, "TOTAL_PAYOUT_MINUS_TOTAL_BET");
+  assert.equal(dailyProfit.body.recognitionTime, "ROUND_SETTLED_AT");
+  assert.equal(dailyProfit.body.totalBet, 100);
+  assert.equal(dailyProfit.body.totalPayout, expectedPayout);
+  assert.equal(dailyProfit.body.netProfit, dailyProfit.body.totalPayout - dailyProfit.body.totalBet);
+
+  const audit = await request<{ shoeId: string; commitment: string; reveal: unknown }>(
+    `/game/shoes/${shoeId}/audit`,
+    { token },
+  );
+  assert.equal(audit.status, 200);
+  assert.equal(audit.body.shoeId, shoeId);
+  assert.match(audit.body.commitment, /^[0-9a-f]{64}$/);
+  assert.equal(audit.body.reveal, null);
 });

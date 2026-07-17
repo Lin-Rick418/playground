@@ -27,6 +27,10 @@ grep -q 'BUILD_COMMIT_SHA' "$ROOT/deploy/scripts/deploy.sh" || fail "deploy does
 grep -q 'verify-rollback-compatibility' "$ROOT/deploy/scripts/deploy.sh" || fail "missing rollback compatibility gate"
 grep -q 'db:migrate' "$ROOT/deploy/scripts/deploy.sh" || fail "missing migration feature detection"
 grep -q 'PGDATABASE="$DATABASE_URL"' "$ROOT/deploy/scripts/backup.sh" || fail "database URL must be passed via environment"
+grep -q "connect-src 'self';" "$ROOT/deploy/nginx/baccarat.conf" || fail "CSP must restrict connections to the deployment origin"
+if grep -Eq "connect-src[^;]*[[:space:]](ws:|wss:)([[:space:]]|;)" "$ROOT/deploy/nginx/baccarat.conf"; then
+  fail "CSP must not allow arbitrary WebSocket origins"
+fi
 
 if grep -REn 'eval|env \$\(cat|xargs|--dbname=.*DATABASE_URL|--dbname=.*RESTORE_VERIFY_DATABASE_URL' \
   "$ROOT/deploy/scripts"; then

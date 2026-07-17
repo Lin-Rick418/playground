@@ -3,7 +3,7 @@ import { loginResponseSchema, userSchema } from "@baccarat/contracts";
 import { api } from "../lib/api";
 import { parseRuntimeContract } from "../lib/contracts";
 import { clearStoredToken, getStoredToken, setStoredToken } from "../lib/settings";
-import type { LoginResponse, User } from "../types/domain";
+import type { User } from "../types/domain";
 
 export const useAuthStore = defineStore("auth", {
   state: () => ({
@@ -42,7 +42,8 @@ export const useAuthStore = defineStore("auth", {
       return data;
     },
     async refreshAccessToken() {
-      const { data } = await api.post<LoginResponse>("/auth/refresh");
+      const response = await api.post("/auth/refresh");
+      const data = parseRuntimeContract(loginResponseSchema, response.data, "POST /auth/refresh");
       this.token = data.token;
       this.user = data.user;
       this.accessTokenExpiresAt = data.accessTokenExpiresAt;
@@ -76,7 +77,12 @@ export const useAuthStore = defineStore("auth", {
       return (await this.refreshAccessToken()).token;
     },
     async changePassword(currentPassword: string, newPassword: string) {
-      const { data } = await api.post<LoginResponse>("/auth/change-password", { currentPassword, newPassword });
+      const response = await api.post("/auth/change-password", { currentPassword, newPassword });
+      const data = parseRuntimeContract(
+        loginResponseSchema,
+        response.data,
+        "POST /auth/change-password",
+      );
       this.token = data.token;
       this.user = data.user;
       this.accessTokenExpiresAt = data.accessTokenExpiresAt;

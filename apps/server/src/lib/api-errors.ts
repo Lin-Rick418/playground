@@ -1,21 +1,8 @@
 import { randomUUID } from "node:crypto";
 import type { ErrorRequestHandler, NextFunction, Request, RequestHandler, Response } from "express";
+import type { ApiErrorCode } from "@baccarat/contracts";
 
-export type ApiErrorCode =
-  | "MALFORMED_JSON"
-  | "PAYLOAD_TOO_LARGE"
-  | "UNSUPPORTED_MEDIA_TYPE"
-  | "VALIDATION_ERROR"
-  | "AUTHENTICATION_REQUIRED"
-  | "INVALID_TOKEN"
-  | "INVALID_CREDENTIALS"
-  | "FORBIDDEN"
-  | "ACCOUNT_DISABLED"
-  | "NOT_FOUND"
-  | "CONFLICT"
-  | "RATE_LIMITED"
-  | "SERVICE_UNAVAILABLE"
-  | "INTERNAL_ERROR";
+export type { ApiErrorCode } from "@baccarat/contracts";
 
 type RequestWithId = Request & { requestId?: string };
 

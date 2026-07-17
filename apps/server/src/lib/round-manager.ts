@@ -29,6 +29,10 @@ import {
   REVEAL_WINDOW_MS,
   systemClock,
 } from "./round-schedule.js";
+import {
+  createSerializedIntervalRunner,
+  type SerializedIntervalRunner,
+} from "./serialized-interval.js";
 import type { GameTableRecord } from "../types/domain.js";
 
 const LOOP_INTERVAL_MS = 1000;
@@ -36,8 +40,7 @@ const MIN_CARDS_TO_COMPLETE_ROUND = 6;
 const ROUND_SCHEDULE_VERSION = 1;
 
 const roundManagerState = globalThis as typeof globalThis & {
-  __baccaratRoundManagerInterval?: NodeJS.Timeout;
-  __baccaratRoundManagerTicking?: boolean;
+  __baccaratRoundManagerLoop?: SerializedIntervalRunner;
 };
 
 async function createOpenRound(
@@ -255,16 +258,11 @@ export type RoundManagerTickResult = { healthy: boolean; detail?: string };
 export async function startRoundManager(options?: {
   onTickComplete?: (result: RoundManagerTickResult) => Promise<void> | void;
 }) {
-  if (roundManagerState.__baccaratRoundManagerInterval) {
+  if (roundManagerState.__baccaratRoundManagerLoop) {
     return;
   }
 
   const runTick = async () => {
-    if (roundManagerState.__baccaratRoundManagerTicking) {
-      return;
-    }
-
-    roundManagerState.__baccaratRoundManagerTicking = true;
     let tickResult: RoundManagerTickResult = { healthy: false, detail: "Round manager tick did not complete" };
 
     try {
@@ -292,12 +290,28 @@ export async function startRoundManager(options?: {
       } catch (error) {
         console.error("Round manager heartbeat failed", error);
       }
-      roundManagerState.__baccaratRoundManagerTicking = false;
     }
   };
 
-  await runTick();
-  roundManagerState.__baccaratRoundManagerInterval = setInterval(() => {
-    void runTick();
-  }, LOOP_INTERVAL_MS);
+  const loop = createSerializedIntervalRunner(runTick, LOOP_INTERVAL_MS);
+  roundManagerState.__baccaratRoundManagerLoop = loop;
+
+  try {
+    await loop.start();
+  } catch (error) {
+    if (roundManagerState.__baccaratRoundManagerLoop === loop) {
+      delete roundManagerState.__baccaratRoundManagerLoop;
+    }
+    throw error;
+  }
+}
+
+export async function stopRoundManager() {
+  const loop = roundManagerState.__baccaratRoundManagerLoop;
+  if (!loop) return;
+
+  await loop.stop();
+  if (roundManagerState.__baccaratRoundManagerLoop === loop) {
+    delete roundManagerState.__baccaratRoundManagerLoop;
+  }
 }

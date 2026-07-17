@@ -554,12 +554,14 @@ export async function attachLiveWebSocketServer(server: Server) {
       heartbeatInterval = null;
     }
     for (const connection of connections.values()) {
-      connection.socket.close();
+      connection.socket.close(1001, "Server shutting down");
     }
-    connections.clear();
     upgradeWindows.clear();
     await stopSubscriber?.();
     stopSubscriber = null;
-    wss.close();
+    await new Promise<void>((resolve, reject) => {
+      wss.close((error) => (error ? reject(error) : resolve()));
+    });
+    connections.clear();
   };
 }
