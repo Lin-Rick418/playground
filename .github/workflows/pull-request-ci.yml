@@ -66,6 +66,8 @@ jobs:
         run: npm ci
       - name: Static and type checks
         run: npm run check:static
+      - name: Lint
+        run: npm run lint
       - name: Production build
         run: npm run build
         env:

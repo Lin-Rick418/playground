@@ -11,7 +11,7 @@ import type {
   UserRole,
 } from "../types/domain.js";
 import { ACTIVE_ROUND_UNIQUE_INDEX } from "./active-round-invariant.js";
-import { createMassachusettsShoeState, type Card, type TableShoeState } from "./baccarat.js";
+import { type Card, type TableShoeState } from "./baccarat.js";
 import { chunkItems } from "./batch.js";
 import { coreDatabaseIntegritySql } from "./database-integrity.js";
 import { assertValidRoundWindow } from "./round-schedule.js";
@@ -1853,7 +1853,7 @@ export async function getTableShoe(
     };
   }
 
-  const cards = Array.isArray(parsed.cards) ? (parsed.cards as Card[]) : [];
+  const cards = Array.isArray(parsed.cards) ? (parsed.cards) : [];
   return {
     shoeId,
     cards,
@@ -2064,7 +2064,7 @@ export async function buildLobbyTables(executor: DbExecutor = pool) {
 
   const activeByTable = new Map<string, GameRoundRecord>();
   for (const row of allActiveRows) {
-    const round = mapRound(row as DbRow);
+    const round = mapRound(row);
     if (!activeByTable.has(round.tableId)) {
       activeByTable.set(round.tableId, round);
     }
@@ -2072,7 +2072,7 @@ export async function buildLobbyTables(executor: DbExecutor = pool) {
 
   const recentByTable = new Map<string, GameRoundRecord[]>();
   for (const row of allRecentRows) {
-    const round = mapRound(row as DbRow);
+    const round = mapRound(row);
     const list = recentByTable.get(round.tableId) ?? [];
     list.push(round);
     recentByTable.set(round.tableId, list);

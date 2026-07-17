@@ -37,7 +37,6 @@ import {
   isWebSocketPayloadAllowed,
   pruneRateWindows,
   type RateWindow,
-  type WebSocketClientMessage,
 } from "./live-ws-policy.js";
 import { getRoundConfig } from "./round-manager.js";
 import type { UserRole } from "../types/domain.js";

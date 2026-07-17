@@ -138,14 +138,14 @@ function historyBetSummary(item: Pick<RoundHistoryItem, "bets">) {
     </transition>
 
     <header class="lobby-header">
-      <button class="back-button" type="button" @click="logout" aria-label="返回登入">‹</button>
+      <button class="back-button" type="button" aria-label="返回登入" @click="logout">‹</button>
       <div class="lobby-title">
         <p>Live Baccarat</p>
         <h1>遊戲大廳</h1>
       </div>
       <div class="header-actions">
-        <button class="account-button" type="button" @click="router.push('/account')" aria-label="帳號安全">⚙</button>
-        <button class="history-button" type="button" @click="openHistory" aria-haspopup="dialog" aria-label="下注紀錄">
+        <button class="account-button" type="button" aria-label="帳號安全" @click="router.push('/account')">⚙</button>
+        <button class="history-button" type="button" aria-haspopup="dialog" aria-label="下注紀錄" @click="openHistory">
           <svg viewBox="0 0 24 24" aria-hidden="true">
             <path d="M12 7v5l3 2M21 12a9 9 0 1 1-2.64-6.36M21 4v5h-5" />
           </svg>
@@ -201,8 +201,8 @@ function historyBetSummary(item: Pick<RoundHistoryItem, "bets">) {
             ref="historyCloseButtonRef"
             class="history-close-button"
             type="button"
-            @click="closeHistory"
             aria-label="關閉下注紀錄"
+            @click="closeHistory"
           >
             ✕
           </button>
