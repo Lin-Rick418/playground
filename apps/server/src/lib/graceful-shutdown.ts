@@ -16,6 +16,9 @@ export function closeHttpServer(server: Server) {
 
   return new Promise<void>((resolve, reject) => {
     server.close((error) => (error ? reject(error) : resolve()));
+    // Idle keep-alive sockets would otherwise hold the server open until the
+    // keep-alive timeout drains them; active requests still run to completion.
+    server.closeIdleConnections();
   });
 }
 

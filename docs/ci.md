@@ -18,6 +18,12 @@ minor/patch 更新會分組以降低 PR 數量；major 更新保持獨立 PR，�
 確認 runtime/API 相容性後再合併。Repository maintainer 負責 review；不得只因 PR 是
 Dependabot 建立就自動合併。每個更新仍須通過 `quality` 與 `dependency-audit`。
 
+`scheduled-dependency-audit` workflow 每日（09:30 Asia/Taipei）在 main 上執行
+`audit:prod` 與 `audit:full`，讓新公告的第一個紅燈出現在排程 job 而不是某個
+無關 PR 的 CI 上；失敗時會自動開立（或更新）標題為
+「Scheduled dependency audit is failing」的 tracking issue。Repository 亦應啟用
+Dependabot security updates，讓修補 PR 在公告發布後自動建立。
+
 Dependabot PR 應保留自動產生的 lockfile，並確認：
 
 1. production 與 development dependency 的變更範圍符合 PR 說明；

@@ -28,11 +28,18 @@ function validateApiError(error: unknown) {
 
   const method = error.config?.method?.toUpperCase() ?? "API";
   const url = error.config?.url ?? "request";
-  error.response.data = parseRuntimeContract(
-    apiErrorResponseSchema,
-    error.response.data,
-    `${method} ${url} error`,
-  );
+  try {
+    error.response.data = parseRuntimeContract(
+      apiErrorResponseSchema,
+      error.response.data,
+      `${method} ${url} error`,
+    );
+  } catch {
+    // Responses that never reached the API (e.g. a proxy-level 502 with an
+    // HTML body) cannot satisfy the error contract; keep the original axios
+    // error so callers still see the real status and payload. The contract
+    // violation itself is already logged by parseRuntimeContract.
+  }
   return error;
 }
 
