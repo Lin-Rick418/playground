@@ -111,7 +111,7 @@ function parseMetadata(raw, source) {
   try {
     return createBuildMetadata(metadata);
   } catch (error) {
-    throw new Error(`${source} is invalid: ${error.message}`);
+    throw new Error(`${source} is invalid: ${error.message}`, { cause: error });
   }
 }
 
