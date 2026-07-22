@@ -1,5 +1,17 @@
 version: 2
 
+# Security updates only.
+#
+# open-pull-requests-limit: 0 disables routine version-update pull requests
+# while leaving security updates untouched, so an advisory still arrives as an
+# actionable fix PR. Detection does not depend on this file either way:
+# .github/workflows/scheduled-dependency-audit.yml audits main daily, and the
+# dependency-audit job runs npm audit on every pull request.
+#
+# The version-update groups below are inert at limit 0 and are kept so routine
+# updates can be resumed by raising the limit alone. To resume, set the npm
+# limit back to 10 and the github-actions limit back to 5.
+
 updates:
   - package-ecosystem: npm
     directory: /
@@ -8,7 +20,7 @@ updates:
       day: monday
       time: "09:00"
       timezone: Asia/Taipei
-    open-pull-requests-limit: 10
+    open-pull-requests-limit: 0
     labels:
       - dependencies
     groups:
@@ -31,7 +43,7 @@ updates:
       day: monday
       time: "09:15"
       timezone: Asia/Taipei
-    open-pull-requests-limit: 5
+    open-pull-requests-limit: 0
     labels:
       - dependencies
     groups:
