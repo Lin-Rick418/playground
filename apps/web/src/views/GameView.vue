@@ -3,11 +3,32 @@ import { computed, onMounted, onUnmounted, ref, watch } from "vue";
 import axios from "axios";
 import { useRoute, useRouter } from "vue-router";
 import RoadmapPanel from "../components/RoadmapPanel.vue";
-import { BET_OPTIONS, CHIP_VALUES, DEAL_ANIMATION_TIMINGS, DEFAULT_CHIP_VALUE, WINNER_LABELS } from "../const/game";
+import {
+  BET_OPTIONS,
+  CHIP_VALUES,
+  DEAL_ANIMATION_TIMINGS,
+  DEFAULT_CHIP_VALUE,
+  WINNER_LABELS,
+} from "../const/game";
 import { useDialogFocus } from "../composables/useDialogFocus";
 import { useLiveChannel } from "../composables/useLiveChannel";
+import {
+  getRollingMoneyValue,
+  isPayoutBalanceReady,
+  useSettledDailyProfit,
+} from "../composables/useSettledDailyProfit";
+import {
+  getClientClockAtServerTime,
+  getDisplayDurationBeforeDeadline,
+  getRoundCountdownSeconds,
+} from "../lib/round-timing";
 import { loadVoiceAnnouncementEnabled, saveVoiceAnnouncementEnabled } from "../lib/settings";
-import { playVoiceClips, preloadVoiceClips, stopVoicePlayback, unlockVoicePlayback } from "../lib/voice";
+import {
+  playVoiceClips,
+  preloadVoiceClips,
+  stopVoicePlayback,
+  unlockVoicePlayback,
+} from "../lib/voice";
 import type { TableSnapshotMessage, TableUserSnapshotMessage } from "../lib/live";
 import { useAuthStore } from "../stores/auth";
 import { useGameStore } from "../stores/game";
@@ -18,6 +39,16 @@ type DisplayCard = Card;
 type CardRank = DisplayCard["rank"];
 type PendingBetAmounts = Record<BetKey, number>;
 
+function createEmptyBetAmounts(): PendingBetAmounts {
+  return {
+    PLAYER: 0,
+    BANKER: 0,
+    TIE: 0,
+    PLAYER_PAIR: 0,
+    BANKER_PAIR: 0,
+  };
+}
+
 const authStore = useAuthStore();
 const gameStore = useGameStore();
 const route = useRoute();
@@ -26,7 +57,6 @@ const tableId = computed(() => String(route.params.tableId));
 const betOptions = BET_OPTIONS;
 const selectedChip = ref<(typeof CHIP_VALUES)[number]>(DEFAULT_CHIP_VALUE);
 const isPlacingBet = ref(false);
-const isRoadSettingsOpen = ref(false);
 const isRoadmapOpen = ref(false);
 const isTableLoading = ref(true);
 const isVoiceAnnouncementEnabled = ref(loadVoiceAnnouncementEnabled());
@@ -34,8 +64,6 @@ const settlementDialogRef = ref<HTMLElement | null>(null);
 const settlementCloseButtonRef = ref<HTMLElement | null>(null);
 const roadmapDialogRef = ref<HTMLElement | null>(null);
 const roadmapCloseButtonRef = ref<HTMLElement | null>(null);
-const settingsDialogRef = ref<HTMLElement | null>(null);
-const settingsCloseButtonRef = ref<HTMLElement | null>(null);
 
 const displayedPlayerCards = ref<DisplayCard[]>([]);
 const displayedBankerCards = ref<DisplayCard[]>([]);
@@ -44,9 +72,16 @@ const bankerDealtCount = ref(0);
 const playerFaceUpCount = ref(0);
 const bankerFaceUpCount = ref(0);
 const revealTimers: number[] = [];
-const dealingPhase = ref<"idle" | "dealing" | "base-revealed" | "bonus-dealing" | "revealed">("idle");
+const dealingPhase = ref<"idle" | "dealing" | "base-revealed" | "bonus-dealing" | "revealed">(
+  "idle",
+);
 const showDealOverlay = ref(false);
 type SettlementInfo = { participated: boolean; amount: number };
+type PendingBalancePayout = {
+  balanceBeforePayout: number | null;
+  payoutAmount: number;
+};
+type PendingSettlement = SettlementInfo & PendingBalancePayout & { dailyProfit: number | null };
 type SettlementScreen = SettlementInfo & {
   winner: keyof typeof WINNER_LABELS;
   playerTotal: number;
@@ -56,7 +91,8 @@ type SettlementScreen = SettlementInfo & {
 };
 const settlementPopup = ref<null | SettlementScreen>(null);
 const settlementPopupTimer = ref<number | null>(null);
-const pendingSettlement = ref<SettlementInfo | null>(null);
+const pendingSettlement = ref<PendingSettlement | null>(null);
+const pendingBalancePayout = ref<PendingBalancePayout | null>(null);
 const { onDialogKeydown: onSettlementDialogKeydown } = useDialogFocus({
   isOpen: () => Boolean(settlementPopup.value),
   dialogRef: settlementDialogRef,
@@ -69,29 +105,14 @@ const { onDialogKeydown: onRoadmapDialogKeydown } = useDialogFocus({
   close: closeRoadmap,
   initialFocusRef: roadmapCloseButtonRef,
 });
-const { onDialogKeydown: onSettingsDialogKeydown } = useDialogFocus({
-  isOpen: () => isRoadSettingsOpen.value,
-  dialogRef: settingsDialogRef,
-  close: closeRoadSettings,
-  initialFocusRef: settingsCloseButtonRef,
-});
 const lastResolvedRoundId = ref("");
 const lastAnnouncedRoundId = ref("");
 const latestParticipatedRoundId = ref("");
-const pendingBetAmounts = ref<PendingBetAmounts>({
-  PLAYER: 0,
-  BANKER: 0,
-  TIE: 0,
-  PLAYER_PAIR: 0,
-  BANKER_PAIR: 0,
-});
-const stagedBetAmounts = ref<PendingBetAmounts>({
-  PLAYER: 0,
-  BANKER: 0,
-  TIE: 0,
-  PLAYER_PAIR: 0,
-  BANKER_PAIR: 0,
-});
+const isSettlementPayoutPending = ref(false);
+const pendingBetAmounts = ref<PendingBetAmounts>(createEmptyBetAmounts());
+const stagedBetAmounts = ref<PendingBetAmounts>(createEmptyBetAmounts());
+const displayedConfirmedBetAmounts = ref<PendingBetAmounts>(createEmptyBetAmounts());
+const displayedConfirmedRoundId = ref("");
 const clockNow = ref(Date.now());
 const serverTimeOffsetMs = ref(0);
 let clockTimer: number | null = null;
@@ -99,11 +120,22 @@ let refreshGameDataPromise: Promise<void> | null = null;
 let refreshGameDataQueued = false;
 let messageTimer: number | null = null;
 const VOICE_UNLOCK_EVENTS = ["pointerdown", "touchstart", "keydown"] as const;
+const SETTLEMENT_POPUP_DURATION_MS = 3400;
+const DAILY_PROFIT_ROLL_DURATION_MS = 2_000;
 
 const currentRound = computed(() => gameStore.currentRound);
 const presentationRound = computed(() => gameStore.previousRound);
 const currentTable = computed(() => gameStore.currentTable);
 const syncedServerNowMs = computed(() => clockNow.value + serverTimeOffsetMs.value);
+
+function advanceClockToServerTime(targetServerTimeMs: number) {
+  clockNow.value = getClientClockAtServerTime(
+    Date.now(),
+    serverTimeOffsetMs.value,
+    targetServerTimeMs,
+  );
+}
+
 const roadmapRounds = computed(() => {
   const rounds = gameStore.roadRounds;
   const currentPresentationRound = presentationRound.value;
@@ -140,29 +172,25 @@ const availableChips = computed(() => {
 const overlayPlayerCards = computed(() =>
   dealingPhase.value === "revealed"
     ? (presentationRound.value?.playerCards ?? [])
-    : presentationRound.value?.playerCards.slice(0, playerDealtCount.value) ?? [],
+    : (presentationRound.value?.playerCards.slice(0, playerDealtCount.value) ?? []),
 );
 const overlayBankerCards = computed(() =>
   dealingPhase.value === "revealed"
     ? (presentationRound.value?.bankerCards ?? [])
-    : presentationRound.value?.bankerCards.slice(0, bankerDealtCount.value) ?? [],
+    : (presentationRound.value?.bankerCards.slice(0, bankerDealtCount.value) ?? []),
 );
-const faceUpPlayerCards = computed(() => overlayPlayerCards.value.filter((_card, index) => isOverlayCardFaceUp("player", index)));
-const faceUpBankerCards = computed(() => overlayBankerCards.value.filter((_card, index) => isOverlayCardFaceUp("banker", index)));
+const faceUpPlayerCards = computed(() =>
+  overlayPlayerCards.value.filter((_card, index) => isOverlayCardFaceUp("player", index)),
+);
+const faceUpBankerCards = computed(() =>
+  overlayBankerCards.value.filter((_card, index) => isOverlayCardFaceUp("banker", index)),
+);
 const countdownSeconds = computed(() => {
-  if (!currentRound.value) {
-    return 0;
-  }
-
-  const serverTime = syncedServerNowMs.value;
-  const opensAt = new Date(currentRound.value.bettingOpensAt).getTime();
-  const closeTime = new Date(currentRound.value.bettingClosesAt).getTime();
-  const duration = closeTime - opensAt;
-  const countdownMs = serverTime < opensAt ? duration : closeTime - serverTime;
-
-  return Math.ceil(Math.max(0, countdownMs) / 1000);
+  return getRoundCountdownSeconds(currentRound.value, syncedServerNowMs.value);
 });
-const countdownDisplay = computed(() => (countdownSeconds.value > 0 ? String(countdownSeconds.value) : ""));
+const countdownDisplay = computed(() =>
+  countdownSeconds.value > 0 ? String(countdownSeconds.value) : "",
+);
 const isBettingOpen = computed(() => {
   if (!currentRound.value || currentRound.value.status !== "OPEN") {
     return false;
@@ -173,7 +201,31 @@ const isBettingOpen = computed(() => {
   const closesAt = new Date(currentRound.value.bettingClosesAt).getTime();
   return serverTime >= opensAt && serverTime < closesAt;
 });
-const bettingStatusAnnouncement = computed(() => (isBettingOpen.value ? "下注已開放" : "目前停止下注"));
+const isPresentationActive = computed(() => {
+  const presentation = gameStore.presentation;
+  if (!presentation) {
+    return false;
+  }
+
+  const serverTime = syncedServerNowMs.value;
+  const startsAt = Date.parse(presentation.startsAt);
+  const endsAt = Date.parse(presentation.endsAt);
+  return serverTime >= startsAt && serverTime < endsAt;
+});
+const betTimerLabel = computed(() => {
+  if (isBettingOpen.value) {
+    return "請投注";
+  }
+
+  if (isPresentationActive.value) {
+    return "開牌／結算";
+  }
+
+  return currentRound.value?.status === "LOCKED" ? "等待開牌" : "等待開始";
+});
+const bettingStatusAnnouncement = computed(() =>
+  isBettingOpen.value ? "下注已開放" : "目前停止下注",
+);
 const isLastHandRound = computed(() => Boolean(gameStore.shoeStatus?.isLastHand));
 const playerScoreDisplay = computed(() => {
   if (showDealOverlay.value) {
@@ -190,19 +242,96 @@ const bankerScoreDisplay = computed(() => {
   return presentationRound.value?.bankerTotal ?? 0;
 });
 const feltPlayerCards = computed(() =>
-  showDealOverlay.value ? overlayPlayerCards.value : presentationRound.value?.playerCards ?? [],
+  showDealOverlay.value ? overlayPlayerCards.value : (presentationRound.value?.playerCards ?? []),
 );
 const feltBankerCards = computed(() =>
-  showDealOverlay.value ? overlayBankerCards.value : presentationRound.value?.bankerCards ?? [],
+  showDealOverlay.value ? overlayBankerCards.value : (presentationRound.value?.bankerCards ?? []),
 );
-const todayProfit = computed(() => gameStore.dailyProfit?.netProfit ?? null);
-const dailyProfitPeriodLabel = computed(() => {
-  const summary = gameStore.dailyProfit;
-  return summary ? `${summary.date.slice(5)} 收益 · ${summary.timeZone}` : "本日收益";
-});
+const {
+  displayedProfit: todayProfit,
+  animationRevision: dailyProfitAnimationRevision,
+  initialize: initializeDailyProfit,
+  applySettlement: applySettledDailyProfit,
+} = useSettledDailyProfit();
+const animatedTodayProfit = ref<number | null>(null);
+const isDailyProfitRolling = ref(false);
+let dailyProfitAnimationFrameId: number | null = null;
+const currentBalance = computed(() => authStore.user?.balance ?? null);
+const displayedBalance = ref<number | null>(currentBalance.value);
+const dailyProfitPeriodLabel = "今日收益";
 const dailyProfitAccessibleLabel = computed(() => {
   const summary = gameStore.dailyProfit;
-  return summary ? `${summary.date} 收益，時區 ${summary.timeZone}` : "本日收益尚未載入";
+  const profit = todayProfit.value;
+  return summary && profit !== null
+    ? `${summary.date} 收益 ${profit.toLocaleString()}，時區 ${summary.timeZone}`
+    : "本日收益尚未載入";
+});
+
+function stopDailyProfitNumberAnimation() {
+  if (dailyProfitAnimationFrameId !== null) {
+    window.cancelAnimationFrame(dailyProfitAnimationFrameId);
+    dailyProfitAnimationFrameId = null;
+  }
+  isDailyProfitRolling.value = false;
+}
+
+watch(
+  [todayProfit, dailyProfitAnimationRevision],
+  ([profit, animationRevision], [previousProfit]) => {
+    stopDailyProfitNumberAnimation();
+
+    if (profit === null) {
+      animatedTodayProfit.value = null;
+      return;
+    }
+
+    const prefersReducedMotion =
+      typeof window.matchMedia === "function" &&
+      window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+    const startProfit = animatedTodayProfit.value ?? previousProfit ?? 0;
+
+    if (animationRevision === 0 || startProfit === profit || prefersReducedMotion) {
+      animatedTodayProfit.value = profit;
+      return;
+    }
+
+    let startedAt: number | null = null;
+    isDailyProfitRolling.value = true;
+
+    const updateFrame = (timestamp: number) => {
+      startedAt ??= timestamp;
+      const progress = Math.min(1, (timestamp - startedAt) / DAILY_PROFIT_ROLL_DURATION_MS);
+      animatedTodayProfit.value = getRollingMoneyValue(startProfit, profit, progress);
+
+      if (progress < 1) {
+        dailyProfitAnimationFrameId = window.requestAnimationFrame(updateFrame);
+        return;
+      }
+
+      dailyProfitAnimationFrameId = null;
+      isDailyProfitRolling.value = false;
+    };
+
+    dailyProfitAnimationFrameId = window.requestAnimationFrame(updateFrame);
+  },
+);
+
+watch(currentBalance, (balance) => {
+  if (balance === null) {
+    displayedBalance.value = null;
+    return;
+  }
+
+  if (pendingBalancePayout.value !== null) {
+    applyBalanceAfterPayout(pendingBalancePayout.value);
+    return;
+  }
+
+  if (isSettlementPayoutPending.value) {
+    return;
+  }
+
+  displayedBalance.value = balance;
 });
 
 function betOptionsByKeys(keys: readonly BetKey[]) {
@@ -212,13 +341,16 @@ function betOptionsByKeys(keys: readonly BetKey[]) {
 const sideBetRow = betOptionsByKeys(["PLAYER_PAIR", "TIE", "BANKER_PAIR"]);
 const mainBetRow = betOptionsByKeys(["PLAYER", "BANKER"]);
 
-const lastBetSnapshot = ref<null | { roundId: string; bets: { betType: BetKey; amount: number }[] }>(null);
+const lastBetSnapshot = ref<null | {
+  roundId: string;
+  bets: { betType: BetKey; amount: number }[];
+}>(null);
 const canRepeatLastBets = computed(() =>
   Boolean(
     lastBetSnapshot.value &&
-      isBettingOpen.value &&
-      currentRound.value &&
-      lastBetSnapshot.value.roundId !== currentRound.value.id,
+    isBettingOpen.value &&
+    currentRound.value &&
+    lastBetSnapshot.value.roundId !== currentRound.value.id,
   ),
 );
 const totalStagedAmount = computed(() =>
@@ -227,8 +359,9 @@ const totalStagedAmount = computed(() =>
 const hasStagedBets = computed(() => totalStagedAmount.value > 0);
 
 watch(
-  () => [gameStore.currentBets, currentRound.value?.id ?? ""] as const,
-  ([bets, roundId]) => {
+  () => gameStore.currentBets,
+  (bets) => {
+    const roundId = currentRound.value?.id ?? "";
     if (!roundId || !bets.length) {
       return;
     }
@@ -238,6 +371,11 @@ watch(
       aggregated.set(bet.betType, (aggregated.get(bet.betType) ?? 0) + bet.amount);
     }
 
+    displayedConfirmedBetAmounts.value = createEmptyBetAmounts();
+    for (const [betType, amount] of aggregated) {
+      displayedConfirmedBetAmounts.value[betType] = amount;
+    }
+    displayedConfirmedRoundId.value = roundId;
     lastBetSnapshot.value = {
       roundId,
       bets: [...aggregated].map(([betType, amount]) => ({ betType, amount })),
@@ -254,7 +392,7 @@ function isFeltCardFaceUp(side: "player" | "banker", index: number) {
   return showDealOverlay.value ? isOverlayCardFaceUp(side, index) : true;
 }
 
-function repeatLastBets() {
+async function repeatLastBets() {
   const table = currentTable.value;
   const user = authStore.user;
   if (!canRepeatLastBets.value || isPlacingBet.value || !lastBetSnapshot.value || !table || !user) {
@@ -275,9 +413,7 @@ function repeatLastBets() {
     return;
   }
 
-  for (const bet of bets) {
-    stagedBetAmounts.value[bet.betType] += bet.amount;
-  }
+  await submitBets(bets);
 }
 
 async function refreshGameData() {
@@ -328,7 +464,9 @@ async function loadTableState() {
   try {
     await refreshGameData();
   } catch (error) {
-    const message = axios.isAxiosError(error) ? (error.response?.data?.message ?? "載入桌況失敗") : "載入桌況失敗";
+    const message = axios.isAxiosError(error)
+      ? (error.response?.data?.message ?? "載入桌況失敗")
+      : "載入桌況失敗";
     gameStore.message = message;
   } finally {
     isTableLoading.value = false;
@@ -336,14 +474,18 @@ async function loadTableState() {
 }
 
 function currentBetAmount(target: BetKey) {
-  const actualAmount = gameStore.currentBets
-    .filter((bet) => bet.betType === target)
-    .reduce((sum, bet) => sum + bet.amount, 0);
-  return actualAmount + stagedBetAmounts.value[target] + pendingBetAmounts.value[target];
+  return (
+    displayedConfirmedBetAmounts.value[target] +
+    stagedBetAmounts.value[target] +
+    pendingBetAmounts.value[target]
+  );
 }
 
 function totalPendingAmount() {
-  return (Object.values(pendingBetAmounts.value) as number[]).reduce((sum, amount) => sum + amount, 0);
+  return (Object.values(pendingBetAmounts.value) as number[]).reduce(
+    (sum, amount) => sum + amount,
+    0,
+  );
 }
 
 function formatBetDisplayAmount(amount: number) {
@@ -388,11 +530,47 @@ function stageBet(target: BetKey) {
 }
 
 function resetStagedBetAmounts() {
-  stagedBetAmounts.value = { PLAYER: 0, BANKER: 0, TIE: 0, PLAYER_PAIR: 0, BANKER_PAIR: 0 };
+  stagedBetAmounts.value = createEmptyBetAmounts();
+}
+
+function resetDisplayedConfirmedBetAmounts() {
+  displayedConfirmedBetAmounts.value = createEmptyBetAmounts();
+  displayedConfirmedRoundId.value = "";
 }
 
 function clearStagedBets() {
   resetStagedBetAmounts();
+}
+
+async function submitBets(bets: { betType: BetKey; amount: number }[]) {
+  isPlacingBet.value = true;
+  for (const bet of bets) {
+    pendingBetAmounts.value[bet.betType] += bet.amount;
+  }
+
+  try {
+    const result = await gameStore.placeBet(tableId.value, bets);
+    latestParticipatedRoundId.value = result.round.id;
+    authStore.patchBalance(result.balance);
+    return true;
+  } catch (error) {
+    const message = axios.isAxiosError(error)
+      ? (error.response?.data?.message ?? "下注失敗")
+      : "下注失敗";
+    gameStore.message = message;
+    if (message === "Betting is closed") {
+      void refreshGameData();
+    }
+    return false;
+  } finally {
+    for (const bet of bets) {
+      pendingBetAmounts.value[bet.betType] = Math.max(
+        0,
+        pendingBetAmounts.value[bet.betType] - bet.amount,
+      );
+    }
+    isPlacingBet.value = false;
+  }
 }
 
 async function confirmStagedBets() {
@@ -418,31 +596,13 @@ async function confirmStagedBets() {
     return;
   }
 
-  isPlacingBet.value = true;
-  for (const bet of bets) {
-    pendingBetAmounts.value[bet.betType] += bet.amount;
-  }
   const submittedStaged = { ...stagedBetAmounts.value };
   resetStagedBetAmounts();
 
-  try {
-    const result = await gameStore.placeBet(tableId.value, bets);
-    latestParticipatedRoundId.value = result.round.id;
-    authStore.patchBalance(result.balance);
-  } catch (error) {
+  if (!(await submitBets(bets))) {
     for (const [betType, amount] of Object.entries(submittedStaged) as [BetKey, number][]) {
       stagedBetAmounts.value[betType] += amount;
     }
-    const message = axios.isAxiosError(error) ? (error.response?.data?.message ?? "下注失敗") : "下注失敗";
-    gameStore.message = message;
-    if (message === "Betting is closed") {
-      void refreshGameData();
-    }
-  } finally {
-    for (const bet of bets) {
-      pendingBetAmounts.value[bet.betType] = Math.max(0, pendingBetAmounts.value[bet.betType] - bet.amount);
-    }
-    isPlacingBet.value = false;
   }
 }
 
@@ -476,6 +636,15 @@ function showSettlementPopup(info: SettlementInfo) {
     return;
   }
 
+  const displayDurationMs = getDisplayDurationBeforeDeadline(
+    SETTLEMENT_POPUP_DURATION_MS,
+    gameStore.presentation?.endsAt,
+    syncedServerNowMs.value,
+  );
+  if (displayDurationMs <= 0) {
+    return;
+  }
+
   stopSettlementPopupTimer();
   settlementPopup.value = {
     ...info,
@@ -485,9 +654,10 @@ function showSettlementPopup(info: SettlementInfo) {
     playerPair: round.playerPair,
     bankerPair: round.bankerPair,
   };
+  resetDisplayedConfirmedBetAmounts();
   settlementPopupTimer.value = window.setTimeout(() => {
     settlementPopup.value = null;
-  }, 3400);
+  }, displayDurationMs);
 }
 
 async function handleRoundSettled(settledRound: ActiveRound, serverTimeIso: string) {
@@ -497,15 +667,34 @@ async function handleRoundSettled(settledRound: ActiveRound, serverTimeIso: stri
 
   lastResolvedRoundId.value = settledRound.id;
   const participated = settledRound.id === latestParticipatedRoundId.value;
+  const balanceBeforePayout = displayedBalance.value ?? currentBalance.value;
   let amount = 0;
+  let payoutAmount = 0;
 
   if (participated) {
-    await gameStore.fetchHistory();
+    isSettlementPayoutPending.value = true;
+    try {
+      await gameStore.fetchHistory();
+    } catch (error) {
+      isSettlementPayoutPending.value = false;
+      displayedBalance.value = currentBalance.value;
+      throw error;
+    }
     const settledHistory = gameStore.history.find((item) => item.round.id === settledRound.id);
     amount = settledHistory ? settledHistory.totalPayout - settledHistory.totalAmount : 0;
+    payoutAmount = settledHistory?.totalPayout ?? 0;
   }
 
-  queueSettlementPopup({ participated, amount }, serverTimeIso);
+  queueSettlementPopup(
+    {
+      participated,
+      amount,
+      dailyProfit: gameStore.dailyProfit?.netProfit ?? null,
+      balanceBeforePayout,
+      payoutAmount,
+    },
+    serverTimeIso,
+  );
 }
 
 function cardSuitSymbol(suit: Card["suit"]) {
@@ -554,39 +743,73 @@ function speakRoundTotals(round: NonNullable<typeof presentationRound.value>) {
   void playVoiceClips(clips);
 }
 
-function testVoiceAnnouncement() {
-  unlockVoicePlayback();
-
-  if (!isVoiceAnnouncementEnabled.value) {
-    isVoiceAnnouncementEnabled.value = true;
-  }
-
-  void playVoiceClips(["xian8", "zhuang5", "xianWin"]);
-}
-
 function isOverlayCardFaceUp(side: "player" | "banker", index: number) {
   return side === "player" ? index < playerFaceUpCount.value : index < bankerFaceUpCount.value;
 }
 
 function showPendingSettlementIfNeeded() {
-  if (pendingSettlement.value !== null) {
-    showSettlementPopup(pendingSettlement.value);
+  const pending = pendingSettlement.value;
+  if (pending === null) {
+    return;
+  }
+
+  const { dailyProfit, balanceBeforePayout, payoutAmount, ...settlementInfo } = pending;
+  showSettlementPopup(settlementInfo);
+  applySettledDailyProfit(dailyProfit, settlementPopup.value !== null);
+  applyBalanceAfterPayout({ balanceBeforePayout, payoutAmount });
+  pendingSettlement.value = null;
+}
+
+function applyBalanceAfterPayout(payout: PendingBalancePayout) {
+  const payoutBalanceReady = isPayoutBalanceReady({
+    balanceBeforePayout: payout.balanceBeforePayout,
+    currentBalance: currentBalance.value,
+    payoutAmount: payout.payoutAmount,
+  });
+  if (!payoutBalanceReady) {
+    pendingBalancePayout.value = payout;
+    return;
+  }
+
+  pendingBalancePayout.value = null;
+  displayedBalance.value = currentBalance.value;
+  isSettlementPayoutPending.value = false;
+}
+
+function applyPendingSettlementAmountsIfNeeded() {
+  const pending = pendingSettlement.value;
+  if (pending !== null) {
+    applySettledDailyProfit(pending.dailyProfit, false);
+    pendingBalancePayout.value = {
+      balanceBeforePayout: pending.balanceBeforePayout,
+      payoutAmount: pending.payoutAmount,
+    };
     pendingSettlement.value = null;
+  }
+
+  if (pendingBalancePayout.value !== null) {
+    applyBalanceAfterPayout(pendingBalancePayout.value);
   }
 }
 
-function queueSettlementPopup(info: SettlementInfo, serverTimeIso?: string) {
+function queueSettlementPopup(info: PendingSettlement, serverTimeIso?: string) {
   pendingSettlement.value = info;
 
   if (!gameStore.presentation?.endsAt) {
-    showPendingSettlementIfNeeded();
+    applyPendingSettlementAmountsIfNeeded();
     return;
   }
 
   const serverNowMs = serverTimeIso ? new Date(serverTimeIso).getTime() : syncedServerNowMs.value;
   const presentationEndsAtMs = new Date(gameStore.presentation.endsAt).getTime();
 
-  if (!showDealOverlay.value || serverNowMs >= presentationEndsAtMs) {
+  if (serverNowMs >= presentationEndsAtMs) {
+    applyPendingSettlementAmountsIfNeeded();
+    dismissSettlementPopup();
+    return;
+  }
+
+  if (!showDealOverlay.value || dealingPhase.value === "revealed") {
     showPendingSettlementIfNeeded();
   }
 }
@@ -622,8 +845,12 @@ function syncPresentationState(elapsedMs: number) {
   const shownBaseCards = baseCards.filter(
     (_item, index) => elapsedMs >= index * DEAL_ANIMATION_TIMINGS.baseCardIntervalMs,
   );
-  displayedPlayerCards.value = shownBaseCards.filter((item) => item.side === "player").map((item) => item.card);
-  displayedBankerCards.value = shownBaseCards.filter((item) => item.side === "banker").map((item) => item.card);
+  displayedPlayerCards.value = shownBaseCards
+    .filter((item) => item.side === "player")
+    .map((item) => item.card);
+  displayedBankerCards.value = shownBaseCards
+    .filter((item) => item.side === "banker")
+    .map((item) => item.card);
   playerDealtCount.value = displayedPlayerCards.value.length;
   bankerDealtCount.value = displayedBankerCards.value.length;
   playerFaceUpCount.value = 0;
@@ -632,8 +859,14 @@ function syncPresentationState(elapsedMs: number) {
 
   if (elapsedMs >= DEAL_ANIMATION_TIMINGS.baseRevealDelayMs) {
     dealingPhase.value = "base-revealed";
-    playerDealtCount.value = Math.max(playerDealtCount.value, Math.min(2, presentationRound.value.playerCards.length));
-    bankerDealtCount.value = Math.max(bankerDealtCount.value, Math.min(2, presentationRound.value.bankerCards.length));
+    playerDealtCount.value = Math.max(
+      playerDealtCount.value,
+      Math.min(2, presentationRound.value.playerCards.length),
+    );
+    bankerDealtCount.value = Math.max(
+      bankerDealtCount.value,
+      Math.min(2, presentationRound.value.bankerCards.length),
+    );
     playerFaceUpCount.value = Math.min(2, displayedPlayerCards.value.length);
     bankerFaceUpCount.value = Math.min(2, displayedBankerCards.value.length);
   }
@@ -659,7 +892,8 @@ function syncPresentationState(elapsedMs: number) {
   if (elapsedMs >= bonusStartMs) {
     dealingPhase.value = "bonus-dealing";
     const dealtBonusCards = bonusCards.filter(
-      (_item, index) => elapsedMs >= bonusStartMs + index * DEAL_ANIMATION_TIMINGS.bonusCardIntervalMs,
+      (_item, index) =>
+        elapsedMs >= bonusStartMs + index * DEAL_ANIMATION_TIMINGS.bonusCardIntervalMs,
     );
     const revealedBonusCards = bonusCards.filter(
       (_item, index) =>
@@ -678,18 +912,17 @@ function syncPresentationState(elapsedMs: number) {
     ];
     playerDealtCount.value = displayedPlayerCards.value.length;
     bankerDealtCount.value = displayedBankerCards.value.length;
-    playerFaceUpCount.value = 2 + revealedBonusCards.filter((item) => item.side === "player").length;
-    bankerFaceUpCount.value = 2 + revealedBonusCards.filter((item) => item.side === "banker").length;
+    playerFaceUpCount.value =
+      2 + revealedBonusCards.filter((item) => item.side === "player").length;
+    bankerFaceUpCount.value =
+      2 + revealedBonusCards.filter((item) => item.side === "banker").length;
   }
 
   const lastBonusRevealAtMs =
     bonusStartMs +
     (bonusCards.length - 1) * DEAL_ANIMATION_TIMINGS.bonusCardIntervalMs +
     DEAL_ANIMATION_TIMINGS.bonusRevealDelayMs;
-  if (
-    elapsedMs >=
-    lastBonusRevealAtMs + DEAL_ANIMATION_TIMINGS.finalRevealDelayMs
-  ) {
+  if (elapsedMs >= lastBonusRevealAtMs + DEAL_ANIMATION_TIMINGS.finalRevealDelayMs) {
     dealingPhase.value = "revealed";
     displayedPlayerCards.value = [...presentationRound.value.playerCards];
     displayedBankerCards.value = [...presentationRound.value.bankerCards];
@@ -701,7 +934,11 @@ function syncPresentationState(elapsedMs: number) {
 }
 
 function syncPresentationWindow(serverTimeIso: string) {
-  if (!presentationRound.value || !gameStore.presentation?.startsAt || !gameStore.presentation?.endsAt) {
+  if (
+    !presentationRound.value ||
+    !gameStore.presentation?.startsAt ||
+    !gameStore.presentation?.endsAt
+  ) {
     stopRevealTimers();
     displayedPlayerCards.value = [];
     displayedBankerCards.value = [];
@@ -720,13 +957,15 @@ function syncPresentationWindow(serverTimeIso: string) {
 
   if (serverNowMs >= presentationEndsAtMs) {
     stopRevealTimers();
+    advanceClockToServerTime(serverNowMs);
+    applyPendingSettlementAmountsIfNeeded();
+    dismissSettlementPopup();
     showDealOverlay.value = false;
     dealingPhase.value = "idle";
     playerDealtCount.value = 0;
     bankerDealtCount.value = 0;
     playerFaceUpCount.value = 0;
     bankerFaceUpCount.value = 0;
-    showPendingSettlementIfNeeded();
     return;
   }
 
@@ -763,15 +1002,23 @@ function syncPresentationWindow(serverTimeIso: string) {
 
   scheduleRevealTimer(DEAL_ANIMATION_TIMINGS.baseRevealDelayMs - elapsedMs, () => {
     dealingPhase.value = "base-revealed";
-    playerDealtCount.value = Math.max(playerDealtCount.value, Math.min(2, round.playerCards.length));
-    bankerDealtCount.value = Math.max(bankerDealtCount.value, Math.min(2, round.bankerCards.length));
+    playerDealtCount.value = Math.max(
+      playerDealtCount.value,
+      Math.min(2, round.playerCards.length),
+    );
+    bankerDealtCount.value = Math.max(
+      bankerDealtCount.value,
+      Math.min(2, round.bankerCards.length),
+    );
     playerFaceUpCount.value = Math.min(2, displayedPlayerCards.value.length);
     bankerFaceUpCount.value = Math.min(2, displayedBankerCards.value.length);
   });
 
   if (!bonusCards.length) {
     scheduleRevealTimer(
-      DEAL_ANIMATION_TIMINGS.baseRevealDelayMs + DEAL_ANIMATION_TIMINGS.noBonusRevealDelayMs - elapsedMs,
+      DEAL_ANIMATION_TIMINGS.baseRevealDelayMs +
+        DEAL_ANIMATION_TIMINGS.noBonusRevealDelayMs -
+        elapsedMs,
       () => {
         dealingPhase.value = "revealed";
         displayedPlayerCards.value = [...round.playerCards];
@@ -793,18 +1040,15 @@ function syncPresentationWindow(serverTimeIso: string) {
       const dealAtMs = bonusStartMs + index * DEAL_ANIMATION_TIMINGS.bonusCardIntervalMs;
       const revealAtMs = dealAtMs + DEAL_ANIMATION_TIMINGS.bonusRevealDelayMs;
 
-      scheduleRevealTimer(
-        dealAtMs - elapsedMs,
-        () => {
-          if (item.side === "player") {
-            displayedPlayerCards.value = [...round.playerCards.slice(0, 2), item.card];
-            playerDealtCount.value = displayedPlayerCards.value.length;
-          } else {
-            displayedBankerCards.value = [...round.bankerCards.slice(0, 2), item.card];
-            bankerDealtCount.value = displayedBankerCards.value.length;
-          }
-        },
-      );
+      scheduleRevealTimer(dealAtMs - elapsedMs, () => {
+        if (item.side === "player") {
+          displayedPlayerCards.value = [...round.playerCards.slice(0, 2), item.card];
+          playerDealtCount.value = displayedPlayerCards.value.length;
+        } else {
+          displayedBankerCards.value = [...round.bankerCards.slice(0, 2), item.card];
+          bankerDealtCount.value = displayedBankerCards.value.length;
+        }
+      });
 
       scheduleRevealTimer(revealAtMs - elapsedMs, () => {
         if (item.side === "player") {
@@ -834,13 +1078,15 @@ function syncPresentationWindow(serverTimeIso: string) {
   }
 
   scheduleRevealTimer(presentationEndsAtMs - serverNowMs, () => {
+    advanceClockToServerTime(presentationEndsAtMs);
+    applyPendingSettlementAmountsIfNeeded();
+    dismissSettlementPopup();
     showDealOverlay.value = false;
     dealingPhase.value = "idle";
     playerDealtCount.value = 0;
     bankerDealtCount.value = 0;
     playerFaceUpCount.value = 0;
     bankerFaceUpCount.value = 0;
-    showPendingSettlementIfNeeded();
   });
 }
 
@@ -848,12 +1094,8 @@ function backToLobby() {
   router.push("/lobby");
 }
 
-function openRoadSettings() {
-  isRoadSettingsOpen.value = true;
-}
-
-function closeRoadSettings() {
-  isRoadSettingsOpen.value = false;
+function openGameRules() {
+  void router.push({ name: "game-rules", params: { tableId: tableId.value } });
 }
 
 function openRoadmap() {
@@ -864,8 +1106,12 @@ function closeRoadmap() {
   isRoadmapOpen.value = false;
 }
 
+function openBetHistory() {
+  void router.push("/history");
+}
+
 function resetPendingBetAmounts() {
-  pendingBetAmounts.value = { PLAYER: 0, BANKER: 0, TIE: 0, PLAYER_PAIR: 0, BANKER_PAIR: 0 };
+  pendingBetAmounts.value = createEmptyBetAmounts();
 }
 
 async function applyTableSnapshotMessage(message: TableSnapshotMessage) {
@@ -930,6 +1176,17 @@ const liveChannel = useLiveChannel({
   },
 });
 
+async function initializeHistoryAndDailyProfit() {
+  try {
+    await gameStore.fetchHistory();
+    if (!isSettlementPayoutPending.value) {
+      initializeDailyProfit(gameStore.dailyProfit?.netProfit ?? null);
+    }
+  } catch {
+    // History has its own recoverable loading state; keep the profit placeholder unchanged here.
+  }
+}
+
 onMounted(async () => {
   clockTimer = window.setInterval(() => {
     clockNow.value = Date.now();
@@ -938,7 +1195,7 @@ onMounted(async () => {
     window.addEventListener(eventName, unlockVoicePlayback, { once: true, passive: true }),
   );
   void preloadVoiceClips();
-  void gameStore.fetchHistory().catch(() => {});
+  void initializeHistoryAndDailyProfit();
   await loadTableState();
 });
 
@@ -946,15 +1203,20 @@ onUnmounted(() => {
   stopRevealTimers();
   stopSettlementPopupTimer();
   stopMessageTimer();
+  stopDailyProfitNumberAnimation();
   pendingSettlement.value = null;
   stopVoicePlayback();
   if (clockTimer) {
     window.clearInterval(clockTimer);
   }
-  VOICE_UNLOCK_EVENTS.forEach((eventName) => window.removeEventListener(eventName, unlockVoicePlayback));
+  VOICE_UNLOCK_EVENTS.forEach((eventName) =>
+    window.removeEventListener(eventName, unlockVoicePlayback),
+  );
 });
 
 watch(tableId, async () => {
+  lastBetSnapshot.value = null;
+  resetDisplayedConfirmedBetAmounts();
   gameStore.currentBets = [];
   resetStagedBetAmounts();
   isTableLoading.value = true;
@@ -983,6 +1245,24 @@ watch(isVoiceAnnouncementEnabled, (value) => {
   saveVoiceAnnouncementEnabled(value);
 });
 
+watch(isBettingOpen, (open, wasOpen) => {
+  if (!open) {
+    if (wasOpen) {
+      resetStagedBetAmounts();
+    }
+    return;
+  }
+
+  if (
+    displayedConfirmedRoundId.value &&
+    displayedConfirmedRoundId.value !== currentRound.value?.id
+  ) {
+    resetDisplayedConfirmedBetAmounts();
+  }
+  applyPendingSettlementAmountsIfNeeded();
+  dismissSettlementPopup();
+});
+
 watch(
   [() => showDealOverlay.value, () => dealingPhase.value, () => presentationRound.value?.id ?? ""],
   ([overlayVisible, phase, roundId]) => {
@@ -991,17 +1271,19 @@ watch(
     }
 
     if (lastAnnouncedRoundId.value === roundId) {
+      showPendingSettlementIfNeeded();
       return;
     }
 
     lastAnnouncedRoundId.value = roundId;
     speakRoundTotals(presentationRound.value);
+    showPendingSettlementIfNeeded();
   },
 );
 </script>
 
 <template>
-  <main class="page-shell game-page">
+  <main class="player-page page-shell game-page">
     <transition name="table-loading-fade">
       <div v-if="isTableLoading" class="table-loading-overlay">
         <div class="table-loading-panel panel" role="status" aria-live="polite" aria-atomic="true">
@@ -1013,26 +1295,46 @@ watch(
       </div>
     </transition>
 
-    <header class="table-nav">
-      <button class="nav-icon-button" type="button" aria-label="返回大廳" @click="backToLobby">‹</button>
-      <div class="table-nav-title">
+    <header class="page-header table-nav">
+      <button
+        class="page-header-back nav-icon-button"
+        type="button"
+        aria-label="返回大廳"
+        @click="backToLobby"
+      >
+        ‹
+      </button>
+      <div class="table-nav-heading">
         <h1>{{ currentTable?.name ?? "遊戲桌" }}</h1>
-        <p>
-          {{ currentTable?.code ?? "--" }}｜{{ Math.round((currentTable?.roundDurationMs ?? 30000) / 1000) }}秒｜限紅
-          {{ currentTable?.minBet?.toLocaleString() ?? "--" }}-{{ currentTable?.maxBet?.toLocaleString() ?? "--" }}
+        <p class="table-meta-line">
+          {{ currentTable?.code ?? "--" }}｜{{
+            Math.round((currentTable?.roundDurationMs ?? 30000) / 1000)
+          }}秒｜限紅 {{ currentTable?.minBet?.toLocaleString() ?? "--" }}-{{
+            currentTable?.maxBet?.toLocaleString() ?? "--"
+          }}
         </p>
       </div>
-      <button class="nav-text-button" type="button" aria-haspopup="dialog" @click="openRoadSettings">設定</button>
+      <button class="nav-text-button" type="button" @click="openGameRules">遊戲規則</button>
     </header>
 
     <div class="table-toolbar">
       <transition name="last-hand-fade">
-        <div v-if="isLastHandRound" class="last-hand-pill" role="status" aria-live="polite">最後一局</div>
+        <div v-if="isLastHandRound" class="last-hand-pill" role="status" aria-live="polite">
+          最後一局
+        </div>
       </transition>
       <div class="toolbar-actions">
-        <button type="button" class="toolbar-round-button" aria-haspopup="dialog" aria-label="開啟路單" @click="openRoadmap">
+        <button
+          type="button"
+          class="toolbar-round-button"
+          aria-haspopup="dialog"
+          aria-label="開啟路單"
+          @click="openRoadmap"
+        >
           <span class="road-dots" aria-hidden="true">
-            <i class="dot player" /><i class="dot banker" /><i class="dot tie" /><i class="dot gold" />
+            <i class="dot player" /><i class="dot banker" /><i class="dot tie" /><i
+              class="dot gold"
+            />
           </span>
           <span class="toolbar-round-label">路單</span>
         </button>
@@ -1046,8 +1348,22 @@ watch(
         >
           <svg viewBox="0 0 24 24" aria-hidden="true">
             <path d="M4 9v6h4l5 4V5L8 9H4Z" />
-            <path v-if="isVoiceAnnouncementEnabled" d="M16.5 8.5a5 5 0 0 1 0 7M18.8 6.2a8 8 0 0 1 0 11.6" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" />
-            <path v-else d="m16 9.5 5 5m0-5-5 5" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" />
+            <path
+              v-if="isVoiceAnnouncementEnabled"
+              d="M16.5 8.5a5 5 0 0 1 0 7M18.8 6.2a8 8 0 0 1 0 11.6"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="1.8"
+              stroke-linecap="round"
+            />
+            <path
+              v-else
+              d="m16 9.5 5 5m0-5-5 5"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="1.8"
+              stroke-linecap="round"
+            />
           </svg>
         </button>
       </div>
@@ -1074,21 +1390,45 @@ watch(
             ✕
           </button>
           <p id="settlement-title" class="settlement-eyebrow">本局結算</p>
-          <p class="settlement-result" :class="settlementPopup.winner === 'PLAYER' ? 'player' : settlementPopup.winner === 'BANKER' ? 'banker' : 'tie'">
+          <p
+            class="settlement-result"
+            :class="
+              settlementPopup.winner === 'PLAYER'
+                ? 'player'
+                : settlementPopup.winner === 'BANKER'
+                  ? 'banker'
+                  : 'tie'
+            "
+          >
             {{ WINNER_LABELS[settlementPopup.winner] }}
           </p>
           <div class="settlement-score">
-            <span class="ss player">閒 <strong>{{ settlementPopup.playerTotal }}</strong></span>
+            <span class="ss player"
+              >閒 <strong>{{ settlementPopup.playerTotal }}</strong></span
+            >
             <span class="ss-vs">比</span>
-            <span class="ss banker">莊 <strong>{{ settlementPopup.bankerTotal }}</strong></span>
+            <span class="ss banker"
+              >莊 <strong>{{ settlementPopup.bankerTotal }}</strong></span
+            >
           </div>
-          <div v-if="settlementPopup.playerPair || settlementPopup.bankerPair" class="settlement-tags">
+          <div
+            v-if="settlementPopup.playerPair || settlementPopup.bankerPair"
+            class="settlement-tags"
+          >
             <span v-if="settlementPopup.playerPair" class="settlement-tag player">閒對</span>
             <span v-if="settlementPopup.bankerPair" class="settlement-tag banker">莊對</span>
           </div>
           <div
             class="settlement-outcome"
-            :class="!settlementPopup.participated ? 'none' : settlementPopup.amount > 0 ? 'win' : settlementPopup.amount < 0 ? 'lose' : 'push'"
+            :class="
+              !settlementPopup.participated
+                ? 'none'
+                : settlementPopup.amount > 0
+                  ? 'win'
+                  : settlementPopup.amount < 0
+                    ? 'lose'
+                    : 'push'
+            "
           >
             <template v-if="!settlementPopup.participated">
               <strong>本局未下注</strong>
@@ -1112,7 +1452,13 @@ watch(
     </transition>
 
     <transition name="game-message-pop">
-      <div v-if="gameStore.message" class="game-message-toast" role="status" aria-live="polite" aria-atomic="true">
+      <div
+        v-if="gameStore.message"
+        class="game-message-toast"
+        role="status"
+        aria-live="polite"
+        aria-atomic="true"
+      >
         {{ gameStore.message }}
       </div>
     </transition>
@@ -1120,8 +1466,12 @@ watch(
     <div class="score-row" aria-label="本局點數" aria-live="polite" aria-atomic="true">
       <span class="score-side player">閒</span>
       <div v-if="showDealOverlay" class="score-flaps">
-        <div class="score-flap"><strong>{{ playerScoreDisplay }}</strong></div>
-        <div class="score-flap"><strong>{{ bankerScoreDisplay }}</strong></div>
+        <div class="score-flap">
+          <strong>{{ playerScoreDisplay }}</strong>
+        </div>
+        <div class="score-flap">
+          <strong>{{ bankerScoreDisplay }}</strong>
+        </div>
       </div>
       <span v-else class="score-gap" aria-hidden="true" />
       <span class="score-side banker">莊</span>
@@ -1138,7 +1488,10 @@ watch(
               v-for="(card, index) in feltPlayerCards"
               :key="`felt-player-${index}-${card.rank}-${card.suit}`"
               class="playing-card"
-              :class="[isFeltCardFaceUp('player', index) ? cardColor(card.suit) : 'masked', { 'card-bonus': index === 2 }]"
+              :class="[
+                isFeltCardFaceUp('player', index) ? cardColor(card.suit) : 'masked',
+                { 'card-bonus': index === 2 },
+              ]"
             >
               <template v-if="isFeltCardFaceUp('player', index)">
                 <span>{{ card.rank }}</span>
@@ -1151,7 +1504,10 @@ watch(
               v-for="(card, index) in feltBankerCards"
               :key="`felt-banker-${index}-${card.rank}-${card.suit}`"
               class="playing-card"
-              :class="[isFeltCardFaceUp('banker', index) ? cardColor(card.suit) : 'masked', { 'card-bonus': index === 2 }]"
+              :class="[
+                isFeltCardFaceUp('banker', index) ? cardColor(card.suit) : 'masked',
+                { 'card-bonus': index === 2 },
+              ]"
             >
               <template v-if="isFeltCardFaceUp('banker', index)">
                 <span>{{ card.rank }}</span>
@@ -1181,7 +1537,7 @@ watch(
           </svg>
           <span class="alarm-count">{{ countdownDisplay || "0" }}</span>
         </div>
-        <p class="bet-timer-label">{{ isBettingOpen ? "請投注" : "等待開始" }}</p>
+        <p class="bet-timer-label">{{ betTimerLabel }}</p>
       </div>
     </div>
 
@@ -1201,9 +1557,16 @@ watch(
           <p>{{ option.payout }}</p>
           <span
             class="bet-cell-amount"
-            :class="{ empty: !currentBetAmount(option.key), staged: stagedBetAmounts[option.key] > 0 }"
+            :class="{
+              empty: !currentBetAmount(option.key),
+              staged: stagedBetAmounts[option.key] > 0,
+            }"
           >
-            {{ currentBetAmount(option.key) ? formatBetDisplayAmount(currentBetAmount(option.key)) : "" }}
+            {{
+              currentBetAmount(option.key)
+                ? formatBetDisplayAmount(currentBetAmount(option.key))
+                : ""
+            }}
           </span>
         </button>
       </div>
@@ -1222,9 +1585,16 @@ watch(
           <p>{{ option.payout }}</p>
           <span
             class="bet-cell-amount"
-            :class="{ empty: !currentBetAmount(option.key), staged: stagedBetAmounts[option.key] > 0 }"
+            :class="{
+              empty: !currentBetAmount(option.key),
+              staged: stagedBetAmounts[option.key] > 0,
+            }"
           >
-            {{ currentBetAmount(option.key) ? formatBetDisplayAmount(currentBetAmount(option.key)) : "" }}
+            {{
+              currentBetAmount(option.key)
+                ? formatBetDisplayAmount(currentBetAmount(option.key))
+                : ""
+            }}
           </span>
         </button>
       </div>
@@ -1291,28 +1661,55 @@ watch(
         type="button"
         class="rebet-button"
         :disabled="!canRepeatLastBets || isPlacingBet"
+        aria-label="重複上次投注"
         @click="repeatLastBets"
       >
-        重複上<br />次投注
+        <span class="rebet-primary">重複</span>
+        <span class="rebet-secondary">上次投注</span>
       </button>
     </section>
 
     <footer class="wallet-bar">
-      <div class="wallet-panel" aria-label="玩家餘額" aria-live="polite" aria-atomic="true">
+      <button
+        type="button"
+        class="wallet-panel"
+        :aria-label="`玩家餘額 ${displayedBalance?.toLocaleString() ?? '尚未載入'}，點擊查看下注紀錄`"
+        aria-live="polite"
+        aria-atomic="true"
+        @click="openBetHistory"
+      >
         <span class="coin-symbol">$</span>
         <div class="wallet-copy">
           <span>餘額</span>
-          <strong>{{ authStore.user?.balance?.toLocaleString() ?? "--" }}</strong>
+          <div class="money-number-window" aria-hidden="true">
+            <strong>{{ displayedBalance?.toLocaleString() ?? "--" }}</strong>
+          </div>
         </div>
-      </div>
-      <div class="wallet-panel" :aria-label="dailyProfitAccessibleLabel">
+      </button>
+      <button
+        type="button"
+        class="wallet-panel"
+        :aria-label="`${dailyProfitAccessibleLabel}，點擊查看下注紀錄`"
+        aria-live="polite"
+        aria-atomic="true"
+        @click="openBetHistory"
+      >
         <div class="wallet-copy">
           <span :title="dailyProfitAccessibleLabel">{{ dailyProfitPeriodLabel }}</span>
-          <strong :class="{ gain: todayProfit !== null && todayProfit >= 0, loss: todayProfit !== null && todayProfit < 0 }">
-            {{ todayProfit?.toLocaleString() ?? "--" }}
-          </strong>
+          <div class="money-number-window" aria-hidden="true">
+            <strong
+              class="daily-profit-number"
+              :class="{
+                gain: todayProfit !== null && todayProfit >= 0,
+                loss: todayProfit !== null && todayProfit < 0,
+                'is-rolling': isDailyProfitRolling,
+              }"
+            >
+              {{ animatedTodayProfit?.toLocaleString() ?? "--" }}
+            </strong>
+          </div>
         </div>
-      </div>
+      </button>
     </footer>
 
     <div v-if="isRoadmapOpen" class="modal-backdrop" @click.self="closeRoadmap">
@@ -1327,7 +1724,7 @@ watch(
       >
         <button
           ref="roadmapCloseButtonRef"
-          class="settings-close-button"
+          class="modal-close-button"
           type="button"
           aria-label="關閉路圖"
           @click="closeRoadmap"
@@ -1335,7 +1732,7 @@ watch(
           ✕
         </button>
 
-        <div class="settings-modal-head">
+        <div class="modal-head">
           <p class="topbar-label">Roadmap</p>
           <h2 id="road-modal-title">路單</h2>
         </div>
@@ -1345,77 +1742,14 @@ watch(
         </div>
       </section>
     </div>
-
-    <div v-if="isRoadSettingsOpen" class="modal-backdrop" @click.self="closeRoadSettings">
-      <section
-        ref="settingsDialogRef"
-        class="settings-modal panel"
-        role="dialog"
-        aria-modal="true"
-        aria-labelledby="road-settings-title"
-        tabindex="-1"
-        @keydown="onSettingsDialogKeydown"
-      >
-        <button
-          ref="settingsCloseButtonRef"
-          class="settings-close-button"
-          type="button"
-          aria-label="關閉設定"
-          @click="closeRoadSettings"
-        >
-          ✕
-        </button>
-
-        <div class="settings-modal-head">
-          <p class="topbar-label">Settings</p>
-          <h2 id="road-settings-title">設定</h2>
-        </div>
-
-        <div class="settings-section">
-          <p class="settings-section-label">語音播報</p>
-          <div class="settings-list">
-            <button
-              type="button"
-              class="settings-item"
-              :class="{ active: isVoiceAnnouncementEnabled }"
-              :aria-pressed="isVoiceAnnouncementEnabled"
-              @click="isVoiceAnnouncementEnabled = !isVoiceAnnouncementEnabled"
-            >
-              <span>點數播報</span>
-              <strong>{{ isVoiceAnnouncementEnabled ? "已開啟" : "已關閉" }}</strong>
-            </button>
-            <button type="button" class="settings-item settings-item-test" @click="testVoiceAnnouncement">
-              <span>測試語音</span>
-              <strong>點我試聽</strong>
-            </button>
-          </div>
-          <p class="settings-hint">
-            若按「測試語音」沒有聲音，請確認手機未開靜音（iPhone 側邊靜音鍵）並將媒體音量調高。
-          </p>
-        </div>
-        <div class="settings-section">
-          <p class="settings-section-label">帳號安全</p>
-          <div class="settings-list">
-            <button type="button" class="settings-item" @click="router.push('/account')">
-              <span>變更密碼</span>
-              <strong>前往</strong>
-            </button>
-          </div>
-        </div>
-      </section>
-    </div>
   </main>
 </template>
 
 <style scoped lang="scss">
 .game-page {
-  display: flex;
-  flex-direction: column;
-  gap: $space-2;
   overflow: hidden;
   height: 100vh;
   height: 100dvh;
-  padding: 8px 16px 10px;
   background: $gradient-felt;
 }
 
@@ -1428,62 +1762,42 @@ watch(
   flex: 0 0 auto;
 }
 
-.table-nav {
-  display: grid;
-  grid-template-columns: 48px minmax(0, 1fr) 48px;
+.table-nav-heading {
+  display: flex;
+  flex-direction: column;
   align-items: center;
-  gap: $space-2;
-}
-
-.nav-icon-button {
-  width: 44px;
-  height: 44px;
-  border: 0;
-  border-radius: 999px;
-  background: rgba(0, 0, 0, 0.14);
-  color: #fff;
-  font-size: 26px;
-  line-height: 1;
-  touch-action: manipulation;
-  -webkit-tap-highlight-color: transparent;
-  user-select: none;
-}
-
-.table-nav-title {
-  text-align: center;
+  gap: 2px;
   min-width: 0;
 }
 
-.table-nav-title h1 {
-  margin: 0;
-  color: #fff;
-  font-family: "Noto Serif TC", "PingFang TC", "Microsoft JhengHei", serif;
-  font-size: 19px;
-  font-weight: 900;
-  letter-spacing: 0.06em;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
+.table-nav-heading h1 {
+  width: 100%;
+  font-weight: 700;
 }
 
-.table-nav-title p {
-  margin: 2px 0 0;
+.table-meta-line {
+  width: 100%;
+  margin: 0;
   color: rgba(255, 255, 255, 0.72);
   font-size: 11px;
+  line-height: 1.2;
   letter-spacing: 0.02em;
+  text-align: center;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
 }
 
 .nav-text-button {
-  min-width: 44px;
-  min-height: 44px;
+  justify-self: end;
+  width: max-content;
+  min-width: 40px;
+  height: 40px;
   border: 0;
   padding: $space-2 0;
   background: transparent;
   color: rgba(255, 255, 255, 0.88);
-  font-size: 14px;
+  font-size: 12px;
   font-weight: 700;
   letter-spacing: 0.04em;
   touch-action: manipulation;
@@ -1500,8 +1814,7 @@ watch(
 .last-hand-pill {
   padding: $space-2 $space-4;
   border-radius: 999px;
-  background:
-    linear-gradient(180deg, rgba(117, 18, 18, 0.96), rgba(77, 8, 8, 0.92));
+  background: linear-gradient(180deg, rgba(117, 18, 18, 0.96), rgba(77, 8, 8, 0.92));
   border: 1px solid rgba(255, 210, 124, 0.45);
   color: #ffe5a8;
   font-size: 13px;
@@ -1518,8 +1831,8 @@ watch(
 }
 
 .toolbar-round-button {
-  width: 44px;
-  height: 44px;
+  width: 35px;
+  height: 35px;
   border: 1px solid rgba(255, 255, 255, 0.34);
   border-radius: 999px;
   background: rgba(255, 255, 255, 0.92);
@@ -1882,6 +2195,15 @@ watch(
   box-shadow:
     0 10px 20px rgba(0, 0, 0, 0.22),
     inset 0 1px 0 rgba(255, 255, 255, 0.35);
+  font: inherit;
+  text-align: left;
+  color: inherit;
+  cursor: pointer;
+}
+
+.wallet-panel:active {
+  transform: translateY(1px);
+  filter: brightness(0.96);
 }
 
 .wallet-copy {
@@ -1933,6 +2255,30 @@ watch(
   box-shadow: inset 0 0 0 1px rgba(109, 75, 15, 0.18);
 }
 
+.money-number-window {
+  min-height: 19px;
+  overflow: hidden;
+  display: flex;
+  align-items: center;
+}
+
+.money-number-window strong {
+  font-variant-numeric: tabular-nums;
+}
+
+.daily-profit-number.is-rolling {
+  animation: daily-profit-number-tick 140ms ease-in-out infinite alternate;
+}
+
+@keyframes daily-profit-number-tick {
+  from {
+    transform: translateY(0) scale(1);
+  }
+  to {
+    transform: translateY(-1px) scale(1.035);
+  }
+}
+
 .last-hand-fade-enter-active,
 .last-hand-fade-leave-active {
   transition:
@@ -1976,7 +2322,13 @@ watch(
 
 .playing-card.masked {
   background:
-    repeating-linear-gradient(45deg, rgba(234, 231, 222, 0.18), rgba(234, 231, 222, 0.18) 8px, rgba(122, 25, 34, 0.82) 8px, rgba(122, 25, 34, 0.82) 16px),
+    repeating-linear-gradient(
+      45deg,
+      rgba(234, 231, 222, 0.18),
+      rgba(234, 231, 222, 0.18) 8px,
+      rgba(122, 25, 34, 0.82) 8px,
+      rgba(122, 25, 34, 0.82) 16px
+    ),
     linear-gradient(135deg, #43151b, #912735);
   color: transparent;
 }
@@ -2047,7 +2399,10 @@ watch(
   color: inherit;
   font: inherit;
   text-align: center;
-  transition: transform 120ms ease, filter 120ms ease, background 120ms ease;
+  transition:
+    transform 120ms ease,
+    filter 120ms ease,
+    background 120ms ease;
 }
 
 .bet-cell * {
@@ -2091,6 +2446,8 @@ watch(
 }
 
 .bet-cell-amount {
+  flex: 0 0 17px;
+  height: 17px;
   min-height: 17px;
   margin-top: 1px;
   padding: 0 $space-2;
@@ -2100,6 +2457,8 @@ watch(
   font-family: "Manrope", "Noto Sans TC", sans-serif;
   font-size: 13px;
   font-weight: 800;
+  line-height: 1;
+  white-space: nowrap;
   color: #ffe9ad;
   background: rgba(0, 0, 0, 0.28);
 }
@@ -2149,7 +2508,9 @@ watch(
   touch-action: manipulation;
   -webkit-tap-highlight-color: transparent;
   user-select: none;
-  transition: transform 120ms ease, filter 120ms ease;
+  transition:
+    transform 120ms ease,
+    filter 120ms ease;
 }
 
 .confirm-fab.confirm {
@@ -2226,8 +2587,7 @@ watch(
   height: 56px;
   border-radius: 50%;
   border: 3px dashed rgba(120, 128, 138, 0.65);
-  background:
-    radial-gradient(circle at 32% 28%, #ffffff, #e7eaef 46%, #b9c0c9 100%);
+  background: radial-gradient(circle at 32% 28%, #ffffff, #e7eaef 46%, #b9c0c9 100%);
   color: #3d434b;
   font-size: 14px;
   font-weight: 900;
@@ -2237,7 +2597,10 @@ watch(
   touch-action: manipulation;
   -webkit-tap-highlight-color: transparent;
   user-select: none;
-  transition: transform 120ms ease, box-shadow 120ms ease, filter 120ms ease;
+  transition:
+    transform 120ms ease,
+    box-shadow 120ms ease,
+    filter 120ms ease;
 }
 
 .chip.active {
@@ -2260,26 +2623,43 @@ watch(
 }
 
 .rebet-button {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 1px;
   flex: 0 0 auto;
   margin-left: auto;
-  min-width: 68px;
+  min-width: 64px;
   min-height: 56px;
-  padding: $space-2 $space-3;
+  padding: $space-2;
   border: 1px solid rgba(0, 0, 0, 0.14);
   border-radius: 14px;
   background: linear-gradient(180deg, #fdf8ee, #e9ddc4);
   color: #5b4420;
-  font-size: 14px;
+  font-size: clamp(12px, 3.4vw, 14px);
   font-weight: 900;
-  line-height: 1.3;
+  line-height: 1.15;
   letter-spacing: 0.04em;
+  white-space: nowrap;
   box-shadow:
     0 8px 16px rgba(0, 0, 0, 0.22),
     inset 0 1px 0 rgba(255, 255, 255, 0.8);
   touch-action: manipulation;
   -webkit-tap-highlight-color: transparent;
   user-select: none;
-  transition: transform 120ms ease, filter 120ms ease;
+  transition:
+    transform 120ms ease,
+    filter 120ms ease;
+}
+
+.rebet-primary,
+.rebet-secondary {
+  display: block;
+}
+
+.rebet-secondary {
+  font-size: 0.86em;
 }
 
 .rebet-button:disabled {
@@ -2496,7 +2876,9 @@ watch(
 
 .game-message-pop-enter-active,
 .game-message-pop-leave-active {
-  transition: opacity 180ms ease, transform 180ms ease;
+  transition:
+    opacity 180ms ease,
+    transform 180ms ease;
 }
 
 .game-message-pop-enter-from,
@@ -2517,17 +2899,11 @@ watch(
   backdrop-filter: blur(6px);
 }
 
-.settings-modal {
-  position: relative;
-  width: min(100%, 360px);
-  padding: $space-6 $space-5 $space-5;
-}
-
-.settings-modal-head h2 {
+.modal-head h2 {
   margin: 4px 0 0;
 }
 
-.settings-close-button {
+.modal-close-button {
   position: absolute;
   top: $space-4;
   right: $space-4;
@@ -2540,84 +2916,6 @@ watch(
   font-size: 16px;
   font-weight: 900;
   box-shadow: 0 10px 20px rgba(0, 0, 0, 0.22);
-}
-
-.settings-list {
-  display: flex;
-  flex-direction: column;
-  gap: $space-3;
-}
-
-.settings-section {
-  margin-top: $space-5;
-}
-
-.settings-section:first-of-type {
-  margin-top: $space-5;
-}
-
-.settings-section-label {
-  margin: 0 0 $space-3;
-  color: rgba(247, 244, 233, 0.62);
-  font-size: 12px;
-  font-weight: 800;
-  letter-spacing: 0.08em;
-}
-
-.settings-item {
-  width: 100%;
-  border: 1px solid rgba(255, 255, 255, 0.14);
-  border-radius: 16px;
-  background: rgba(255, 255, 255, 0.05);
-  padding: $space-4;
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: $space-3;
-  color: #f7f4e9;
-  text-align: left;
-  touch-action: manipulation;
-  -webkit-tap-highlight-color: transparent;
-  user-select: none;
-  transition:
-    transform 120ms ease,
-    border-color 120ms ease,
-    background 120ms ease;
-}
-
-.settings-item span {
-  font-size: 15px;
-  font-weight: 800;
-}
-
-.settings-item strong {
-  color: rgba(247, 244, 233, 0.62);
-  font-size: 12px;
-  letter-spacing: 0.04em;
-}
-
-.settings-item.active {
-  background: rgba(244, 222, 155, 0.14);
-  border-color: rgba(244, 222, 155, 0.38);
-}
-
-.settings-item.active strong {
-  color: #f4de9b;
-}
-
-.settings-item:active {
-  transform: scale(0.985);
-}
-
-.settings-item-test strong {
-  color: #f4de9b;
-}
-
-.settings-hint {
-  margin: $space-3 0 0;
-  color: rgba(247, 244, 233, 0.5);
-  font-size: 11px;
-  line-height: 1.5;
 }
 
 @keyframes deal-in {
@@ -2641,5 +2939,4 @@ watch(
     opacity: 1;
   }
 }
-
 </style>

@@ -45,10 +45,9 @@ import { fingerprintIdempotencyRequest, parseIdempotencyKey } from "../../lib/id
 import { parseHistoryPageQuery } from "../../lib/history-pagination.js";
 import { publishLiveEvent } from "../../lib/live-events.js";
 import { getRoundConfig } from "../../lib/round-manager.js";
+import { isRoundBettingOpen } from "../../lib/round-schedule.js";
 import { toPublicShoeAudit } from "../../lib/shoe-audit.js";
 import { authenticate, type AuthenticatedRequest } from "../../middleware/authenticate.js";
-
-const BETTING_OPEN_GRACE_MS = 400;
 
 function defaultBetErrorCode(statusCode: number): ApiErrorCode {
   if (statusCode === 403) return "FORBIDDEN";
@@ -75,9 +74,8 @@ function buildBetErrorResponse(
 function buildBetSuccessResponse(body: Record<string, unknown>) {
   const bets = Array.isArray(body.bets)
     ? body.bets.map((value) => {
-        const bet = typeof value === "object" && value !== null
-          ? value as Record<string, unknown>
-          : {};
+        const bet =
+          typeof value === "object" && value !== null ? (value as Record<string, unknown>) : {};
         return {
           id: bet.id,
           betType: bet.betType,
@@ -188,7 +186,13 @@ gameRouter.post("/tables/:tableId/bet", async (req: AuthenticatedRequest, res) =
 
   const requestedIdempotencyKey = parseIdempotencyKey(req.get("Idempotency-Key"));
   if (!requestedIdempotencyKey) {
-    return sendApiError(req, res, 400, "VALIDATION_ERROR", "A valid Idempotency-Key header is required");
+    return sendApiError(
+      req,
+      res,
+      400,
+      "VALIDATION_ERROR",
+      "A valid Idempotency-Key header is required",
+    );
   }
 
   const idempotencyKey: string = requestedIdempotencyKey;
@@ -233,18 +237,13 @@ gameRouter.post("/tables/:tableId/bet", async (req: AuthenticatedRequest, res) =
     }
 
     const activeRound = await getActiveRound(table.id, client, { forUpdate: true });
-    if (!activeRound || activeRound.status !== "OPEN") {
-      return fail(400, "VALIDATION_ERROR", "Betting is closed");
-    }
-
     const now = Date.now();
-    if (
-      now < new Date(activeRound.bettingOpensAt).getTime() - BETTING_OPEN_GRACE_MS ||
-      now >= new Date(activeRound.bettingClosesAt).getTime()
-    ) {
+    if (!activeRound || !isRoundBettingOpen(activeRound, now)) {
       return fail(400, "VALIDATION_ERROR", "Betting is closed");
     }
-    if (parsed.data.bets.some((bet) => !isValidBetForTable(bet.amount, table.minBet, table.maxBet))) {
+    if (
+      parsed.data.bets.some((bet) => !isValidBetForTable(bet.amount, table.minBet, table.maxBet))
+    ) {
       return fail(
         400,
         "VALIDATION_ERROR",
@@ -278,10 +277,16 @@ gameRouter.post("/tables/:tableId/bet", async (req: AuthenticatedRequest, res) =
 
     const [existingUnsettledMaximumPayout, newMaximumPayout] = await Promise.all([
       getUserUnsettledMaximumPayout(user.id, client),
-      Promise.resolve(parsed.data.bets.reduce((sum, bet) => sum + getMaximumPayout(bet.betType, bet.amount), 0)),
+      Promise.resolve(
+        parsed.data.bets.reduce((sum, bet) => sum + getMaximumPayout(bet.betType, bet.amount), 0),
+      ),
     ]);
-    const maximumPossibleBalance = balanceAfterStake + existingUnsettledMaximumPayout + newMaximumPayout;
-    if (!Number.isSafeInteger(maximumPossibleBalance) || maximumPossibleBalance > MAX_ACCOUNT_BALANCE) {
+    const maximumPossibleBalance =
+      balanceAfterStake + existingUnsettledMaximumPayout + newMaximumPayout;
+    if (
+      !Number.isSafeInteger(maximumPossibleBalance) ||
+      maximumPossibleBalance > MAX_ACCOUNT_BALANCE
+    ) {
       return fail(400, "VALIDATION_ERROR", "Bet could exceed the supported account balance");
     }
 

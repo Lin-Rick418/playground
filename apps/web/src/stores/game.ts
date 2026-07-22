@@ -22,6 +22,16 @@ import type {
   TableSnapshot,
 } from "../types/domain";
 
+function mergeBetsById(currentBets: CurrentBet[], incomingBets: CurrentBet[]) {
+  const betsById = new Map(currentBets.map((bet) => [bet.id, bet]));
+
+  for (const bet of incomingBets) {
+    betsById.set(bet.id, bet);
+  }
+
+  return [...betsById.values()];
+}
+
 export const useGameStore = defineStore("game", {
   state: () => ({
     tables: [] as LobbyTable[],
@@ -132,13 +142,14 @@ export const useGameStore = defineStore("game", {
         );
         this.history = historyPage.items;
         this.historyNextCursor = historyPage.nextCursor;
-        this.dailyProfit = dailyProfitResult.status === "fulfilled"
-          ? parseRuntimeContract(
-              dailyProfitResponseSchema,
-              dailyProfitResult.value.data,
-              "GET /game/daily-profit",
-            )
-          : null;
+        this.dailyProfit =
+          dailyProfitResult.status === "fulfilled"
+            ? parseRuntimeContract(
+                dailyProfitResponseSchema,
+                dailyProfitResult.value.data,
+                "GET /game/daily-profit",
+              )
+            : null;
       } finally {
         this.loading = false;
       }
@@ -170,8 +181,13 @@ export const useGameStore = defineStore("game", {
       }
     },
     async placeBet(tableId: string, payload: { betType: BetType; amount: number }[]) {
-      const requestSignature = JSON.stringify({ tableId, roundId: this.currentRound?.id ?? "", bets: payload });
-      const idempotencyKey = this.pendingBetIdempotencyKeys[requestSignature] ?? createIdempotencyKey();
+      const requestSignature = JSON.stringify({
+        tableId,
+        roundId: this.currentRound?.id ?? "",
+        bets: payload,
+      });
+      const idempotencyKey =
+        this.pendingBetIdempotencyKeys[requestSignature] ?? createIdempotencyKey();
       this.pendingBetIdempotencyKeys[requestSignature] = idempotencyKey;
 
       try {
@@ -187,7 +203,7 @@ export const useGameStore = defineStore("game", {
         );
         delete this.pendingBetIdempotencyKeys[requestSignature];
         if (this.currentRound?.id === data.round.id) {
-          this.currentBets = [...this.currentBets, ...data.bets];
+          this.currentBets = mergeBetsById(this.currentBets, data.bets);
         }
         return data;
       } catch (error) {
