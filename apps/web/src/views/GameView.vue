@@ -2,6 +2,7 @@
 import { computed, onMounted, onUnmounted, ref, watch } from "vue";
 import axios from "axios";
 import { useRoute, useRouter } from "vue-router";
+import BetOptionGrid from "../components/BetOptionGrid.vue";
 import RoadmapPanel from "../components/RoadmapPanel.vue";
 import {
   BET_OPTIONS,
@@ -340,6 +341,13 @@ function betOptionsByKeys(keys: readonly BetKey[]) {
 
 const sideBetRow = betOptionsByKeys(["PLAYER_PAIR", "TIE", "BANKER_PAIR"]);
 const mainBetRow = betOptionsByKeys(["PLAYER", "BANKER"]);
+const betDisplayAmounts = computed<PendingBetAmounts>(() => {
+  const amounts = createEmptyBetAmounts();
+  for (const option of betOptions) {
+    amounts[option.key] = currentBetAmount(option.key);
+  }
+  return amounts;
+});
 
 const lastBetSnapshot = ref<null | {
   roundId: string;
@@ -486,21 +494,6 @@ function totalPendingAmount() {
     (sum, amount) => sum + amount,
     0,
   );
-}
-
-function formatBetDisplayAmount(amount: number) {
-  if (amount < 1000) {
-    return amount.toLocaleString();
-  }
-
-  const compactAmount = amount / 1000;
-  return `${Number.isInteger(compactAmount) ? compactAmount : compactAmount.toFixed(1).replace(/\.0$/, "")}k`;
-}
-
-function betAreaAriaLabel(option: (typeof BET_OPTIONS)[number]) {
-  const amount = currentBetAmount(option.key);
-  const amountText = amount ? `，目前下注 ${amount.toLocaleString()}` : "，目前尚未下注";
-  return `${option.label}，賠率 ${option.payout}，每次增加 ${selectedChip.value.toLocaleString()}${amountText}`;
 }
 
 function stageBet(target: BetKey) {
@@ -1541,63 +1534,27 @@ watch(
       </div>
     </div>
 
-    <div class="bet-zone" :class="{ closed: !isBettingOpen }">
-      <div class="bet-row side-row">
-        <button
-          v-for="option in sideBetRow"
-          :key="option.key"
-          type="button"
-          class="bet-cell"
-          :class="option.accent"
-          :disabled="!isBettingOpen || isPlacingBet"
-          :aria-label="betAreaAriaLabel(option)"
-          @click="stageBet(option.key)"
-        >
-          <h3>{{ option.label }}</h3>
-          <p>{{ option.payout }}</p>
-          <span
-            class="bet-cell-amount"
-            :class="{
-              empty: !currentBetAmount(option.key),
-              staged: stagedBetAmounts[option.key] > 0,
-            }"
-          >
-            {{
-              currentBetAmount(option.key)
-                ? formatBetDisplayAmount(currentBetAmount(option.key))
-                : ""
-            }}
-          </span>
-        </button>
-      </div>
-      <div class="bet-row main-row">
-        <button
-          v-for="option in mainBetRow"
-          :key="option.key"
-          type="button"
-          class="bet-cell"
-          :class="option.accent"
-          :disabled="!isBettingOpen || isPlacingBet"
-          :aria-label="betAreaAriaLabel(option)"
-          @click="stageBet(option.key)"
-        >
-          <h3>{{ option.label }}</h3>
-          <p>{{ option.payout }}</p>
-          <span
-            class="bet-cell-amount"
-            :class="{
-              empty: !currentBetAmount(option.key),
-              staged: stagedBetAmounts[option.key] > 0,
-            }"
-          >
-            {{
-              currentBetAmount(option.key)
-                ? formatBetDisplayAmount(currentBetAmount(option.key))
-                : ""
-            }}
-          </span>
-        </button>
-      </div>
+    <div class="bet-zone">
+      <BetOptionGrid
+        :options="sideBetRow"
+        variant="side"
+        :amounts="betDisplayAmounts"
+        :staged-amounts="stagedBetAmounts"
+        :selected-chip="selectedChip"
+        :disabled="!isBettingOpen || isPlacingBet"
+        :closed="!isBettingOpen"
+        @select="stageBet"
+      />
+      <BetOptionGrid
+        :options="mainBetRow"
+        variant="main"
+        :amounts="betDisplayAmounts"
+        :staged-amounts="stagedBetAmounts"
+        :selected-chip="selectedChip"
+        :disabled="!isBettingOpen || isPlacingBet"
+        :closed="!isBettingOpen"
+        @select="stageBet"
+      />
 
       <p class="sr-only" role="status" aria-live="polite" aria-atomic="true">
         {{ hasStagedBets ? `已選下注總額 ${totalStagedAmount.toLocaleString()}` : "尚未選擇下注" }}
@@ -2356,134 +2313,6 @@ watch(
   display: flex;
   flex-direction: column;
   gap: $space-2;
-}
-
-.bet-zone.closed .bet-cell {
-  filter: saturate(0.72) brightness(0.9);
-}
-
-.bet-row {
-  display: grid;
-  gap: $space-2;
-}
-
-.side-row {
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-}
-
-.main-row {
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-}
-
-.main-row .bet-cell {
-  min-height: 90px;
-}
-
-.bet-cell {
-  width: 100%;
-  min-height: 78px;
-  padding: $space-2;
-  border-radius: 14px;
-  border: 1px solid rgba(255, 255, 255, 0.2);
-  background: rgba(0, 0, 0, 0.14);
-  box-shadow: inset 0 0 24px rgba(0, 0, 0, 0.12);
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  gap: 2px;
-  cursor: pointer;
-  touch-action: manipulation;
-  -webkit-tap-highlight-color: transparent;
-  user-select: none;
-  color: inherit;
-  font: inherit;
-  text-align: center;
-  transition:
-    transform 120ms ease,
-    filter 120ms ease,
-    background 120ms ease;
-}
-
-.bet-cell * {
-  pointer-events: none;
-}
-
-.bet-cell:active {
-  transform: scale(0.985);
-  filter: brightness(1.1);
-}
-
-.bet-cell h3 {
-  margin: 0;
-  font-family: "Noto Serif TC", "PingFang TC", "Microsoft JhengHei", serif;
-  font-size: 21px;
-  font-weight: 900;
-  line-height: 1.05;
-  letter-spacing: 0.06em;
-  color: rgba(255, 255, 255, 0.92);
-  text-shadow: 0 2px 6px rgba(0, 0, 0, 0.25);
-}
-
-.main-row .bet-cell h3 {
-  font-size: 27px;
-}
-
-.bet-cell p {
-  margin: 0;
-  font-size: 14px;
-  font-weight: 800;
-  letter-spacing: 0.04em;
-  color: rgba(255, 255, 255, 0.66);
-}
-
-.bet-cell.player h3 {
-  color: #cfe4ff;
-}
-
-.bet-cell.banker h3 {
-  color: #ffd2cd;
-}
-
-.bet-cell-amount {
-  flex: 0 0 17px;
-  height: 17px;
-  min-height: 17px;
-  margin-top: 1px;
-  padding: 0 $space-2;
-  border-radius: 999px;
-  display: inline-flex;
-  align-items: center;
-  font-family: "Manrope", "Noto Sans TC", sans-serif;
-  font-size: 13px;
-  font-weight: 800;
-  line-height: 1;
-  white-space: nowrap;
-  color: #ffe9ad;
-  background: rgba(0, 0, 0, 0.28);
-}
-
-.bet-cell-amount.empty {
-  background: transparent;
-}
-
-.bet-cell-amount.staged {
-  color: #23150a;
-  background: linear-gradient(180deg, #ffe9ad, #f3ca6c);
-  box-shadow:
-    0 0 0 1px rgba(255, 233, 173, 0.55),
-    0 4px 10px rgba(0, 0, 0, 0.24);
-  animation: staged-pulse 1.15s ease-in-out infinite;
-}
-
-@keyframes staged-pulse {
-  0%,
-  100% {
-    transform: scale(1);
-  }
-  50% {
-    transform: scale(1.07);
-  }
 }
 
 .confirm-actions {

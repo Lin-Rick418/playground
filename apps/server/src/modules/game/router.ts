@@ -12,42 +12,23 @@ import {
 } from "@baccarat/contracts";
 import { env } from "../../config/env.js";
 import { getRequestId, sendApiError } from "../../lib/api-errors.js";
-import {
-  getMaximumPayout,
-  getSafeBalanceAfterChange,
-  isValidBetForTable,
-  isValidTableMoneyPolicy,
-  MAX_ACCOUNT_BALANCE,
-  placeBetSchema,
-  tableIdParamsSchema,
-} from "../../lib/account-policy.js";
+import { placeBetSchema, tableIdParamsSchema } from "../../lib/account-policy.js";
 import { getBusinessDayWindow } from "../../lib/business-day.js";
 import { sendContractResponse } from "../../lib/contracts.js";
 import {
-  applyBalanceMutation,
   buildLobbyTables,
   buildTablePublicState,
   buildTableUserState,
-  claimIdempotencyKey,
-  completeIdempotencyKey,
-  createBet,
-  findTableById,
-  findUserById,
-  getActiveRound,
   getShoeAuditBundle,
   getUserDailyProfit,
-  getUserUnsettledMaximumPayout,
   listUserHistory,
-  listUserRoundBets,
-  withTransaction,
 } from "../../lib/db.js";
-import { fingerprintIdempotencyRequest, parseIdempotencyKey } from "../../lib/idempotency.js";
+import { parseIdempotencyKey } from "../../lib/idempotency.js";
 import { parseHistoryPageQuery } from "../../lib/history-pagination.js";
-import { publishLiveEvent } from "../../lib/live-events.js";
 import { getRoundConfig } from "../../lib/round-manager.js";
-import { isRoundBettingOpen } from "../../lib/round-schedule.js";
 import { toPublicShoeAudit } from "../../lib/shoe-audit.js";
 import { authenticate, type AuthenticatedRequest } from "../../middleware/authenticate.js";
+import { placeBets } from "./place-bet-service.js";
 
 function defaultBetErrorCode(statusCode: number): ApiErrorCode {
   if (statusCode === 403) return "FORBIDDEN";
@@ -195,144 +176,14 @@ gameRouter.post("/tables/:tableId/bet", async (req: AuthenticatedRequest, res) =
     );
   }
 
-  const idempotencyKey: string = requestedIdempotencyKey;
-  const tableId = params.data.tableId;
-  const scope = `game.bet:${tableId}`;
-  const requestHash = fingerprintIdempotencyRequest({ tableId, bets: parsed.data.bets });
-  const actorId = req.currentUser!.id;
-
-  const result = await withTransaction(async (client) => {
-    const totalBet = parsed.data.bets.reduce((sum, bet) => sum + bet.amount, 0);
-    const claim = await claimIdempotencyKey<Record<string, unknown>>(
-      { actorId, scope, key: idempotencyKey, requestHash },
-      client,
-    );
-
-    if (claim.kind === "replay") {
-      return { statusCode: claim.statusCode, body: claim.response } as const;
-    }
-    if (claim.kind === "conflict") {
-      return {
-        statusCode: 409,
-        body: {
-          code: "CONFLICT",
-          message: "Idempotency-Key was already used for a different request",
-        },
-      } as const;
-    }
-
-    async function fail(statusCode: number, code: ApiErrorCode, message: string) {
-      const body = { code, message };
-      await completeIdempotencyKey(
-        { actorId, scope, key: idempotencyKey, requestHash, statusCode, response: body },
-        client,
-      );
-      return { statusCode, body } as const;
-    }
-
-    const table = await findTableById(tableId, client);
-    if (!table) return fail(404, "NOT_FOUND", "Table not found");
-    if (!isValidTableMoneyPolicy(table.minBet, table.maxBet)) {
-      return fail(503, "SERVICE_UNAVAILABLE", "Table betting policy is invalid");
-    }
-
-    const activeRound = await getActiveRound(table.id, client, { forUpdate: true });
-    const now = Date.now();
-    if (!activeRound || !isRoundBettingOpen(activeRound, now)) {
-      return fail(400, "VALIDATION_ERROR", "Betting is closed");
-    }
-    if (
-      parsed.data.bets.some((bet) => !isValidBetForTable(bet.amount, table.minBet, table.maxBet))
-    ) {
-      return fail(
-        400,
-        "VALIDATION_ERROR",
-        `Each bet must be between ${table.minBet} and ${table.maxBet} in supported denominations`,
-      );
-    }
-
-    const user = await findUserById(actorId, client, { forUpdate: true });
-    if (!user) return fail(404, "NOT_FOUND", "User not found");
-    if (!user.isActive || user.role !== "PLAYER") {
-      return fail(403, "FORBIDDEN", "Account is not allowed to bet");
-    }
-
-    const existingRoundBets = await listUserRoundBets(user.id, activeRound.id, client);
-    const existingBetTotals = new Map<string, number>();
-    for (const bet of existingRoundBets) {
-      existingBetTotals.set(bet.betType, (existingBetTotals.get(bet.betType) ?? 0) + bet.amount);
-    }
-    for (const bet of parsed.data.bets) {
-      const nextTotal = (existingBetTotals.get(bet.betType) ?? 0) + bet.amount;
-      if (nextTotal > table.maxBet) {
-        return fail(400, "VALIDATION_ERROR", `單一玩法最高下注 ${table.maxBet}`);
-      }
-    }
-
-    if (user.balance < totalBet) return fail(400, "VALIDATION_ERROR", "Insufficient balance");
-    const balanceAfterStake = getSafeBalanceAfterChange(user.balance, -totalBet);
-    if (balanceAfterStake === null) {
-      return fail(400, "VALIDATION_ERROR", "Bet would make balance invalid");
-    }
-
-    const [existingUnsettledMaximumPayout, newMaximumPayout] = await Promise.all([
-      getUserUnsettledMaximumPayout(user.id, client),
-      Promise.resolve(
-        parsed.data.bets.reduce((sum, bet) => sum + getMaximumPayout(bet.betType, bet.amount), 0),
-      ),
-    ]);
-    const maximumPossibleBalance =
-      balanceAfterStake + existingUnsettledMaximumPayout + newMaximumPayout;
-    if (
-      !Number.isSafeInteger(maximumPossibleBalance) ||
-      maximumPossibleBalance > MAX_ACCOUNT_BALANCE
-    ) {
-      return fail(400, "VALIDATION_ERROR", "Bet could exceed the supported account balance");
-    }
-
-    const bets = [];
-    let updatedUser = user;
-    for (const bet of parsed.data.bets) {
-      const createdBet = await createBet(
-        { userId: user.id, roundId: activeRound.id, betType: bet.betType, amount: bet.amount },
-        client,
-      );
-      bets.push({
-        id: createdBet.id,
-        betType: createdBet.betType,
-        amount: createdBet.amount,
-        payout: createdBet.payout,
-        createdAt: createdBet.createdAt,
-      });
-      const mutation = await applyBalanceMutation(
-        {
-          userId: user.id,
-          delta: -bet.amount,
-          actorType: "PLAYER",
-          actorId: user.id,
-          source: "BET_DEBIT",
-          referenceType: "BET",
-          referenceId: createdBet.id,
-          metadata: { roundId: activeRound.id, betType: bet.betType },
-        },
-        client,
-      );
-      updatedUser = mutation.user;
-    }
-
-    const body = { table, round: activeRound, bets, balance: updatedUser.balance };
-    await publishLiveEvent(
-      { type: "user_changed", userId: user.id, reason: "bet_placed", at: new Date().toISOString() },
-      client,
-    );
-    await completeIdempotencyKey(
-      { actorId, scope, key: idempotencyKey, requestHash, statusCode: 200, response: body },
-      client,
-    );
-    return { statusCode: 200, body } as const;
+  const result = await placeBets({
+    actorId: req.currentUser!.id,
+    tableId: params.data.tableId,
+    idempotencyKey: requestedIdempotencyKey,
+    bets: parsed.data.bets,
   });
 
-  if (result.statusCode >= 400) {
+  if (result.kind === "error") {
     return sendContractResponse(
       res,
       "game.bet.error",

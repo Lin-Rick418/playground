@@ -7,6 +7,7 @@ const readSource = (path) => readFileSync(new URL(path, appRoot), "utf8");
 
 const indexHtml = readSource("index.html");
 const gameView = readSource("src/views/GameView.vue");
+const betOptionGrid = readSource("src/components/BetOptionGrid.vue");
 const gameRulesView = readSource("src/views/GameRulesView.vue");
 const lobbyView = readSource("src/views/LobbyView.vue");
 const historyView = readSource("src/views/BetHistoryView.vue");
@@ -34,20 +35,25 @@ test("document language and viewport preserve browser zoom", () => {
 });
 
 test("core betting areas use native keyboard-operable buttons", () => {
+  const openingTag = openingTagForMarker(betOptionGrid, 'v-for="option in options"');
+  assert.match(openingTag, /^<button\b/);
+  assert.match(openingTag, /type="button"/);
+  assert.match(openingTag, /:disabled="disabled"/);
+  assert.match(openingTag, /:aria-label="ariaLabel\(option\)"/);
+  assert.match(openingTag, /@click="emit\('select', option\.key\)"/);
+
   for (const row of ["sideBetRow", "mainBetRow"]) {
-    const openingTag = openingTagForMarker(gameView, `v-for="option in ${row}"`);
-    assert.match(openingTag, /^<button\b/);
-    assert.match(openingTag, /type="button"/);
-    assert.match(openingTag, /:disabled="!isBettingOpen \|\| isPlacingBet"/);
-    assert.match(openingTag, /:aria-label="betAreaAriaLabel\(option\)"/);
-    assert.match(openingTag, /@click="stageBet\(option\.key\)"/);
+    const componentTag = openingTagForMarker(gameView, `:options="${row}"`);
+    assert.match(componentTag, /^<BetOptionGrid\b/);
+    assert.match(componentTag, /:disabled="!isBettingOpen \|\| isPlacingBet"/);
+    assert.match(componentTag, /@select="stageBet"/);
   }
 
   assert.doesNotMatch(
     gameView,
     /@pointerdown\.prevent="(?:stageBet|clearStagedBets|confirmStagedBets)/,
   );
-  assert.match(gameView, /\.bet-cell\s*\{[\s\S]*?width: 100%;[\s\S]*?min-height: 78px;/);
+  assert.match(betOptionGrid, /\.bet-cell\s*\{[\s\S]*?width: 100%;[\s\S]*?min-height: 78px;/);
   assert.match(
     gameView,
     /aria-label="重複上次投注"[\s\S]*?<span class="rebet-primary">重複<\/span>[\s\S]*?<span class="rebet-secondary">上次投注<\/span>/,
