@@ -6,6 +6,11 @@
     "rootDir": "src",
     "outDir": "dist",
     "strict": true,
+    // TypeScript 6 no longer pulls in every package under node_modules/@types
+    // automatically. The server picks up node types transitively through
+    // @types/express and friends; this package only depends on zod, so the
+    // node: imports in its tests need the reference spelled out.
+    "types": ["node"],
     "declaration": true,
     "declarationMap": true,
     "sourceMap": true,
