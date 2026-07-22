@@ -59,6 +59,8 @@ export const BET_OPTIONS = [
   gridClass: string;
 }>;
 
+export type BetOption = (typeof BET_OPTIONS)[number];
+
 export const DEAL_ANIMATION_TIMINGS = {
   baseCardIntervalMs: 520,
   baseRevealDelayMs: 2400,

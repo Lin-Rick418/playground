@@ -1,13 +1,15 @@
-import type { GameTableRecord } from "../types/domain.js";
+import type { GameRoundRecord, GameTableRecord } from "../types/domain.js";
 
 export const REVEAL_WINDOW_MS = 5000;
-export const DEAL_ANIMATION_BUFFER_MS = 7000;
+export const ROUND_PRESENTATION_WINDOW_MS = 9000;
+export const DEAL_ANIMATION_BUFFER_MS = ROUND_PRESENTATION_WINDOW_MS;
 
 type ScheduledTable = Pick<GameTableRecord, "roundDurationMs" | "roundPhaseOffsetMs">;
 type RoundWindow = {
   bettingOpensAt: string;
   bettingClosesAt: string;
 };
+type BettingRound = Pick<GameRoundRecord, "status" | "bettingOpensAt" | "bettingClosesAt">;
 
 export type Clock = {
   now: () => number;
@@ -16,6 +18,23 @@ export type Clock = {
 export const systemClock: Clock = {
   now: () => Date.now(),
 };
+
+export function isRoundBettingOpen(round: BettingRound | null | undefined, nowMs: number) {
+  if (!round || round.status !== "OPEN") {
+    return false;
+  }
+
+  const opensAtMs = Date.parse(round.bettingOpensAt);
+  const closesAtMs = Date.parse(round.bettingClosesAt);
+
+  return (
+    Number.isFinite(nowMs) &&
+    Number.isFinite(opensAtMs) &&
+    Number.isFinite(closesAtMs) &&
+    nowMs >= opensAtMs &&
+    nowMs < closesAtMs
+  );
+}
 
 export function getScheduledBettingOpensAtMs(
   table: Pick<ScheduledTable, "roundPhaseOffsetMs">,

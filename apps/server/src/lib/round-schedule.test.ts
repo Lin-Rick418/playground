@@ -5,10 +5,50 @@ import {
   DEAL_ANIMATION_BUFFER_MS,
   getFreshRoundWindow,
   getScheduledBettingOpensAtMs,
+  isRoundBettingOpen,
   REVEAL_WINDOW_MS,
+  ROUND_PRESENTATION_WINDOW_MS,
 } from "./round-schedule.js";
 
 const epochMs = Date.UTC(2025, 0, 1);
+
+function bettingRound(
+  overrides: Partial<{
+    status: "OPEN" | "LOCKED" | "SETTLED" | "CANCELLED";
+    bettingOpensAt: string;
+    bettingClosesAt: string;
+  }> = {},
+) {
+  return {
+    status: "OPEN" as const,
+    bettingOpensAt: new Date(epochMs + 7_000).toISOString(),
+    bettingClosesAt: new Date(epochMs + 37_000).toISOString(),
+    ...overrides,
+  };
+}
+
+test("accepts bets only inside the exact server-authoritative betting window", () => {
+  const round = bettingRound();
+
+  assert.equal(isRoundBettingOpen(round, epochMs + 6_999), false);
+  assert.equal(isRoundBettingOpen(round, epochMs + 7_000), true);
+  assert.equal(isRoundBettingOpen(round, epochMs + 36_999), true);
+  assert.equal(isRoundBettingOpen(round, epochMs + 37_000), false);
+});
+
+test("rejects bets for non-open rounds and invalid timestamps", () => {
+  assert.equal(isRoundBettingOpen(bettingRound({ status: "LOCKED" }), epochMs + 10_000), false);
+  assert.equal(
+    isRoundBettingOpen(bettingRound({ bettingOpensAt: "invalid" }), epochMs + 10_000),
+    false,
+  );
+  assert.equal(isRoundBettingOpen(null, epochMs + 10_000), false);
+});
+
+test("reserves the full reveal and settlement presentation before betting reopens", () => {
+  assert.equal(ROUND_PRESENTATION_WINDOW_MS, 9_000);
+  assert.equal(DEAL_ANIMATION_BUFFER_MS, ROUND_PRESENTATION_WINDOW_MS);
+});
 
 test("assigns each configured table a distinct opening phase", () => {
   const tables = [
