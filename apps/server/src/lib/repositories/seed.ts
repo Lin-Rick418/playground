@@ -100,7 +100,7 @@ export async function ensureSeedData(options?: { seedDemoUsers?: boolean }) {
           await tx.query(
             `UPDATE game_tables
              SET code = $1, name = $2, display_order = $3, round_duration_ms = $4,
-                 round_phase_offset_ms = $5, min_bet = $6, max_bet = $7
+                 round_phase_offset_ms = $5, min_bet = $6, max_bet = $7, is_active = TRUE
              WHERE id = $8`,
             [table.code, table.name, table.displayOrder, table.roundDurationMs, table.roundPhaseOffsetMs, table.minBet, table.maxBet, String(existingByOrder.id)],
           );

@@ -61,12 +61,12 @@ export async function findUserByUsername(username: string, executor: DbExecutor 
 }
 
 export async function listTables(executor: DbExecutor = pool) {
-  const rows = await queryRows(executor, "SELECT * FROM game_tables ORDER BY display_order ASC, created_at ASC");
+  const rows = await queryRows(executor, "SELECT * FROM game_tables WHERE is_active = TRUE ORDER BY display_order ASC, created_at ASC");
   return rows.map((row: DbRow) => mapTable(row));
 }
 
 export async function findTableById(tableId: string, executor: DbExecutor = pool) {
-  const row = await queryRow(executor, "SELECT * FROM game_tables WHERE id = $1", [tableId]);
+  const row = await queryRow(executor, "SELECT * FROM game_tables WHERE id = $1 AND is_active = TRUE", [tableId]);
   return row ? mapTable(row) : null;
 }
 

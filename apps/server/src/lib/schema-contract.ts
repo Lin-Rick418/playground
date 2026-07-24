@@ -10,6 +10,7 @@ const columns = {
     round_duration_ms: ["integer", "NO"], round_phase_offset_ms: ["integer", "NO"],
     round_schedule_version: ["integer", "NO"], min_bet: ["integer", "NO"], max_bet: ["integer", "NO"],
     current_shoe_id: ["text", "NO"], shoe_state: ["jsonb", "NO"], created_at: ["timestamp with time zone", "NO"],
+    is_active: ["boolean", "NO"],
   },
   users: {
     id: ["text", "NO"], username: ["text", "NO"], password_hash: ["text", "NO"], role: ["text", "NO"],

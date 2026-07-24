@@ -276,6 +276,21 @@ test("a later login replaces the player's earlier session", async () => {
   assert.equal(activeSessions.rows[0]?.count, "1");
 });
 
+test("inactive tables are hidden from the lobby and direct table routes", async () => {
+  const player = await insertUser({ username: `inactive_ci_${runId}` });
+  const tableId = await insertTable();
+  await pool.query("UPDATE game_tables SET is_active = FALSE WHERE id = $1", [tableId]);
+  const token = await login(player);
+
+  const lobby = await request<{ tables: Array<{ table: { id: string } }> }>("/game/lobby", { token });
+  assert.equal(lobby.status, 200);
+  assert.equal(lobby.body.tables.some(({ table }) => table.id === tableId), false);
+
+  const state = await request<{ code: string }>(`/game/tables/${tableId}/state`, { token });
+  assert.equal(state.status, 404);
+  assert.equal(state.body.code, "NOT_FOUND");
+});
+
 test("bet placement debits exactly once and insufficient balance rolls back", async () => {
   const player = await insertUser({ username: `bettor_ci_${runId}`, balance: 1_000 });
   const tableId = await insertTable();
