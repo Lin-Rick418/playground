@@ -8,6 +8,12 @@
       "cwd": "apps/web",
       "port": 5173,
       "autoPort": true
+    },
+    {
+      "name": "backoffice",
+      "runtimeExecutable": "npm",
+      "runtimeArgs": ["--prefix", "/Users/k/Documents/baccarat-backoffice", "start"],
+      "port": 4200
     }
   ]
 }
