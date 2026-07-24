@@ -53,7 +53,7 @@ async function onSubmit() {
               />
             </label>
 
-            <p v-if="authStore.error" class="error-text">{{ authStore.error }}</p>
+            <p v-if="authStore.error" class="error-text" role="alert">{{ authStore.error }}</p>
 
             <button class="button-primary login-submit" :disabled="authStore.loading" type="submit">
               {{ authStore.loading ? "登入中..." : "登入" }}

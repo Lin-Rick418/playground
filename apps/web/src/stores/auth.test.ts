@@ -70,4 +70,20 @@ describe("auth store", () => {
     expect(store.initialized).toBe(true);
     expect(store.error).toBe("");
   });
+
+  it("invalidates a replaced session without logging out the new browser session", () => {
+    const store = useAuthStore();
+    const post = vi.spyOn(api, "post");
+    store.token = "replaced-token";
+    store.user = user;
+
+    store.invalidateSession("此帳號已在其他裝置登入，您已被登出。");
+
+    expect(post).not.toHaveBeenCalled();
+    expect(store.token).toBe("");
+    expect(store.user).toBeNull();
+    expect(store.initialized).toBe(true);
+    expect(store.error).toBe("此帳號已在其他裝置登入，您已被登出。");
+    expect(getStoredToken()).toBe("");
+  });
 });

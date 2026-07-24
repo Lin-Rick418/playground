@@ -214,8 +214,16 @@ async function handleLiveEvent(event: LiveEvent) {
   if (event.type === "session_revoked") {
     for (const connection of connections.values()) {
       if (connection.sessionId === event.sessionId) {
-        sendMessage(connection.socket, { type: "error", message: "Session ended" });
-        connection.socket.close(1008, "Session ended");
+        if (event.reason === "signed_in_elsewhere") {
+          sendMessage(connection.socket, {
+            type: "auth_revoked",
+            reason: "signed_in_elsewhere",
+          });
+          connection.socket.close(1008, "Signed in elsewhere");
+        } else {
+          sendMessage(connection.socket, { type: "error", message: "Session ended" });
+          connection.socket.close(1008, "Session ended");
+        }
       }
     }
     return;

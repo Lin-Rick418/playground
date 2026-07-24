@@ -2,6 +2,7 @@ import { onMounted, onUnmounted } from "vue";
 import { useRouter } from "vue-router";
 import { liveClientMessageSchema, type LiveClientMessage } from "@baccarat/contracts";
 import { createLiveSocket, type LiveMessage } from "../lib/live";
+import { getAuthRevocationMessage } from "../lib/auth-session-message";
 import { parseRuntimeContract } from "../lib/contracts";
 import { useAuthStore } from "../stores/auth";
 
@@ -37,10 +38,10 @@ export function useLiveChannel(options: UseLiveChannelOptions) {
     socket = null;
   }
 
-  function revokeSession() {
+  function revokeSession(message = "登入狀態已失效，請重新登入。") {
     disposed = true;
     disconnect();
-    authStore.logout();
+    authStore.invalidateSession(message);
     void router.push("/login");
   }
 
@@ -59,7 +60,7 @@ export function useLiveChannel(options: UseLiveChannelOptions) {
     }
 
     if (message.type === "auth_revoked") {
-      revokeSession();
+      revokeSession(getAuthRevocationMessage(message.reason));
       return;
     }
 
@@ -118,7 +119,7 @@ export function useLiveChannel(options: UseLiveChannelOptions) {
             }, delayMs);
           })
           .catch(() => {
-            authStore.logout();
+            authStore.invalidateSession("登入狀態已失效，請重新登入。");
             void router.push("/login");
           });
       },

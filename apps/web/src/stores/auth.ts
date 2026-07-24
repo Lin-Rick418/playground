@@ -89,14 +89,17 @@ export const useAuthStore = defineStore("auth", {
       setStoredToken(data.token);
       return data.user;
     },
-    logout() {
-      void api.post("/auth/logout").catch(() => undefined);
+    invalidateSession(message = "") {
       this.token = "";
       this.user = null;
       this.accessTokenExpiresAt = "";
       this.initialized = true;
-      this.error = "";
+      this.error = message;
       clearStoredToken();
+    },
+    logout() {
+      void api.post("/auth/logout").catch(() => undefined);
+      this.invalidateSession();
     },
     setUser(user: User | null) {
       this.user = user;

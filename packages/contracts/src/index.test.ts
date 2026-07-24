@@ -118,6 +118,10 @@ describe("shared API contracts", () => {
       liveServerMessageSchema.safeParse({ type: "auth_revoked", reason: "account_disabled" }).success,
       true,
     );
+    assert.equal(
+      liveServerMessageSchema.safeParse({ type: "auth_revoked", reason: "signed_in_elsewhere" }).success,
+      true,
+    );
   });
 
   it("validates history, profit, and bet response contracts", () => {

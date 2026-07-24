@@ -329,7 +329,7 @@ export const liveServerMessageSchema = z.discriminatedUnion("type", [
   z
     .object({
       type: z.literal("auth_revoked"),
-      reason: z.enum(["user_deleted", "account_disabled", "role_changed"]),
+      reason: z.enum(["user_deleted", "account_disabled", "role_changed", "signed_in_elsewhere"]),
     })
     .strict(),
   z.object({ type: z.literal("lobby_snapshot"), data: lobbyResponseSchema }).strict(),

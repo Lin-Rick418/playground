@@ -92,11 +92,11 @@ describe("useLiveChannel", () => {
   it("stops reconnecting and returns to login when the server revokes authorization", async () => {
     const wrapper = mountChannel();
     const authStore = useAuthStore();
-    const logout = vi.spyOn(authStore, "logout");
+    const invalidateSession = vi.spyOn(authStore, "invalidateSession");
 
-    callbackAt(0).onMessage({ type: "auth_revoked", reason: "account_disabled" });
+    callbackAt(0).onMessage({ type: "auth_revoked", reason: "signed_in_elsewhere" });
 
-    expect(logout).toHaveBeenCalledOnce();
+    expect(invalidateSession).toHaveBeenCalledWith("此帳號已在其他裝置登入，您已被登出。");
     expect(mocks.routerPush).toHaveBeenCalledWith("/login");
     callbackAt(0).onClose?.();
     await vi.advanceTimersByTimeAsync(30_000);
@@ -107,11 +107,11 @@ describe("useLiveChannel", () => {
   it("treats the session-invalid error as terminal instead of reconnecting", async () => {
     const wrapper = mountChannel();
     const authStore = useAuthStore();
-    const logout = vi.spyOn(authStore, "logout");
+    const invalidateSession = vi.spyOn(authStore, "invalidateSession");
 
     callbackAt(0).onMessage({ type: "error", message: "Session is no longer valid" });
 
-    expect(logout).toHaveBeenCalledOnce();
+    expect(invalidateSession).toHaveBeenCalledWith("登入狀態已失效，請重新登入。");
     expect(mocks.routerPush).toHaveBeenCalledWith("/login");
     callbackAt(0).onClose?.();
     await vi.advanceTimersByTimeAsync(30_000);

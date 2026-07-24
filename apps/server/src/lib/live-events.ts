@@ -5,6 +5,8 @@ import { logger, toLogError } from "./logger.js";
 
 const LIVE_EVENT_CHANNEL = "baccarat_live";
 
+export type SessionRevocationReason = "logout" | "password_changed" | "signed_in_elsewhere";
+
 export type LiveEvent =
   | {
       type: "table_changed";
@@ -22,7 +24,7 @@ export type LiveEvent =
       type: "session_revoked";
       sessionId: string;
       userId: string;
-      reason: string;
+      reason: SessionRevocationReason;
       at: string;
     };
 

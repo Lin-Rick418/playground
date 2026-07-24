@@ -255,6 +255,27 @@ test("HTTP auth accepts players and removes the admin surface", async () => {
   assert.equal(removedAdminRoute.body.code, "NOT_FOUND");
 });
 
+test("a later login replaces the player's earlier session", async () => {
+  const player = await insertUser({ username: `session_${runId}` });
+  const firstToken = await login(player);
+  const secondToken = await login(player);
+
+  const [firstSession, secondSession, activeSessions] = await Promise.all([
+    request<{ code: string }>("/auth/me", { token: firstToken }),
+    request<{ id: string }>("/auth/me", { token: secondToken }),
+    pool.query<{ count: string }>(
+      "SELECT COUNT(*)::text AS count FROM auth_sessions WHERE user_id = $1 AND revoked_at IS NULL",
+      [player.id],
+    ),
+  ]);
+
+  assert.equal(firstSession.status, 401);
+  assert.equal(firstSession.body.code, "INVALID_TOKEN");
+  assert.equal(secondSession.status, 200);
+  assert.equal(secondSession.body.id, player.id);
+  assert.equal(activeSessions.rows[0]?.count, "1");
+});
+
 test("bet placement debits exactly once and insufficient balance rolls back", async () => {
   const player = await insertUser({ username: `bettor_ci_${runId}`, balance: 1_000 });
   const tableId = await insertTable();
