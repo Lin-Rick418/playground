@@ -11,6 +11,9 @@ import { runMigrations } from "../../src/lib/migration-runner.js";
 import { settleActiveRound } from "../../src/lib/round-manager.js";
 import { runRetentionCleanup } from "../../src/lib/retention.js";
 import { authRefreshRateLimitPolicy } from "../../src/lib/endpoint-rate-limit.js";
+import { assertCoreApiIntegrationDatabaseUrl } from "../../src/lib/integration-database-safety.js";
+
+assertCoreApiIntegrationDatabaseUrl(process.env.DATABASE_URL);
 
 type TestUser = {
   id: string;
@@ -203,6 +206,13 @@ async function login(user: TestUser) {
 }
 
 before(async () => {
+  const existingTables = await pool.query<{ count: string }>(
+    `SELECT count(*)::text AS count
+     FROM pg_class
+     WHERE relnamespace = (SELECT oid FROM pg_namespace WHERE nspname = current_schema())
+       AND relkind = 'r'`,
+  );
+  assert.equal(existingTables.rows[0]?.count, "0", "Core API integration database must start empty");
   await runMigrations(pool);
   server = createServer(createTestApp());
   await new Promise<void>((resolve, reject) => {

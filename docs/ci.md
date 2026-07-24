@@ -88,10 +88,10 @@ Integration tests 會建立 users、tables、rounds、bets 與 adjustments 測�
 
 ```bash
 docker compose up -d postgres
-docker compose exec -T postgres createdb -U postgres baccarat_test
-DATABASE_URL=postgres://postgres:postgres@127.0.0.1:5432/baccarat_test \
+docker compose exec -T postgres createdb -U postgres baccarat_core_api_test_local
+DATABASE_URL=postgres://postgres:postgres@127.0.0.1:5432/baccarat_core_api_test_local \
   npm run test:integration
-docker compose exec -T postgres dropdb -U postgres baccarat_test
+docker compose exec -T postgres dropdb -U postgres baccarat_core_api_test_local
 ```
 
 CI integration coverage 包含：
