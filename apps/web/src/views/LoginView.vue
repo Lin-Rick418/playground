@@ -230,6 +230,21 @@ async function onSubmit() {
   color: $color-text-faint;
 }
 
+.field input:focus,
+.field input:focus-visible {
+  border-color: $color-border-soft;
+  outline: none;
+  outline-offset: 0;
+}
+
+.field input:-webkit-autofill {
+  -webkit-text-fill-color: $color-text-primary;
+  caret-color: $color-text-primary;
+  -webkit-background-clip: text;
+  background-clip: text;
+  box-shadow: inset 0 0 0 100vmax $color-surface-soft;
+}
+
 .error-text {
   color: $color-negative;
   margin: 0;

@@ -87,6 +87,10 @@ function betGroups(item: RoundHistoryItem) {
   }));
 }
 
+function roundNetAmount(item: RoundHistoryItem) {
+  return item.totalPayout - item.totalAmount;
+}
+
 function cardSuitSymbol(suit: Card["suit"]) {
   return suit === "S" ? "♠" : suit === "H" ? "♥" : suit === "D" ? "♦" : "♣";
 }
@@ -150,29 +154,31 @@ onMounted(() => {
               <strong>{{ bet.amount.toLocaleString() }}</strong>
             </div>
           </div>
-          <div class="total-list">
-            <span class="total-row"
-              ><i class="total-icon gold" aria-hidden="true" />{{
-                item.totalPayout.toLocaleString()
-              }}</span
-            >
-            <span class="total-row"
-              ><i class="total-icon purple" aria-hidden="true" />{{
-                item.totalAmount.toLocaleString()
-              }}</span
-            >
+          <div
+            class="round-net"
+            role="group"
+            :aria-label="`本局收益 ${roundNetAmount(item).toLocaleString()}`"
+          >
+            <span class="coin-symbol" aria-hidden="true">$</span>
+            <strong aria-hidden="true">{{ roundNetAmount(item).toLocaleString() }}</strong>
           </div>
         </div>
 
         <div class="history-result">
           <div class="result-tab">本局結果</div>
           <div class="result-hands">
-            <div class="result-hand">
+            <div
+              class="result-hand"
+              :class="{ 'three-card-result': item.round.playerCards.length === 3 }"
+            >
               <p class="hand-title">
                 <i class="hand-badge player">閒</i>
                 <b class="player-total">{{ item.round.playerTotal }}</b>
               </p>
-              <div class="hand-cards">
+              <div
+                class="hand-cards"
+                :class="{ 'three-card-hand': item.round.playerCards.length === 3 }"
+              >
                 <span
                   v-for="(card, index) in item.round.playerCards"
                   :key="`player-${item.id}-${index}`"
@@ -184,12 +190,18 @@ onMounted(() => {
                 </span>
               </div>
             </div>
-            <div class="result-hand">
+            <div
+              class="result-hand"
+              :class="{ 'three-card-result': item.round.bankerCards.length === 3 }"
+            >
               <p class="hand-title">
                 <i class="hand-badge banker">莊</i>
                 <b class="banker-total">{{ item.round.bankerTotal }}</b>
               </p>
-              <div class="hand-cards">
+              <div
+                class="hand-cards"
+                :class="{ 'three-card-hand': item.round.bankerCards.length === 3 }"
+              >
                 <span
                   v-for="(card, index) in item.round.bankerCards"
                   :key="`banker-${item.id}-${index}`"
@@ -305,7 +317,7 @@ onMounted(() => {
 
 .history-card-top {
   display: flex;
-  align-items: flex-start;
+  align-items: center;
   padding: 14px 14px 12px;
   gap: 10px;
 }
@@ -367,40 +379,36 @@ onMounted(() => {
   letter-spacing: 0.04em;
 }
 
-.total-list {
+.round-net {
   margin-left: auto;
-  display: flex;
-  flex-direction: column;
-  align-items: flex-end;
-  gap: 8px;
-  flex: 0 0 auto;
-}
-
-.total-row {
   display: inline-flex;
   align-items: center;
   gap: 7px;
+  flex: 0 0 auto;
   color: #fff;
+}
+
+.round-net strong {
+  min-width: 0;
+  color: inherit;
   font-size: 15px;
   font-weight: 800;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
 }
 
-.total-icon {
-  width: 16px;
-  height: 16px;
+.coin-symbol {
+  width: 28px;
+  height: 28px;
   border-radius: 999px;
-  display: inline-block;
-}
-
-.total-icon.gold {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
   background: radial-gradient(circle at 30% 30%, #fff2ba, #f4de9b 48%, #be9240 100%);
-  border: 1px solid #8f6a1d;
-}
-
-.total-icon.purple {
-  border-radius: 4px;
-  background: radial-gradient(circle at 30% 30%, #e6c9ff, #b98ae8 52%, #7a4bb0 100%);
-  border: 1px solid #5d3390;
+  color: #6d4b0f;
+  font-size: 16px;
+  font-weight: 900;
+  box-shadow: inset 0 0 0 1px rgba(109, 75, 15, 0.18);
 }
 
 .history-result {
@@ -489,6 +497,7 @@ onMounted(() => {
   flex-wrap: wrap;
   gap: 8px;
   min-height: 62px;
+  justify-content: center;
 }
 
 .hand-card {
@@ -497,7 +506,6 @@ onMounted(() => {
   border-radius: 7px;
   background: linear-gradient(180deg, #fffdf7, #f2ead6);
   border: 1px solid rgba(70, 50, 20, 0.22);
-  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.16);
   display: inline-flex;
   flex-direction: column;
   align-items: center;
@@ -520,6 +528,25 @@ onMounted(() => {
   margin: 0 6px;
 }
 
+.hand-cards.three-card-hand {
+  flex-wrap: nowrap;
+  gap: 6px;
+}
+
+.result-hand.three-card-result {
+  padding-inline: 8px;
+}
+
+.three-card-hand .hand-card {
+  width: 35px;
+  height: 49px;
+  flex: 0 0 auto;
+}
+
+.three-card-hand .hand-card.bonus {
+  margin-inline: 4px;
+}
+
 .hand-card.red {
   color: #d3372a;
 }
@@ -528,40 +555,4 @@ onMounted(() => {
   color: #16181d;
 }
 
-@media (max-width: 390px) {
-  .history-card-top {
-    padding-inline: 10px;
-  }
-
-  .stake-list {
-    gap: 9px;
-  }
-
-  .stake-chip {
-    min-width: 58px;
-    padding-inline: 9px;
-  }
-
-  .total-row {
-    gap: 5px;
-    font-size: 13px;
-  }
-
-  .result-hand {
-    padding-inline: 8px;
-  }
-
-  .hand-cards {
-    gap: 6px;
-  }
-
-  .hand-card {
-    width: 35px;
-    height: 49px;
-  }
-
-  .hand-card.bonus {
-    margin-inline: 4px;
-  }
-}
 </style>

@@ -1425,7 +1425,6 @@ watch(
           >
             <template v-if="!settlementPopup.participated">
               <strong>本局未下注</strong>
-              <span>沒中也有福氣點 (ツ)つ</span>
             </template>
             <template v-else-if="settlementPopup.amount > 0">
               <strong>您贏了</strong>
@@ -1627,13 +1626,12 @@ watch(
     </section>
 
     <footer class="wallet-bar">
-      <button
-        type="button"
+      <div
         class="wallet-panel"
-        :aria-label="`玩家餘額 ${displayedBalance?.toLocaleString() ?? '尚未載入'}，點擊查看下注紀錄`"
+        role="status"
+        :aria-label="`玩家餘額 ${displayedBalance?.toLocaleString() ?? '尚未載入'}`"
         aria-live="polite"
         aria-atomic="true"
-        @click="openBetHistory"
       >
         <span class="coin-symbol">$</span>
         <div class="wallet-copy">
@@ -1642,11 +1640,11 @@ watch(
             <strong>{{ displayedBalance?.toLocaleString() ?? "--" }}</strong>
           </div>
         </div>
-      </button>
+      </div>
       <button
         type="button"
-        class="wallet-panel"
-        :aria-label="`${dailyProfitAccessibleLabel}，點擊查看下注紀錄`"
+        class="wallet-panel wallet-history-panel"
+        :aria-label="`${dailyProfitAccessibleLabel}，歷史紀錄，點擊查看下注紀錄`"
         aria-live="polite"
         aria-atomic="true"
         @click="openBetHistory"
@@ -1666,6 +1664,13 @@ watch(
             </strong>
           </div>
         </div>
+        <span class="wallet-history-entry" aria-hidden="true">
+          <span class="wallet-history-label">
+            <span>歷史</span>
+            <span>紀錄</span>
+          </span>
+          <span class="wallet-history-arrow">›</span>
+        </span>
       </button>
     </footer>
 
@@ -2155,12 +2160,43 @@ watch(
   font: inherit;
   text-align: left;
   color: inherit;
-  cursor: pointer;
 }
 
-.wallet-panel:active {
+.wallet-history-panel {
+  cursor: pointer;
+  justify-content: space-between;
+}
+
+.wallet-history-panel:active {
   transform: translateY(1px);
   filter: brightness(0.96);
+}
+
+.wallet-history-entry {
+  flex: 0 0 auto;
+  margin-left: auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.wallet-history-label {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  color: rgba(255, 249, 235, 0.94);
+  font-size: 12px;
+  font-weight: 800;
+  line-height: 1.05;
+  letter-spacing: 0.04em;
+  white-space: nowrap;
+}
+
+.wallet-history-arrow {
+  color: #fff;
+  font-size: 14px;
+  font-weight: 900;
+  line-height: 1;
 }
 
 .wallet-copy {
@@ -2251,7 +2287,9 @@ watch(
 
 .road-modal {
   position: relative;
-  width: min(100%, 420px);
+  // 375px 會隨 postcss-mobile-forever 放大至 app 的 430px 上限；
+  // 使用更大的設計稿寬度會讓 fixed dialog 超出置中的 app 範圍。
+  width: min(100%, 375px);
   padding: $space-6 $space-4 $space-4;
   display: flex;
   flex-direction: column;
@@ -2259,6 +2297,7 @@ watch(
 }
 
 .road-modal-body {
+  min-width: 0;
   height: min(46vh, 380px);
   min-height: 0;
 }

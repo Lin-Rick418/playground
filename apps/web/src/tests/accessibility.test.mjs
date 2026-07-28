@@ -98,6 +98,57 @@ test("bet history is a keyboard-accessible page instead of a modal", () => {
   assert.doesNotMatch(lobbyView, /account-button|history-button|header-actions|history-modal/);
 });
 
+test("three-card history hands keep the bonus card in a compact single-row layout", () => {
+  assert.match(
+    historyView,
+    /class="hand-cards"\s+:class="\{ 'three-card-hand': item\.round\.playerCards\.length === 3 \}"/,
+  );
+  assert.match(
+    historyView,
+    /class="hand-cards"\s+:class="\{ 'three-card-hand': item\.round\.bankerCards\.length === 3 \}"/,
+  );
+  assert.match(
+    historyView,
+    /\.hand-cards\.three-card-hand\s*\{[^}]*flex-wrap: nowrap;[^}]*gap: 6px;/,
+  );
+  assert.match(historyView, /\.result-hand\.three-card-result\s*\{[^}]*padding-inline: 8px;/);
+  assert.match(
+    historyView,
+    /\.three-card-hand \.hand-card\s*\{[^}]*width: 35px;[^}]*height: 49px;[^}]*flex: 0 0 auto;/,
+  );
+  assert.match(historyView, /\.three-card-hand \.hand-card\.bonus\s*\{[^}]*margin-inline: 4px;/);
+  assert.match(historyView, /\.hand-card\.bonus\s*\{[^}]*transform: rotate\(90deg\);/);
+});
+
+test("balance is non-interactive and history remains the only navigation entry", () => {
+  const balancePanelTag = openingTagForMarker(gameView, 'class="wallet-panel"');
+  const historyPanelTag = openingTagForMarker(gameView, "wallet-panel wallet-history-panel");
+
+  assert.match(balancePanelTag, /^<div\b/);
+  assert.match(balancePanelTag, /role="status"/);
+  assert.match(balancePanelTag, /:aria-label="`玩家餘額 [^`]+`"/);
+  assert.match(balancePanelTag, /aria-live="polite"/);
+  assert.match(balancePanelTag, /aria-atomic="true"/);
+  assert.doesNotMatch(balancePanelTag, /@click|查看下注紀錄|type="button"/);
+
+  assert.match(historyPanelTag, /^<button\b/);
+  assert.match(historyPanelTag, /:aria-label="[^"]*歷史紀錄[^"]*查看下注紀錄[^"]*"/);
+  assert.match(historyPanelTag, /@click="openBetHistory"/);
+  assert.match(
+    gameView,
+    /wallet-panel wallet-history-panel[\s\S]*?\{\{ dailyProfitPeriodLabel \}\}[\s\S]*?daily-profit-number[\s\S]*?<span class="wallet-history-entry" aria-hidden="true">\s*<span class="wallet-history-label">\s*<span>歷史<\/span>\s*<span>紀錄<\/span>\s*<\/span>\s*<span class="wallet-history-arrow">›<\/span>/,
+  );
+  assert.match(
+    gameView,
+    /\.wallet-history-entry\s*\{[\s\S]*?flex: 0 0 auto;[\s\S]*?margin-left: auto;[\s\S]*?display: inline-flex;[\s\S]*?align-items: center;/,
+  );
+  assert.match(gameView, /\.wallet-history-label\s*\{[\s\S]*?flex-direction: column;/);
+  assert.match(gameView, /\.wallet-history-arrow\s*\{[\s\S]*?color: #fff;/);
+  assert.doesNotMatch(gameView, /\.wallet-panel:active/);
+  assert.match(gameView, /\.wallet-history-panel:active/);
+  assert.match(gameView, /function openBetHistory\(\)\s*\{\s*void router\.push\("\/history"\);/);
+});
+
 test("player pages share the same outer layout", () => {
   assert.match(lobbyView, /<main class="player-page page-shell lobby-page">/);
   assert.match(historyView, /<main class="player-page history-page">/);
@@ -120,7 +171,8 @@ test("game rules replace settings with a dedicated accessible page", () => {
   assert.doesNotMatch(gameView, /openRoadSettings|isRoadSettingsOpen|road-settings-title|>設定</);
   assert.match(gameRulesView, /<main class="player-page rules-page">/);
   assert.match(gameRulesView, /<h1>遊戲規則<\/h1>/);
-  assert.match(gameRulesView, /<table class="fortune-table">/);
+  assert.match(gameRulesView, /<article class="rules-section" aria-labelledby="rules-draw">/);
+  assert.doesNotMatch(gameRulesView, /rules-fortune|fortune-table|fortuneRows/);
   assert.doesNotMatch(gameRulesView, /\.rules-header\s*\{[^}]*position:\s*fixed;/);
   assert.match(gameRulesView, /\.rules-content\s*\{[^}]*max-width: 560px;[^}]*margin: 0 auto;/);
 });

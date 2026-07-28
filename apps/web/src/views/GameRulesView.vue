@@ -22,14 +22,6 @@ const bankerStandRules = [
   "「閒家」兩牌合計 8 或 9 點（例牌）",
 ];
 
-const fortuneRows = [
-  ["莊", "45.86%", "1:0.95", "10"],
-  ["閒", "44.62%", "1:1", "10"],
-  ["和", "9.52%", "1:8", "80"],
-  ["莊對", "7.47%", "1:11", "60"],
-  ["閒對", "7.47%", "1:11", "60"],
-];
-
 function returnToGame() {
   const tableId = encodeURIComponent(String(route.params.tableId));
   void router.push(`/game/${tableId}`);
@@ -54,9 +46,7 @@ function returnToGame() {
       <article class="rules-section" aria-labelledby="rules-introduction">
         <h2 id="rules-introduction" class="rules-section-title">簡介</h2>
         <p>本「百家樂」遊戲係以澳門博彩監察協調局頒佈的《百家樂法定規章》為核心規則的撲克遊戲；</p>
-        <p>
-          遊戲中玩家以 K 豆投注，中獎後贏得 K 豆；未中獎的玩家亦可獲得「福氣點」，參與抽獎遊戲；
-        </p>
+        <p>遊戲中玩家以 B 幣選擇，中獎後贏得 B 幣；</p>
         <p>
           《百家樂法定規章》可前往
           <a
@@ -72,31 +62,29 @@ function returnToGame() {
       <article class="rules-section" aria-labelledby="rules-gameplay">
         <h2 id="rules-gameplay" class="rules-section-title">玩法</h2>
         <p>玩家先從活動主頁列出的多個「遊戲廳」任選一張進行遊戲；</p>
-        <p>玩家進入「遊戲廳」後，遊戲以「局」為單位進行，每局遊戲中，玩家可以做的動作就是投注；</p>
-        <p>投注項主要有：</p>
+        <p>玩家進入「遊戲廳」後，遊戲以「局」為單位進行，每局遊戲中，玩家可以做的動作就是選擇；</p>
+        <p>選擇項主要有：</p>
         <ul class="bet-label-list primary-bets" aria-label="主要投注項">
           <li class="bet-label player">閒</li>
           <li class="bet-label banker">莊</li>
         </ul>
-        <p>額外投注項有：</p>
+        <p>額外選擇項有：</p>
         <ul class="bet-label-list side-bets" aria-label="額外投注項">
           <li class="bet-label">閒對子</li>
           <li class="bet-label">和局</li>
           <li class="bet-label">莊對子</li>
         </ul>
-        <p>其中「莊」和「閒」只能選擇其中一個，其他投注項可多選，每個投注項的賠率不同；</p>
         <p>各項投注判定規則詳見隨後的幾個小節；</p>
-        <p>投注后可以加注，每項投注上限為 100,000，每局中所有玩家加總的投注金額無上限；</p>
         <p>玩家可以參考「路單」投注，以提升自己的勝率；</p>
-        <p>投注時間截止后，系統公佈結果，與玩家結算彩金和「福氣點」。</p>
+        <p>投注時間截止后，系統公佈結果，與玩家結算B幣。</p>
       </article>
 
       <article class="rules-section" aria-labelledby="rules-prize">
-        <h2 id="rules-prize" class="rules-section-title">彩金</h2>
-        <p>博彩臺上各投注項中的 1：x 為投注中彩彩金賠率；</p>
+        <h2 id="rules-prize" class="rules-section-title">B幣</h2>
+        <p>平臺上各選項中的 1：x 為投注中彩 B 幣賠率。</p>
         <p>
-          舉例：「和局」賠率為 1：8，如若投中，將在收回本金的同時，額外獲得 8
-          倍於本金的彩金；比如下注 100 豆，最終將獲得 900 豆。
+          舉例：「和局」賠率為 1：8<br/>如若投中，將在收回本金的同時，額外獲得 8
+          倍於本金的 B 幣<br/>比如下注 100 B 幣，最終將獲得 900 B 幣。
         </p>
       </article>
 
@@ -169,37 +157,6 @@ function returnToGame() {
         </ul>
       </article>
 
-      <article class="rules-section" aria-labelledby="rules-fortune">
-        <h2 id="rules-fortune" class="rules-section-title">福氣點</h2>
-        <p>
-          如果您的投注沒有押中，將獲得一定數量的「福氣點」，根據您的投注項不同，獲得的「福氣點」也不同，具體見下表：
-        </p>
-        <div class="table-scroll">
-          <table class="fortune-table">
-            <thead>
-              <tr>
-                <th scope="col">投注項</th>
-                <th scope="col">理論概率</th>
-                <th scope="col">賠率</th>
-                <th scope="col">輸 100 豆得<br />「福氣點」</th>
-              </tr>
-            </thead>
-            <tbody>
-              <tr v-for="row in fortuneRows" :key="row[0]">
-                <th scope="row">{{ row[0] }}</th>
-                <td>{{ row[1] }}</td>
-                <td>{{ row[2] }}</td>
-                <td>{{ row[3] }}</td>
-              </tr>
-            </tbody>
-          </table>
-        </div>
-        <p>
-          說明：概率越高的投注項越容易贏，賠率越高的贏得後收益越大，綜合考慮概率與賠率後，為了補償投注高風險選項的玩家，「福氣點」的獎勵亦不同。
-        </p>
-        <p>「福氣點」可以參與「福氣抽獎」，獲得多種獎勵；</p>
-        <p><span class="rules-link-text">前往「福氣抽獎」&gt;</span></p>
-      </article>
     </div>
   </main>
 </template>
@@ -289,8 +246,7 @@ function returnToGame() {
   margin-bottom: 0;
 }
 
-.rules-section a,
-.rules-link-text {
+.rules-section a {
   color: #1555c2;
   text-decoration: underline;
   text-underline-offset: 2px;
@@ -434,38 +390,6 @@ function returnToGame() {
 
 .rule-table li:nth-child(even) {
   background: rgba(231, 232, 210, 0.62);
-}
-
-.table-scroll {
-  width: 100%;
-  margin: 18px 0;
-  overflow-x: auto;
-}
-
-.fortune-table {
-  width: 100%;
-  min-width: 300px;
-  border-collapse: collapse;
-  color: #69645b;
-  font-size: 12px;
-  text-align: center;
-}
-
-.fortune-table th,
-.fortune-table td {
-  border: 1px solid rgba(155, 143, 113, 0.25);
-  padding: 9px 5px;
-  font-weight: 600;
-}
-
-.fortune-table thead th {
-  background: rgba(218, 211, 190, 0.6);
-  white-space: nowrap;
-}
-
-.fortune-table tbody th,
-.fortune-table tbody td {
-  background: rgba(239, 235, 221, 0.72);
 }
 
 @media (max-width: 350px) {
