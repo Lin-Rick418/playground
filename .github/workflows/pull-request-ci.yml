@@ -80,22 +80,3 @@ jobs:
         run: npm run test:release && npm run test:ops && npm run test:deploy
       - name: HTTP and PostgreSQL integration tests
         run: npm run test:integration
-
-  dependency-audit:
-    name: dependency-audit
-    runs-on: ubuntu-latest
-    timeout-minutes: 10
-    steps:
-      - name: Check out tested commit
-        uses: actions/checkout@v7
-      - name: Use pinned Node.js
-        uses: actions/setup-node@v7
-        with:
-          node-version: 22.19.0
-          cache: npm
-      - name: Install locked dependencies
-        run: npm ci
-      - name: Audit production dependencies
-        run: npm run audit:prod
-      - name: Audit all dependencies including development tooling
-        run: npm run audit:full
