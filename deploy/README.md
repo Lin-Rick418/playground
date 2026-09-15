@@ -245,3 +245,34 @@ SELECT * FROM financial_balance_reconciliation WHERE NOT is_reconciled;
 ```
 
 Access JWT 只存 browser memory；refresh token 使用 `HttpOnly`、`SameSite=Strict` cookie，資料庫只保存 hash 並於每次 refresh rotation。logout 或改密碼會 revoke server session。DB pool、API 與 worker instance 數必須一併納入 PostgreSQL `max_connections` 規劃。
+
+## Casino PWA
+
+### 發布與檢查
+
+沿用既有 build／原子切換 release 流程，發布完整 `apps/web/dist`，包括 `/sw.js`、`/manifest.webmanifest`、`/pwa/` 與 `/icons/`。使用本 repository 的 Nginx 設定後執行 `nginx -t`，再依原部署流程 reload。Service Worker、Manifest、離線頁與圖示使用 `expires -1`（`Cache-Control: no-cache`），保留上層 CSP／HSTS；缺失資源必須回傳 404。
+
+```bash
+curl -I https://your-domain.example/sw.js
+curl -I https://your-domain.example/manifest.webmanifest
+curl -I https://your-domain.example/pwa/offline.html
+curl -I https://your-domain.example/pwa/missing.html
+```
+
+前三項應為 200、正確 MIME type 與 `Cache-Control: no-cache`；最後一項應為 404。正式 HTTPS 憑證需受裝置信任。Manifest 名稱／短名稱皆為 Casino，從 `/login` 啟動，既有登入狀態仍交由 router 與伺服器驗證。
+
+### 快取與更新
+
+Service Worker 只保存 `/pwa/offline.html`、`/pwa/offline.css`、`/pwa/offline.js`，存於私有 `casino-pwa-offline` cache。API、帳戶／下注資料、正常 SPA HTML、遊戲圖像與語音不加入 PWA 快取。離線 fallback 只處理同源頁面導覽的網路失敗，保留 HTTP 錯誤；已開啟頁面的離線提示不代表能偵測所有伺服器故障。
+
+不使用 `skipWaiting`、`clientsClaim` 或自動 reload。首次安裝後，下一次頁面導覽才會由 Service Worker 控制。新版等待所有受控分頁與 App 視窗關閉後啟用，啟用時移除本 cache 的舊 revision，不清理其他應用程式 cache。正常網頁始終依一般網路載入，這個等待政策針對 Service Worker，並不鎖定 SPA 版本。
+
+### 回復版本
+
+回復至另一個包含 PWA 的 release 時，一併回復完整 dist；瀏覽器取得回復版 Service Worker 後，仍遵循關閉全部受控頁面再啟用的政策。若回復到加入 PWA 以前的 release，不能只讓 `/sw.js` 變成 404：應先發布同路徑的退役 worker，啟用後只刪除 `casino-pwa-offline` 並自行 unregister，且仍不強制 reload。必要時可在受影響裝置的 DevTools 手動 unregister 與移除該 cache；這不是一般發布步驟。
+
+### 驗收
+
+執行 `npm run test:pwa`，以隔離的 production builds 和 Vite preview 驗證安裝設定、離線導覽、恢復連線、HTTP 錯誤與版本等待，不使用真實帳戶或資料庫。再於 Android Chrome／iPhone Safari 實機確認安裝、圖示、standalone 啟動、離線提示與關閉後更新。自動化的手機尺寸測試涵蓋登入頁高度與無教學介面，不取代 iOS 實機安裝驗收。
+
+圖示以 `apps/web/public/icons/casino.svg` 為來源，採綠底金色 C 字標；PNG 包含 192、512、512 maskable 與 180 Apple Touch Icon，中央字標位於 maskable 安全區。

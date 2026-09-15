@@ -9,6 +9,7 @@ export const WEBSOCKET_MESSAGE_WINDOW_MS = 10_000;
 
 export type RateWindow = { timestamps: number[] };
 export type WebSocketClientMessage =
+  | { type: "subscribe_user" }
   | { type: "subscribe_lobby" }
   | { type: "subscribe_table"; tableId: string };
 
@@ -19,7 +20,7 @@ export function isWebSocketPayloadAllowed(byteLength: number) {
 export function parseWebSocketClientMessage(data: string): WebSocketClientMessage | null {
   try {
     const message = JSON.parse(data) as WebSocketClientMessage;
-    if (message.type === "subscribe_lobby") {
+    if (message.type === "subscribe_lobby" || message.type === "subscribe_user") {
       return message;
     }
 

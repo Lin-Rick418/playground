@@ -8,6 +8,10 @@ import { historyCursorIndexMigration } from "./007-history-cursor-index.js";
 import { endpointRateLimitScopeMigration } from "./008-endpoint-rate-limit-scope.js";
 import { activeGameTablesMigration } from "./009-active-game-tables.js";
 
+import { minesAndDecimalMoneyMigration } from "./010-mines-and-decimal-money.js";
+
+import { plinkoMigration } from "./011-plinko.js";
+
 export const migrationDefinitions = [
   initialTablesMigration,
   roundPhaseOffsetMigration,
@@ -18,6 +22,8 @@ export const migrationDefinitions = [
   historyCursorIndexMigration,
   endpointRateLimitScopeMigration,
   activeGameTablesMigration,
+  minesAndDecimalMoneyMigration,
+  plinkoMigration,
 ] as const;
 
 export type { MigrationDefinition } from "./types.js";

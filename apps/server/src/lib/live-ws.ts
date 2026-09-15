@@ -50,7 +50,7 @@ type LiveSocketConnection = {
   socket: WebSocket;
   lastPongAt: number;
   messageWindow: RateWindow;
-  subscription: { scope: "none" } | { scope: "lobby" } | { scope: "table"; tableId: string };
+  subscription: { scope: "user" } | { scope: "none" } | { scope: "lobby" } | { scope: "table"; tableId: string };
 };
 
 const connections = new Map<string, LiveSocketConnection>();
@@ -188,6 +188,11 @@ async function pushTableUserSnapshot(connection: LiveSocketConnection, tableId: 
 
 async function handleSubscriptionMessage(connection: LiveSocketConnection, message: LiveClientMessage) {
   if (!(await pushUserSnapshot(connection))) {
+    return;
+  }
+
+  if (message.type === "subscribe_user") {
+    connection.subscription = { scope: "user" };
     return;
   }
 

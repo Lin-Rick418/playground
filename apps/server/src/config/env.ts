@@ -22,7 +22,17 @@ const jwtSecret = isProduction
   ? requireStrongJwtSecret(process.env.JWT_SECRET)
   : process.env.JWT_SECRET ?? "change-me";
 
+if (process.env.MINES_ENABLED !== undefined && !["true", "false"].includes(process.env.MINES_ENABLED)) {
+  throw new Error("MINES_ENABLED must be true or false");
+}
+
+if (process.env.PLINKO_ENABLED !== undefined && !["true", "false"].includes(process.env.PLINKO_ENABLED)) {
+  throw new Error("PLINKO_ENABLED must be true or false");
+}
+
 export const env = {
+  plinkoEnabled: process.env.PLINKO_ENABLED !== "false",
+  minesEnabled: process.env.MINES_ENABLED !== "false",
   isProduction,
   port: parseBoundedInteger("PORT", process.env.PORT, 4000, { min: 1, max: 65_535 }),
   host: parseHost(process.env.HOST),

@@ -1,3 +1,4 @@
+import { sumMoney } from "@baccarat/contracts";
 import { calculatePayout, dealRoundFromShoe, getMassachusettsCutCardConfig } from "./baccarat.js";
 import { createOrGetActiveRound } from "./active-round-invariant.js";
 import {
@@ -148,7 +149,7 @@ export async function settleActiveRound(roundId: string, tableId: string) {
       betPayouts.push({ betId: bet.id, payout });
 
       if (payout > 0) {
-        payoutsByUser.set(bet.userId, (payoutsByUser.get(bet.userId) ?? 0) + payout);
+        payoutsByUser.set(bet.userId, sumMoney([payoutsByUser.get(bet.userId) ?? 0, payout]));
       }
     }
 
@@ -201,8 +202,8 @@ export async function settleActiveRound(roundId: string, tableId: string) {
         shoeId: shoe.shoeId,
         winner: result.winner,
         betCount: bets.length,
-        totalAmount: bets.reduce((sum, bet) => sum + bet.amount, 0),
-        totalPayout: betPayouts.reduce((sum, bet) => sum + bet.payout, 0),
+        totalAmount: sumMoney(bets.map((bet) => bet.amount)),
+        totalPayout: sumMoney(betPayouts.map((bet) => bet.payout)),
         nextShoeId: nextShoe.shoeId,
       } as const;
     }
@@ -219,8 +220,8 @@ export async function settleActiveRound(roundId: string, tableId: string) {
       shoeId: shoe.shoeId,
       winner: result.winner,
       betCount: bets.length,
-      totalAmount: bets.reduce((sum, bet) => sum + bet.amount, 0),
-      totalPayout: betPayouts.reduce((sum, bet) => sum + bet.payout, 0),
+      totalAmount: sumMoney(bets.map((bet) => bet.amount)),
+      totalPayout: sumMoney(betPayouts.map((bet) => bet.payout)),
     } as const;
   });
 

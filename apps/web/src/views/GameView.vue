@@ -1,4 +1,6 @@
 <script setup lang="ts">
+import AppButton from "../components/ui/AppButton.vue";
+import AppPageHeader from "../components/ui/AppPageHeader.vue";
 import { computed, onMounted, onUnmounted, ref, watch } from "vue";
 import axios from "axios";
 import { useRoute, useRouter } from "vue-router";
@@ -23,6 +25,7 @@ import {
   getDisplayDurationBeforeDeadline,
   getRoundCountdownSeconds,
 } from "../lib/round-timing";
+import { formatMoney, sumMoney } from "../lib/money";
 import { loadVoiceAnnouncementEnabled, saveVoiceAnnouncementEnabled } from "../lib/settings";
 import {
   playVoiceClips,
@@ -62,9 +65,9 @@ const isRoadmapOpen = ref(false);
 const isTableLoading = ref(true);
 const isVoiceAnnouncementEnabled = ref(loadVoiceAnnouncementEnabled());
 const settlementDialogRef = ref<HTMLElement | null>(null);
-const settlementCloseButtonRef = ref<HTMLElement | null>(null);
+const settlementCloseButtonRef = ref<InstanceType<typeof AppButton> | null>(null);
 const roadmapDialogRef = ref<HTMLElement | null>(null);
-const roadmapCloseButtonRef = ref<HTMLElement | null>(null);
+const roadmapCloseButtonRef = ref<InstanceType<typeof AppButton> | null>(null);
 
 const displayedPlayerCards = ref<DisplayCard[]>([]);
 const displayedBankerCards = ref<DisplayCard[]>([]);
@@ -264,7 +267,7 @@ const dailyProfitAccessibleLabel = computed(() => {
   const summary = gameStore.dailyProfit;
   const profit = todayProfit.value;
   return summary && profit !== null
-    ? `${summary.date} 收益 ${profit.toLocaleString()}，時區 ${summary.timeZone}`
+    ? `${summary.date} 收益 ${formatMoney(profit)}，時區 ${summary.timeZone}`
     : "本日收益尚未載入";
 });
 
@@ -393,7 +396,7 @@ watch(
 );
 
 function chipLabel(chip: number) {
-  return chip >= 10000 ? `${chip / 10000}萬` : chip.toLocaleString();
+  return chip >= 10000 ? `${chip / 10000}萬` : formatMoney(chip);
 }
 
 function isFeltCardFaceUp(side: "player" | "banker", index: number) {
@@ -417,7 +420,7 @@ async function repeatLastBets() {
   }
 
   if (bets.some((bet) => currentBetAmount(bet.betType) + bet.amount > maxBet)) {
-    gameStore.message = `單一玩法最高下注 ${maxBet.toLocaleString()}`;
+    gameStore.message = `單一玩法最高下注 ${formatMoney(maxBet)}`;
     return;
   }
 
@@ -434,7 +437,7 @@ async function refreshGameData() {
     const previousRoundId = currentRound.value?.id ?? "";
     const state = await gameStore.fetchState(tableId.value);
     serverTimeOffsetMs.value = new Date(state.serverTime).getTime() - Date.now();
-    authStore.patchBalance(state.balance);
+    authStore.patchBalance(state.balance, state.walletVersion);
     if (state.myBets.length) {
       latestParticipatedRoundId.value = state.round.id;
     }
@@ -505,12 +508,12 @@ function stageBet(target: BetKey) {
 
   const { minBet, maxBet } = table;
   if (selectedChip.value < minBet) {
-    gameStore.message = `最低下注 ${minBet.toLocaleString()}`;
+    gameStore.message = `最低下注 ${formatMoney(minBet)}`;
     return;
   }
 
   if (currentBetAmount(target) + selectedChip.value > maxBet) {
-    gameStore.message = `單一玩法最高下注 ${maxBet.toLocaleString()}`;
+    gameStore.message = `單一玩法最高下注 ${formatMoney(maxBet)}`;
     return;
   }
 
@@ -544,7 +547,7 @@ async function submitBets(bets: { betType: BetKey; amount: number }[]) {
   try {
     const result = await gameStore.placeBet(tableId.value, bets);
     latestParticipatedRoundId.value = result.round.id;
-    authStore.patchBalance(result.balance);
+    authStore.patchBalance(result.balance, result.walletVersion);
     return true;
   } catch (error) {
     const message = axios.isAxiosError(error)
@@ -674,7 +677,9 @@ async function handleRoundSettled(settledRound: ActiveRound, serverTimeIso: stri
       throw error;
     }
     const settledHistory = gameStore.history.find((item) => item.round.id === settledRound.id);
-    amount = settledHistory ? settledHistory.totalPayout - settledHistory.totalAmount : 0;
+    amount = settledHistory
+      ? sumMoney([settledHistory.totalPayout, -settledHistory.totalAmount])
+      : 0;
     payoutAmount = settledHistory?.totalPayout ?? 0;
   }
 
@@ -1144,7 +1149,7 @@ function applyTableUserSnapshotMessage(message: TableUserSnapshotMessage) {
     currentRoundId: message.data.currentRoundId,
     myBets: message.data.myBets,
   });
-  authStore.patchBalance(message.data.balance);
+  authStore.patchBalance(message.data.balance, message.data.walletVersion);
 
   if (!message.data.isActive) {
     authStore.logout();
@@ -1288,27 +1293,25 @@ watch(
       </div>
     </transition>
 
-    <header class="page-header table-nav">
-      <button
-        class="page-header-back nav-icon-button"
-        type="button"
-        aria-label="返回大廳"
-        @click="backToLobby"
-      >
-        ‹
-      </button>
-      <div class="table-nav-heading">
-        <h1>{{ currentTable?.name ?? "遊戲桌" }}</h1>
-        <p class="table-meta-line">
+    <AppPageHeader
+      class="table-nav"
+      :title="currentTable?.name ?? '遊戲桌'"
+      back-label="返回大廳"
+      @back="backToLobby"
+    >
+      <template #subtitle
+        ><p class="table-meta-line">
           {{ currentTable?.code ?? "--" }}｜{{
             Math.round((currentTable?.roundDurationMs ?? 30000) / 1000)
-          }}秒｜限紅 {{ currentTable?.minBet?.toLocaleString() ?? "--" }}-{{
-            currentTable?.maxBet?.toLocaleString() ?? "--"
-          }}
-        </p>
-      </div>
-      <button class="nav-text-button" type="button" @click="openGameRules">遊戲規則</button>
-    </header>
+          }}秒｜限紅 {{ formatMoney(currentTable?.minBet) }}-{{ formatMoney(currentTable?.maxBet) }}
+        </p></template
+      >
+      <template #actions
+        ><AppButton class="nav-text-button" variant="ghost" @click="openGameRules"
+          >遊戲規則</AppButton
+        ></template
+      >
+    </AppPageHeader>
 
     <div class="table-toolbar">
       <transition name="last-hand-fade">
@@ -1317,8 +1320,11 @@ watch(
         </div>
       </transition>
       <div class="toolbar-actions">
-        <button
+        <AppButton
+          variant="secondary"
+          size="control"
           type="button"
+          icon
           class="toolbar-round-button"
           aria-haspopup="dialog"
           aria-label="開啟路單"
@@ -1330,9 +1336,12 @@ watch(
             />
           </span>
           <span class="toolbar-round-label">路單</span>
-        </button>
-        <button
+        </AppButton>
+        <AppButton
+          variant="secondary"
+          size="control"
           type="button"
+          icon
           class="toolbar-round-button sound-button"
           :class="{ muted: !isVoiceAnnouncementEnabled }"
           :aria-pressed="isVoiceAnnouncementEnabled"
@@ -1358,7 +1367,7 @@ watch(
               stroke-linecap="round"
             />
           </svg>
-        </button>
+        </AppButton>
       </div>
     </div>
 
@@ -1373,15 +1382,17 @@ watch(
           tabindex="-1"
           @keydown="onSettlementDialogKeydown"
         >
-          <button
+          <AppButton
             ref="settlementCloseButtonRef"
+            variant="ghost"
+            icon
             type="button"
             class="settlement-close-button"
             aria-label="關閉本局結算"
             @click="dismissSettlementPopup"
           >
             ✕
-          </button>
+          </AppButton>
           <p id="settlement-title" class="settlement-eyebrow">本局結算</p>
           <p
             class="settlement-result"
@@ -1428,11 +1439,11 @@ watch(
             </template>
             <template v-else-if="settlementPopup.amount > 0">
               <strong>您贏了</strong>
-              <span class="amt">+{{ settlementPopup.amount.toLocaleString() }}</span>
+              <span class="amt">+{{ formatMoney(settlementPopup.amount) }}</span>
             </template>
             <template v-else-if="settlementPopup.amount < 0">
               <strong>您輸了</strong>
-              <span class="amt">{{ settlementPopup.amount.toLocaleString() }}</span>
+              <span class="amt">{{ formatMoney(settlementPopup.amount) }}</span>
             </template>
             <template v-else>
               <strong>平手退回</strong>
@@ -1556,7 +1567,7 @@ watch(
       />
 
       <p class="sr-only" role="status" aria-live="polite" aria-atomic="true">
-        {{ hasStagedBets ? `已選下注總額 ${totalStagedAmount.toLocaleString()}` : "尚未選擇下注" }}
+        {{ hasStagedBets ? `已選下注總額 ${formatMoney(totalStagedAmount)}` : "尚未選擇下注" }}
       </p>
 
       <transition name="confirm-fab-pop">
@@ -1608,7 +1619,7 @@ watch(
         :class="{ active: selectedChip === chip }"
         :disabled="!isBettingOpen"
         :aria-pressed="selectedChip === chip"
-        :aria-label="`選擇 ${chip.toLocaleString()} 籌碼`"
+        :aria-label="`選擇 ${formatMoney(chip)} 籌碼`"
         @click="selectedChip = chip"
       >
         {{ chipLabel(chip) }}
@@ -1629,7 +1640,7 @@ watch(
       <div
         class="wallet-panel"
         role="status"
-        :aria-label="`玩家餘額 ${displayedBalance?.toLocaleString() ?? '尚未載入'}`"
+        :aria-label="`玩家餘額 ${displayedBalance === null ? '尚未載入' : formatMoney(displayedBalance)}`"
         aria-live="polite"
         aria-atomic="true"
       >
@@ -1637,7 +1648,7 @@ watch(
         <div class="wallet-copy">
           <span>餘額</span>
           <div class="money-number-window" aria-hidden="true">
-            <strong>{{ displayedBalance?.toLocaleString() ?? "--" }}</strong>
+            <strong>{{ formatMoney(displayedBalance) }}</strong>
           </div>
         </div>
       </div>
@@ -1660,7 +1671,7 @@ watch(
                 'is-rolling': isDailyProfitRolling,
               }"
             >
-              {{ animatedTodayProfit?.toLocaleString() ?? "--" }}
+              {{ formatMoney(animatedTodayProfit) }}
             </strong>
           </div>
         </div>
@@ -1684,15 +1695,17 @@ watch(
         tabindex="-1"
         @keydown="onRoadmapDialogKeydown"
       >
-        <button
+        <AppButton
           ref="roadmapCloseButtonRef"
+          variant="ghost"
+          icon
           class="modal-close-button"
           type="button"
           aria-label="關閉路圖"
           @click="closeRoadmap"
         >
           ✕
-        </button>
+        </AppButton>
 
         <div class="modal-head">
           <p class="topbar-label">Roadmap</p>
@@ -1724,20 +1737,15 @@ watch(
   flex: 0 0 auto;
 }
 
-.table-nav-heading {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 2px;
-  min-width: 0;
-}
-
-.table-nav-heading h1 {
-  width: 100%;
-  font-weight: 700;
+.table-nav {
+  --ui-header-side: 64px;
+  align-content: center;
+  row-gap: 2px;
 }
 
 .table-meta-line {
+  grid-column: 2;
+  grid-row: 2;
   width: 100%;
   margin: 0;
   color: rgba(255, 255, 255, 0.72);
@@ -1752,11 +1760,7 @@ watch(
 
 .nav-text-button {
   justify-self: end;
-  width: max-content;
-  min-width: 40px;
-  height: 40px;
   border: 0;
-  padding: $space-2 0;
   background: transparent;
   color: rgba(255, 255, 255, 0.88);
   font-size: 12px;
@@ -1793,10 +1797,7 @@ watch(
 }
 
 .toolbar-round-button {
-  width: 35px;
-  height: 35px;
   border: 1px solid rgba(255, 255, 255, 0.34);
-  border-radius: 999px;
   background: rgba(255, 255, 255, 0.92);
   display: inline-flex;
   flex-direction: column;
@@ -2566,10 +2567,7 @@ watch(
   position: absolute;
   top: $space-3;
   right: $space-3;
-  width: 44px;
-  height: 44px;
   border: 0;
-  border-radius: 999px;
   background: rgba(8, 18, 14, 0.12);
   color: $color-text-primary;
   font-size: 18px;
@@ -2775,10 +2773,7 @@ watch(
   position: absolute;
   top: $space-4;
   right: $space-4;
-  width: 44px;
-  height: 44px;
   border: 0;
-  border-radius: 999px;
   background: rgba(182, 34, 34, 0.92);
   color: #fff7f7;
   font-size: 16px;

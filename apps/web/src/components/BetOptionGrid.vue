@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import type { BetOption } from "../const/game";
 import type { BetType } from "../types/domain";
+import { formatMoney } from "../lib/money";
 
 const props = defineProps<{
   options: readonly BetOption[];
@@ -18,7 +19,7 @@ const emit = defineEmits<{
 
 function formatAmount(amount: number) {
   if (amount < 1000) {
-    return amount.toLocaleString();
+    return formatMoney(amount);
   }
 
   const compactAmount = amount / 1000;
@@ -27,8 +28,8 @@ function formatAmount(amount: number) {
 
 function ariaLabel(option: BetOption) {
   const amount = props.amounts[option.key];
-  const amountText = amount ? `，目前下注 ${amount.toLocaleString()}` : "，目前尚未下注";
-  return `${option.label}，賠率 ${option.payout}，每次增加 ${props.selectedChip.toLocaleString()}${amountText}`;
+  const amountText = amount ? `，目前下注 ${formatMoney(amount)}` : "，目前尚未下注";
+  return `${option.label}，賠率 ${option.payout}，每次增加 ${formatMoney(props.selectedChip)}${amountText}`;
 }
 </script>
 

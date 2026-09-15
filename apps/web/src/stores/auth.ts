@@ -13,8 +13,28 @@ export const useAuthStore = defineStore("auth", {
     initialized: false,
     loading: false,
     error: "",
+    userSnapshotRevision: 0,
+    walletVersion: null as number | null,
   }),
   actions: {
+    applyUserSnapshot(user: User | null) {
+      if (!user) {
+        this.user = null;
+        this.walletVersion = null;
+        this.userSnapshotRevision += 1;
+        return null;
+      }
+
+      const incomingVersion = user.walletVersion ?? null;
+      const sameUser = this.user?.id === user.id;
+      const rejectsBalance = sameUser && this.walletVersion !== null && (incomingVersion === null || incomingVersion < this.walletVersion);
+      this.user = rejectsBalance && this.user
+        ? { ...user, balance: this.user.balance, ...(this.walletVersion === null ? {} : { walletVersion: this.walletVersion }) }
+        : user;
+      if (!rejectsBalance) this.walletVersion = incomingVersion;
+      this.userSnapshotRevision += 1;
+      return this.user;
+    },
     async login(username: string, password: string) {
       this.loading = true;
       this.error = "";
@@ -23,7 +43,7 @@ export const useAuthStore = defineStore("auth", {
         const response = await api.post("/auth/login", { username, password });
         const data = parseRuntimeContract(loginResponseSchema, response.data, "POST /auth/login");
         this.token = data.token;
-        this.user = data.user;
+        this.applyUserSnapshot(data.user);
         this.accessTokenExpiresAt = data.accessTokenExpiresAt;
         this.initialized = true;
         setStoredToken(data.token);
@@ -35,17 +55,24 @@ export const useAuthStore = defineStore("auth", {
         this.loading = false;
       }
     },
-    async fetchMe() {
+    async fetchMe(options: { preserveNewerLiveSnapshot?: boolean } = {}) {
+      const revisionAtRequest = this.userSnapshotRevision;
+      const userIdAtRequest = this.user?.id;
+      const tokenAtRequest = this.token;
       const response = await api.get("/auth/me");
       const data = parseRuntimeContract(userSchema, response.data, "GET /auth/me");
-      this.user = data;
-      return data;
+      // A wallet refresh from a previous login must never restore or replace that account.
+      if (this.user?.id !== userIdAtRequest || this.token !== tokenAtRequest) return this.user ?? data;
+      if (options.preserveNewerLiveSnapshot && revisionAtRequest !== this.userSnapshotRevision && data.walletVersion === undefined) {
+        return this.user ?? data;
+      }
+      return this.applyUserSnapshot(data) ?? data;
     },
     async refreshAccessToken() {
       const response = await api.post("/auth/refresh");
       const data = parseRuntimeContract(loginResponseSchema, response.data, "POST /auth/refresh");
       this.token = data.token;
-      this.user = data.user;
+      this.applyUserSnapshot(data.user);
       this.accessTokenExpiresAt = data.accessTokenExpiresAt;
       setStoredToken(data.token);
       return data;
@@ -84,7 +111,7 @@ export const useAuthStore = defineStore("auth", {
         "POST /auth/change-password",
       );
       this.token = data.token;
-      this.user = data.user;
+      this.applyUserSnapshot(data.user);
       this.accessTokenExpiresAt = data.accessTokenExpiresAt;
       setStoredToken(data.token);
       return data.user;
@@ -92,6 +119,7 @@ export const useAuthStore = defineStore("auth", {
     invalidateSession(message = "") {
       this.token = "";
       this.user = null;
+      this.walletVersion = null;
       this.accessTokenExpiresAt = "";
       this.initialized = true;
       this.error = message;
@@ -102,11 +130,16 @@ export const useAuthStore = defineStore("auth", {
       this.invalidateSession();
     },
     setUser(user: User | null) {
-      this.user = user;
+      this.applyUserSnapshot(user);
     },
-    patchBalance(balance: number) {
-      if (this.user) {
+    patchBalance(balance: number, walletVersion?: number) {
+      if (this.user && !(this.walletVersion !== null && (walletVersion === undefined || walletVersion < this.walletVersion))) {
         this.user.balance = balance;
+        if (walletVersion !== undefined) {
+          this.walletVersion = walletVersion;
+          this.user.walletVersion = walletVersion;
+        }
+        this.userSnapshotRevision += 1;
       }
     },
   },

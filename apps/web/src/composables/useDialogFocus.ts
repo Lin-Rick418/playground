@@ -13,7 +13,7 @@ type DialogFocusOptions = {
   isOpen: () => boolean;
   dialogRef: Ref<HTMLElement | null>;
   close: () => void;
-  initialFocusRef?: Ref<HTMLElement | null>;
+  initialFocusRef?: Ref<Pick<HTMLElement, "focus"> | null>;
 };
 
 function getFocusableElements(dialog: HTMLElement) {
@@ -64,11 +64,13 @@ export function useDialogFocus(options: DialogFocusOptions) {
 
   watch(options.isOpen, async (isOpen) => {
     if (isOpen) {
-      previouslyFocused = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+      previouslyFocused =
+        document.activeElement instanceof HTMLElement ? document.activeElement : null;
       await nextTick();
 
       const dialog = options.dialogRef.value;
-      const initialFocus = options.initialFocusRef?.value ?? (dialog ? getFocusableElements(dialog)[0] : null);
+      const initialFocus =
+        options.initialFocusRef?.value ?? (dialog ? getFocusableElements(dialog)[0] : null);
       (initialFocus ?? dialog)?.focus();
       return;
     }

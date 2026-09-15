@@ -1,3 +1,4 @@
+import { toMinorUnits, minorUnitsToDecimal, fromMinorUnits } from "@baccarat/contracts";
 import { randomUUID } from "node:crypto";
 import type { PoolClient } from "pg";
 import type { GameRoundRecord, GameTableRecord, RoundStatus, RoundWinner, UserRecord, UserRole } from "../../types/domain.js";
@@ -13,7 +14,8 @@ export function mapUser(row: DbRow): UserRecord {
     passwordHash: String(row.password_hash),
     role: String(row.role) as UserRole,
     isActive: row.is_active as boolean,
-    balance: Number(row.balance),
+    balance: fromMinorUnits(toMinorUnits(String(row.balance))),
+    walletVersion: Number(row.balance_version ?? 0),
     createdAt: toIsoString(row.created_at),
     updatedAt: toIsoString(row.updated_at),
   };
@@ -80,10 +82,10 @@ export async function findUserById(
   return row ? mapUser(row) : null;
 }
 
-async function setUserBalance(userId: string, balance: number, executor: PoolClient) {
+async function setUserBalance(userId: string, balance: number, walletVersion: string, executor: PoolClient) {
   const now = new Date().toISOString();
   await executor.query("SELECT set_config('baccarat.ledger_mutation', 'allowed', TRUE)");
-  await executor.query("UPDATE users SET balance = $1, updated_at = $2 WHERE id = $3", [balance, now, userId]);
+  await executor.query("UPDATE users SET balance = $1, updated_at = $2, balance_version = $4 WHERE id = $3", [minorUnitsToDecimal(toMinorUnits(balance)), now, userId, walletVersion]);
   await executor.query("SELECT set_config('baccarat.ledger_mutation', 'blocked', TRUE)");
   return requireRecord(await findUserById(userId, executor), "Updated user");
 }
@@ -112,11 +114,11 @@ export async function applyBalanceMutation(
   const id = randomUUID();
   const createdAt = new Date().toISOString();
 
-  await executor.query(
+  const ledgerResult = await executor.query<{ entry_sequence: string }>(
     `INSERT INTO financial_ledger_entries (
       id, user_id, actor_type, actor_id, source, reference_type, reference_id,
       delta, balance_before, balance_after, metadata, created_at
-    ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11::jsonb, $12)`,
+    ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11::jsonb, $12) RETURNING entry_sequence`,
     [
       id,
       user.id,
@@ -125,15 +127,15 @@ export async function applyBalanceMutation(
       input.source,
       input.referenceType,
       input.referenceId,
-      transition.delta,
-      transition.balanceBefore,
-      transition.balanceAfter,
+      minorUnitsToDecimal(toMinorUnits(transition.delta)),
+      minorUnitsToDecimal(toMinorUnits(transition.balanceBefore)),
+      minorUnitsToDecimal(toMinorUnits(transition.balanceAfter)),
       JSON.stringify(input.metadata ?? {}),
       createdAt,
     ],
   );
 
-  const updatedUser = await setUserBalance(user.id, transition.balanceAfter, executor);
+  const updatedUser = await setUserBalance(user.id, transition.balanceAfter, String(ledgerResult.rows[0].entry_sequence), executor);
   return {
     user: updatedUser,
     ledgerEntry: {

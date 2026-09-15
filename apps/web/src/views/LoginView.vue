@@ -1,4 +1,7 @@
 <script setup lang="ts">
+import AppInput from "../components/ui/AppInput.vue";
+import AppButton from "../components/ui/AppButton.vue";
+import PwaInstall from "../components/PwaInstall.vue";
 import { reactive } from "vue";
 import { useRouter } from "vue-router";
 import { useAuthStore } from "../stores/auth";
@@ -22,7 +25,7 @@ async function onSubmit() {
     <section class="login-stage">
       <div class="login-copy">
         <p class="eyebrow">Live Table</p>
-        <h1><span>Baccarat</span></h1>
+        <h1><span>Casino</span></h1>
         <!-- <p class="intro">進入桌面，開始下注。</p> -->
       </div>
 
@@ -38,12 +41,18 @@ async function onSubmit() {
           <form class="login-form" @submit.prevent="onSubmit">
             <label class="field">
               <span>帳號</span>
-              <input v-model="form.username" name="username" autocomplete="username" placeholder="輸入帳號" required />
+              <AppInput
+                v-model="form.username"
+                name="username"
+                autocomplete="username"
+                placeholder="輸入帳號"
+                required
+              />
             </label>
 
             <label class="field">
               <span>密碼</span>
-              <input
+              <AppInput
                 v-model="form.password"
                 name="password"
                 type="password"
@@ -55,12 +64,19 @@ async function onSubmit() {
 
             <p v-if="authStore.error" class="error-text" role="alert">{{ authStore.error }}</p>
 
-            <button class="button-primary login-submit" :disabled="authStore.loading" type="submit">
+            <AppButton
+              variant="primary"
+              size="action"
+              class="button-primary login-submit"
+              :disabled="authStore.loading"
+              type="submit"
+            >
               {{ authStore.loading ? "登入中..." : "登入" }}
-            </button>
+            </AppButton>
           </form>
         </div>
       </section>
+      <PwaInstall />
     </section>
   </main>
 </template>
@@ -69,15 +85,20 @@ async function onSubmit() {
 .login-layout {
   position: relative;
   display: flex;
-  align-items: flex-start;
-  justify-content: center;
+  flex-direction: column;
+  align-items: center;
+  justify-content: flex-start;
+  flex: 1;
   width: 100%;
-  min-height: 100vh;
+  height: 100vh;
+  height: 100dvh;
+  min-height: 0;
   max-width: 100vw;
-  overflow: hidden;
-  overflow-x: clip;
+  overflow-y: auto;
+  overflow-x: hidden;
   overscroll-behavior-x: none;
-  padding-top: clamp(48px, 10vh, 96px);
+  padding-top: max(16px, env(safe-area-inset-top));
+  padding-bottom: max(16px, env(safe-area-inset-bottom));
   background: $gradient-felt;
 }
 
@@ -110,14 +131,14 @@ async function onSubmit() {
   position: relative;
   z-index: 1;
   width: min(100%, 440px);
-  min-height: calc(100vh - clamp(88px, 14vh, 140px));
+  flex-shrink: 0;
+  margin-block: auto;
   max-width: 100%;
   display: flex;
   flex-direction: column;
   align-items: center;
   justify-content: center;
   gap: $space-5;
-  transform: translateY(clamp(-34px, -5vh, -18px));
 }
 
 .eyebrow {
@@ -158,8 +179,7 @@ async function onSubmit() {
   max-width: 100%;
   padding: 0 $space-6 $space-6;
   background:
-    linear-gradient(180deg, rgba(7, 48, 33, 0.76), rgba(5, 34, 23, 0.82)),
-    $color-panel-surface;
+    linear-gradient(180deg, rgba(7, 48, 33, 0.76), rgba(5, 34, 23, 0.82)), $color-panel-surface;
   border-color: $color-border-soft;
 }
 
@@ -219,22 +239,8 @@ async function onSubmit() {
   color: $color-text-muted;
 }
 
-.field input {
-  min-height: 52px;
-  border-radius: 14px;
-  background: $color-surface-soft;
-  font-family: "Manrope", "Noto Sans TC", sans-serif;
-}
-
 .field input::placeholder {
   color: $color-text-faint;
-}
-
-.field input:focus,
-.field input:focus-visible {
-  border-color: $color-border-soft;
-  outline: none;
-  outline-offset: 0;
 }
 
 .field input:-webkit-autofill {
@@ -253,9 +259,6 @@ async function onSubmit() {
 }
 
 .login-submit {
-  width: 100%;
-  min-height: 52px;
-  border-radius: 14px;
   font-size: 16px;
   font-family: "Manrope", "Noto Sans TC", sans-serif;
 }

@@ -5,8 +5,10 @@ import type { RoundHistoryItem } from "../types/domain";
 import { useGameStore } from "../stores/game";
 import BetHistoryView from "./BetHistoryView.vue";
 
+const back = vi.hoisted(() => vi.fn());
+
 vi.mock("vue-router", () => ({
-  useRouter: () => ({ back: vi.fn() }),
+  useRouter: () => ({ back }),
 }));
 
 const createdAt = "2026-07-28T06:00:00.000Z";
@@ -48,6 +50,7 @@ function historyItem(id: string, totalPayout: number, totalAmount: number): Roun
 }
 
 beforeEach(() => {
+  back.mockClear();
   vi.useFakeTimers();
   vi.setSystemTime(new Date("2026-07-28T07:00:00.000Z"));
   pinia = createPinia();
@@ -130,5 +133,19 @@ describe("BetHistoryView three-card hands", () => {
       expect(hand.findAll(".hand-card")).toHaveLength(3);
       expect(hand.findAll(".hand-card.bonus")).toHaveLength(1);
     }
+  });
+});
+
+describe("baccarat history", () => {
+  it("loads history and returns to the previous page", async () => {
+    const baccarat = useGameStore();
+    const fetchBaccarat = vi.spyOn(baccarat, "fetchHistory").mockResolvedValue();
+    vi.spyOn(baccarat, "fetchLobby").mockResolvedValue(undefined as never);
+    const wrapper = mount(BetHistoryView, { global: { plugins: [pinia] } });
+    await flushPromises();
+    expect(wrapper.text()).toContain("近七日沒有投注紀錄");
+    expect(fetchBaccarat).toHaveBeenCalledOnce();
+    await wrapper.get('[aria-label="返回"]').trigger("click");
+    expect(back).toHaveBeenCalledOnce();
   });
 });

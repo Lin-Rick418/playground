@@ -10,6 +10,8 @@ test("player can place and directly repeat a bet, receive settlement, and find i
 
   await expect(page).toHaveURL(/\/lobby$/);
   await expect(page.getByRole("heading", { name: "遊戲大廳" })).toBeVisible();
+  await page.getByRole("button", { name: /百家樂/ }).click();
+  await expect(page).toHaveURL(/\/baccarat$/);
   await page.locator(".table-card", { hasText: "A01" }).click();
 
   await expect(page).toHaveURL(/\/game\//);
@@ -68,13 +70,7 @@ test("player can place and directly repeat a bet, receive settlement, and find i
   });
   await expect(page.getByRole("button", { name: "確認下注" })).toHaveCount(0);
 
-  const balancePanel = page.getByRole("status", { name: /^玩家餘額 / });
-  await expect(balancePanel).toBeVisible();
-  await expect(page.getByRole("button", { name: /^玩家餘額 / })).toHaveCount(0);
-  await balancePanel.click();
-  await expect(page).toHaveURL(/\/game\/[^/]+$/);
-
-  await page.getByRole("button", { name: /歷史紀錄，點擊查看下注紀錄/ }).click();
+  await page.getByRole("button", { name: /歷史紀錄，點擊查看下注紀錄$/ }).click();
   await expect(page).toHaveURL(/\/history$/);
   await expect(page.getByRole("heading", { name: "投注紀錄" })).toBeVisible();
   const historyCard = page.locator(".history-card", {

@@ -14,6 +14,8 @@ import { getServiceHeartbeat } from "./lib/db.js";
 import { evaluateReadiness, withTimeout } from "./lib/health.js";
 import { logger as serviceLogger } from "./lib/logger.js";
 import { authRouter } from "./modules/auth/router.js";
+import { plinkoRouter } from "./modules/plinko/router.js";
+import { minesRouter } from "./modules/mines/router.js";
 import { gameRouter } from "./modules/game/router.js";
 
 const DEPENDENCY_CHECK_TIMEOUT_MS = 1_500;
@@ -88,6 +90,8 @@ export function createApp(options: CreateAppOptions = {}) {
 
   app.use("/auth", authRouter);
   app.use("/game", gameRouter);
+  app.use("/mines", minesRouter);
+  app.use("/plinko", plinkoRouter);
   options.registerAdditionalRoutes?.(app);
 
   app.use(notFoundHandler);

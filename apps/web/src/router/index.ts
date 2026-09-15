@@ -2,6 +2,9 @@ import { createRouter, createWebHistory } from "vue-router";
 import { useAuthStore } from "../stores/auth";
 import LoginView from "../views/LoginView.vue";
 import LobbyView from "../views/LobbyView.vue";
+import BaccaratLobbyView from "../views/BaccaratLobbyView.vue";
+import MinesView from "../views/MinesView.vue";
+import PlinkoView from "../views/PlinkoView.vue";
 import GameView from "../views/GameView.vue";
 import GameRulesView from "../views/GameRulesView.vue";
 import AccountView from "../views/AccountView.vue";
@@ -12,8 +15,31 @@ const router = createRouter({
   routes: [
     { path: "/", redirect: "/login" },
     { path: "/login", component: LoginView },
-    { path: "/lobby", component: LobbyView, meta: { requiresAuth: true, role: "PLAYER" } },
-    { path: "/game/:tableId", component: GameView, meta: { requiresAuth: true, role: "PLAYER" } },
+    {
+      path: "/lobby",
+      component: LobbyView,
+      meta: { requiresAuth: true, role: "PLAYER", keepScreenAwake: true },
+    },
+    {
+      path: "/baccarat",
+      component: BaccaratLobbyView,
+      meta: { requiresAuth: true, role: "PLAYER", keepScreenAwake: true },
+    },
+    {
+      path: "/mines",
+      component: MinesView,
+      meta: { requiresAuth: true, role: "PLAYER", keepScreenAwake: true },
+    },
+    {
+      path: "/plinko",
+      component: PlinkoView,
+      meta: { requiresAuth: true, role: "PLAYER", keepScreenAwake: true },
+    },
+    {
+      path: "/game/:tableId",
+      component: GameView,
+      meta: { requiresAuth: true, role: "PLAYER", keepScreenAwake: true },
+    },
     {
       path: "/game/:tableId/rules",
       name: "game-rules",
@@ -50,6 +76,10 @@ router.beforeEach(async (to) => {
 
   if (to.path === "/login" && authStore.user) {
     return "/lobby";
+  }
+
+  if (to.path === "/history" && (to.query.game === "mines" || to.query.game === "plinko")) {
+    return { path: `/${to.query.game}`, replace: true };
   }
 
   return true;

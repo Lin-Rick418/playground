@@ -87,6 +87,7 @@ function buildAuthResponse(user: UserRecord, sessionId: string) {
       role: user.role,
       isActive: user.isActive,
       balance: user.balance,
+    walletVersion: user.walletVersion,
     },
   };
 }
@@ -346,6 +347,7 @@ authRouter.get("/me", authenticate, async (req: AuthenticatedRequest, res) => {
     role: user.role,
     isActive: user.isActive,
     balance: user.balance,
+    walletVersion: user.walletVersion,
   });
 });
 

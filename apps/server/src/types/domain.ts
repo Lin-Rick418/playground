@@ -22,6 +22,7 @@ export type UserRecord = {
   role: UserRole;
   isActive: boolean;
   balance: number;
+  walletVersion?: number;
   createdAt: string;
   updatedAt: string;
 };

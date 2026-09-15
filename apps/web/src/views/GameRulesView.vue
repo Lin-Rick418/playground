@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import AppPageHeader from "../components/ui/AppPageHeader.vue";
 import { useRoute, useRouter } from "vue-router";
 
 const route = useRoute();
@@ -30,17 +31,12 @@ function returnToGame() {
 
 <template>
   <main class="player-page rules-page">
-    <header class="page-header rules-header">
-      <button
-        class="page-header-back rules-back"
-        type="button"
-        aria-label="返回遊戲桌"
-        @click="returnToGame"
-      >
-        ‹
-      </button>
-      <h1>遊戲規則</h1>
-    </header>
+    <AppPageHeader
+      class="rules-header"
+      title="遊戲規則"
+      back-label="返回遊戲桌"
+      @back="returnToGame"
+    />
 
     <div class="rules-content">
       <article class="rules-section" aria-labelledby="rules-introduction">
@@ -83,8 +79,8 @@ function returnToGame() {
         <h2 id="rules-prize" class="rules-section-title">B幣</h2>
         <p>平臺上各選項中的 1：x 為投注中彩 B 幣賠率。</p>
         <p>
-          舉例：「和局」賠率為 1：8<br/>如若投中，將在收回本金的同時，額外獲得 8
-          倍於本金的 B 幣<br/>比如下注 100 B 幣，最終將獲得 900 B 幣。
+          舉例：「和局」賠率為 1：8<br />如若投中，將在收回本金的同時，額外獲得 8 倍於本金的 B 幣<br />比如下注
+          100 B 幣，最終將獲得 900 B 幣。
         </p>
       </article>
 
@@ -156,7 +152,6 @@ function returnToGame() {
           <li v-for="rule in bankerStandRules" :key="rule">{{ rule }}</li>
         </ul>
       </article>
-
     </div>
   </main>
 </template>

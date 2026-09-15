@@ -174,6 +174,7 @@ export async function buildTableUserState(userId: string, tableId: string, execu
     currentRoundId: roundId,
     myBets,
     balance: user?.balance ?? 0,
+    walletVersion: user?.walletVersion ?? 0,
     isActive: user?.isActive ?? false,
     serverTime: new Date().toISOString(),
   };
@@ -192,6 +193,7 @@ export async function buildUserLiveState(userId: string, executor: DbExecutor = 
     role: user.role,
     isActive: user.isActive,
     balance: user.balance,
+    walletVersion: user.walletVersion,
     serverTime: new Date().toISOString(),
   };
 }

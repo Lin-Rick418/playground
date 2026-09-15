@@ -1,0 +1,278 @@
+/* Physical CSS-pixel sizes shared by scaled pages and the responsive Plinko page. */
+:root {
+  --ui-control-height: 44px;
+  --ui-action-height: 52px;
+  --ui-compact-height: 36px;
+  --ui-radius: 10px;
+  --ui-accent: #f0ca86;
+  --ui-primary-bg: linear-gradient(135deg, #ffe0a0, #dbb46c);
+  --ui-primary-text: #27210f;
+  --ui-control-bg: #1c2e29;
+  --ui-control-border: #ffffff30;
+  --ui-control-text: #f2f5f7;
+}
+.mines-page {
+  --ui-accent: #ffc38d;
+  --ui-primary-bg: linear-gradient(135deg, #f5bd84, #e49958);
+  --ui-primary-text: #302014;
+  --ui-control-bg: #2b323d;
+}
+.plinko-page {
+  --ui-accent: #7de4ff;
+  --ui-primary-bg: linear-gradient(135deg, #77e6ff, #56afdc);
+  --ui-primary-text: #073040;
+  --ui-control-bg: #223149;
+}
+.ui-control {
+  --ui-height: var(--ui-control-height);
+}
+.ui-action {
+  --ui-height: var(--ui-action-height);
+}
+.ui-compact {
+  --ui-height: var(--ui-compact-height);
+}
+.ui-button.ui-button,
+.ui-select.ui-select,
+.ui-input.ui-input {
+  box-sizing: border-box;
+  height: var(--ui-height);
+  min-height: var(--ui-height);
+  border-radius: var(--ui-radius);
+  font: inherit;
+  font-size: 14px;
+  line-height: 1.2;
+}
+.ui-button.ui-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 0 12px;
+  border: 1px solid var(--ui-control-border);
+  color: var(--ui-control-text);
+  background: var(--ui-control-bg);
+  font-weight: 700;
+  cursor: pointer;
+  touch-action: manipulation;
+  -webkit-tap-highlight-color: transparent;
+  transition:
+    transform 120ms ease,
+    background-color 120ms ease;
+}
+.ui-button.ui-button-primary {
+  color: var(--ui-primary-text);
+  background: var(--ui-primary-bg);
+  border-color: var(--ui-accent);
+  box-shadow:
+    0 3px 0 #0005,
+    inset 0 1px #ffffff50;
+}
+.ui-button.ui-action {
+  font-size: 17px;
+  font-weight: 800;
+}
+.ui-button.ui-button-ghost {
+  background: transparent;
+  border-color: transparent;
+  box-shadow: none;
+  color: inherit;
+}
+.ui-button.ui-icon {
+  width: var(--ui-height);
+  min-width: var(--ui-height);
+  flex-shrink: 0;
+  padding: 0;
+}
+.ui-button:not(:disabled):active {
+  transform: translateY(1px);
+}
+.ui-button:disabled,
+.ui-select:disabled,
+.ui-input:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+.ui-button[aria-pressed="true"] {
+  border-color: var(--ui-accent);
+  color: var(--ui-accent);
+  background: color-mix(in srgb, var(--ui-accent) 12%, var(--ui-control-bg));
+}
+.ui-button:focus-visible,
+.ui-select:focus-visible,
+.ui-input:focus-visible {
+  outline: 2px solid var(--ui-accent);
+  outline-offset: 3px;
+}
+.ui-select.ui-select,
+.ui-input.ui-input {
+  min-width: 0;
+  width: 100%;
+  border: 1px solid var(--ui-control-border);
+  background-color: var(--ui-control-bg);
+  color: var(--ui-control-text);
+  padding: 0 12px;
+  font-size: 16px;
+}
+.ui-select.ui-select {
+  appearance: none;
+  -webkit-appearance: none;
+  padding-right: 30px;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 12 12'%3E%3Cpath d='m2 4 4 4 4-4' fill='none' stroke='%23eaf2ff' stroke-width='1.5'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 10px center;
+  background-size: 12px;
+}
+.ui-page-header.page-header {
+  position: sticky;
+  top: 0;
+  z-index: 20;
+  display: grid;
+  align-items: center;
+  flex: 0 0 auto;
+  grid-template-columns: var(--ui-header-side, var(--ui-control-height)) minmax(0, 1fr) var(
+      --ui-header-side,
+      var(--ui-control-height)
+    );
+  min-height: calc(var(--ui-control-height) + 8px);
+  column-gap: 8px;
+  row-gap: 2px;
+  align-content: center;
+}
+.ui-page-header .page-header-back {
+  grid-column: 1;
+  grid-row: 1;
+}
+.ui-page-header .page-header-back svg {
+  width: 24px;
+  height: 24px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 2.5;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+.ui-page-header h1.page-heading {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.25em;
+  height: var(--ui-control-height);
+  min-width: 0;
+  grid-column: 2;
+  grid-row: 1;
+  margin: 0;
+  line-height: 1;
+  font-size: var(--ui-title-size, 20px);
+  text-transform: var(--ui-title-transform, none);
+  letter-spacing: var(--ui-title-spacing, 0.08em);
+  padding-inline-start: var(--ui-title-spacing, 0.08em);
+  color: var(--ui-title-color, #fff);
+}
+.page-header-actions {
+  display: flex;
+  justify-content: flex-end;
+  align-items: center;
+  grid-column: 3;
+  grid-row: 1;
+}
+.page-header-actions .ui-button {
+  padding-inline: 4px;
+  font-size: 12px;
+  white-space: nowrap;
+}
+.page-header-subtitle {
+  grid-column: 2;
+  grid-row: 2;
+  min-width: 0;
+}
+.ui-stake {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1.15fr);
+  align-items: end;
+  gap: 8px;
+}
+.ui-stake.ui-stake-stacked {
+  grid-template-columns: minmax(0, 1fr);
+}
+.ui-stake .stake-field {
+  display: grid;
+  gap: 4px;
+  font-size: 12px;
+  color: #b7c1cc;
+}
+.ui-stake .stake-shortcuts {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 4px;
+}
+.ui-stake .ui-button {
+  min-width: 0;
+  padding-inline: 3px;
+  font-size: 12px;
+}
+.ui-balance.ui-balance {
+  position: relative;
+  display: flex;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: space-between;
+  min-height: var(--ui-action-height);
+  padding: 6px 12px;
+  border: 1px solid var(--ui-control-border);
+  border-radius: var(--ui-radius);
+  background: #0b132080;
+  color: #aab8cc;
+  font-size: 14px;
+}
+.ui-balance strong {
+  color: #fff;
+  font-size: 20px;
+  font-variant-numeric: tabular-nums;
+}
+.ui-balance strong.rolling {
+  color: var(--ui-accent);
+  text-shadow: 0 0 12px #54d9ff66;
+}
+.ui-balance.insufficient {
+  border-color: #ff6b77;
+  box-shadow:
+    0 0 0 1px #ff6b77,
+    0 0 14px #ff6b7740;
+}
+.ui-balance .wallet-warning {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+@media (max-height: 650px) {
+  .player-page {
+    --ui-control-height: 36px;
+    --ui-action-height: 44px;
+    --ui-compact-height: 32px;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .ui-button {
+    transition: none;
+  }
+}
+
+@media (max-height: 520px) and (min-width: 520px) {
+  .ui-stake.ui-stake-landscape {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .ui-stake-landscape .stake-shortcuts {
+    display: none;
+  }
+  .ui-stake-landscape .stake-field {
+    display: grid;
+    grid-template-columns: auto minmax(0, 1fr);
+    align-items: center;
+  }
+}

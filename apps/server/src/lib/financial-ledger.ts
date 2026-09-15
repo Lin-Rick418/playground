@@ -1,12 +1,17 @@
+import { isMoney, sumMoney, toMinorUnits } from "@baccarat/contracts";
 export const financialLedgerActorTypes = ["SYSTEM", "ADMIN", "PLAYER"] as const;
 export const financialLedgerSources = [
   "LEGACY_OPENING_BALANCE",
   "INITIAL_FUNDING",
   "ADMIN_ADJUSTMENT",
   "BET_DEBIT",
+  "PLINKO_BET_DEBIT",
+  "PLINKO_SETTLEMENT_CREDIT",
+  "MINES_BET_DEBIT",
+  "MINES_SETTLEMENT_CREDIT",
   "SETTLEMENT_CREDIT",
 ] as const;
-export const financialLedgerReferenceTypes = ["USER", "BALANCE_ADJUSTMENT", "BET", "ROUND"] as const;
+export const financialLedgerReferenceTypes = ["USER", "BALANCE_ADJUSTMENT", "BET", "ROUND", "MINES_ROUND", "PLINKO_ROUND"] as const;
 
 export type FinancialLedgerActorType = (typeof financialLedgerActorTypes)[number];
 export type FinancialLedgerSource = (typeof financialLedgerSources)[number];
@@ -20,8 +25,8 @@ export type FinancialLedgerReconciliationEntry = {
 };
 
 function requireSafeInteger(value: number, name: string) {
-  if (!Number.isSafeInteger(value)) {
-    throw new RangeError(`${name} must be a safe integer`);
+  if (!isMoney(value)) {
+    throw new RangeError(`${name} must have safe integer minor units`);
   }
 }
 
@@ -29,7 +34,7 @@ export function calculateBalanceTransition(balanceBefore: number, delta: number)
   requireSafeInteger(balanceBefore, "balanceBefore");
   requireSafeInteger(delta, "delta");
 
-  const balanceAfter = balanceBefore + delta;
+  const balanceAfter = sumMoney([balanceBefore, delta]);
   requireSafeInteger(balanceAfter, "balanceAfter");
 
   if (balanceBefore < 0 || balanceAfter < 0) {
@@ -54,9 +59,9 @@ export function reconcileFinancialLedger(
   for (const entry of orderedEntries) {
     if (
       !Number.isSafeInteger(entry.entrySequence) ||
-      !Number.isSafeInteger(entry.delta) ||
-      !Number.isSafeInteger(entry.balanceBefore) ||
-      !Number.isSafeInteger(entry.balanceAfter)
+      !isMoney(entry.delta) ||
+      !isMoney(entry.balanceBefore) ||
+      !isMoney(entry.balanceAfter)
     ) {
       arithmeticConsistent = false;
       chainConsistent = false;
@@ -67,12 +72,12 @@ export function reconcileFinancialLedger(
       chainConsistent = false;
     }
 
-    if (entry.balanceAfter !== entry.balanceBefore + entry.delta) {
+    if (toMinorUnits(entry.balanceAfter) !== toMinorUnits(entry.balanceBefore) + toMinorUnits(entry.delta)) {
       arithmeticConsistent = false;
     }
 
     expectedBalanceBefore = entry.balanceAfter;
-    totalDelta += entry.delta;
+    totalDelta = sumMoney([totalDelta, entry.delta]);
   }
 
   const ledgerBalance = orderedEntries.length > 0 ? orderedEntries.at(-1)!.balanceAfter : 0;

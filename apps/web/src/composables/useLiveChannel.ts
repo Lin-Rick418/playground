@@ -15,6 +15,8 @@ type UseLiveChannelOptions = {
   getSubscribeMessage: () => LiveClientMessage;
   onMessage: (message: ChannelMessage) => void | Promise<void>;
   onError?: (message: string) => void;
+  /** Runs after every successful subscription, including reconnects. */
+  onConnected?: () => void | Promise<void>;
 };
 
 export function useLiveChannel(options: UseLiveChannelOptions) {
@@ -76,6 +78,7 @@ export function useLiveChannel(options: UseLiveChannelOptions) {
         role: message.data.role,
         isActive: message.data.isActive,
         balance: message.data.balance,
+        walletVersion: message.data.walletVersion,
       });
       return;
     }
@@ -97,6 +100,7 @@ export function useLiveChannel(options: UseLiveChannelOptions) {
             "WebSocket message",
           );
           ws.send(JSON.stringify(subscription));
+          void options.onConnected?.();
         } catch {
           options.onError?.("即時連線訂閱格式錯誤");
           ws.close(1002, "Invalid subscription message");

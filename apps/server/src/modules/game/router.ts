@@ -72,6 +72,7 @@ function buildBetSuccessResponse(body: Record<string, unknown>) {
     round: body.round,
     bets,
     balance: body.balance,
+    walletVersion: body.walletVersion,
   };
 }
 
@@ -106,6 +107,7 @@ gameRouter.get("/tables/:tableId/state", async (req: AuthenticatedRequest, res) 
     ...publicState,
     myBets: userState.myBets,
     balance: userState.balance,
+    walletVersion: userState.walletVersion,
     config: getRoundConfig(),
   });
 });

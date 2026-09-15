@@ -1,4 +1,8 @@
 import { z } from "zod";
+export * from "./plinko.js";
+import { isMoney } from "./money.js";
+export { toMinorUnits, fromMinorUnits, minorUnitsToDecimal, sumMoney, isMoney, roundHalfUp } from "./money.js";
+export const moneySchema = z.number().refine(isMoney, "Money must have at most two decimal places");
 
 const idSchema = z.string().min(1);
 const isoDateTimeSchema = z.string().datetime({ offset: true });
@@ -23,7 +27,8 @@ export const userSchema = z
     username: z.string().min(1),
     role: userRoleSchema,
     isActive: z.boolean(),
-    balance: z.number().int(),
+    balance: moneySchema,
+    walletVersion: z.number().int().nonnegative().safe().optional(),
   })
   .strict();
 
@@ -83,7 +88,7 @@ export const currentBetSchema = z
     id: idSchema,
     betType: betTypeSchema,
     amount: z.number().int().positive(),
-    payout: z.number().int().nonnegative(),
+    payout: moneySchema.refine((value) => value >= 0),
     createdAt: isoDateTimeSchema,
   })
   .strict();
@@ -159,7 +164,8 @@ export const tableSnapshotSchema = z
 
 export const tableStateResponseSchema = tableSnapshotSchema.extend({
   myBets: z.array(currentBetSchema),
-  balance: z.number().int(),
+  balance: moneySchema,
+    walletVersion: z.number().int().nonnegative().safe().optional(),
   config: roundConfigSchema,
 });
 
@@ -167,8 +173,8 @@ export const roundHistoryItemSchema = z
   .object({
     id: idSchema,
     createdAt: isoDateTimeSchema,
-    totalAmount: z.number().int().nonnegative(),
-    totalPayout: z.number().int().nonnegative(),
+    totalAmount: moneySchema.refine((value) => value >= 0),
+    totalPayout: moneySchema.refine((value) => value >= 0),
     bets: z.array(currentBetSchema),
     round: z
       .object({
@@ -201,9 +207,9 @@ export const dailyProfitResponseSchema = z
     windowEnd: isoDateTimeSchema,
     formula: z.literal("TOTAL_PAYOUT_MINUS_TOTAL_BET"),
     recognitionTime: z.literal("ROUND_SETTLED_AT"),
-    totalBet: z.number().int().nonnegative(),
-    totalPayout: z.number().int().nonnegative(),
-    netProfit: z.number().int(),
+    totalBet: moneySchema.refine((value) => value >= 0),
+    totalPayout: moneySchema.refine((value) => value >= 0),
+    netProfit: moneySchema,
     calculatedAt: isoDateTimeSchema,
   })
   .strict();
@@ -274,7 +280,8 @@ export const placeBetResponseSchema = z
     table: gameTableSchema,
     round: activeRoundSchema,
     bets: z.array(currentBetSchema),
-    balance: z.number().int().nonnegative(),
+    balance: moneySchema.refine((value) => value >= 0),
+    walletVersion: z.number().int().nonnegative().safe().optional(),
   })
   .strict();
 
@@ -308,7 +315,8 @@ export const tableUserSnapshotSchema = z
     tableId: idSchema,
     currentRoundId: z.string(),
     myBets: z.array(currentBetSchema),
-    balance: z.number().int(),
+    balance: moneySchema,
+    walletVersion: z.number().int().nonnegative().safe().optional(),
     isActive: z.boolean(),
     serverTime: isoDateTimeSchema,
   })
@@ -319,6 +327,7 @@ export const userSnapshotSchema = userSchema.extend({
 });
 
 export const liveClientMessageSchema = z.discriminatedUnion("type", [
+  z.object({ type: z.literal("subscribe_user") }).strict(),
   z.object({ type: z.literal("subscribe_lobby") }).strict(),
   z.object({ type: z.literal("subscribe_table"), tableId: idSchema }).strict(),
 ]);
@@ -373,3 +382,30 @@ export type TableUserSnapshot = z.infer<typeof tableUserSnapshotSchema>;
 export type UserSnapshot = z.infer<typeof userSnapshotSchema>;
 export type LiveClientMessage = z.infer<typeof liveClientMessageSchema>;
 export type LiveServerMessage = z.infer<typeof liveServerMessageSchema>;
+
+
+export const minesStartRequestSchema = z.object({
+  amount: z.number().int().min(100).max(5000).refine((value) => value % 100 === 0),
+  mineCount: z.number().int().min(3).max(24),
+}).strict();
+export const minesRevealRequestSchema = z.object({ cellIndex: z.number().int().min(0).max(24) }).strict();
+export const minesConfigResponseSchema = z.object({
+  boardSize: z.literal(25), minMines: z.literal(3), maxMines: z.literal(24),
+  minBet: z.literal(100), maxBet: z.literal(5000), betStep: z.literal(100),
+  rtp: z.literal(0.95), enabled: z.boolean(),
+}).strict();
+export const minesRoundSchema = z.object({
+  id: z.string().uuid(), amount: moneySchema, mineCount: z.number().int().min(1).max(24),
+  revealedCells: z.array(z.number().int().min(0).max(24)).max(25),
+  status: z.enum(["ACTIVE", "LOST", "CASHED_OUT"]), payout: moneySchema,
+  cashoutAmount: moneySchema, multiplier: z.number().nonnegative(),
+  nextMultiplier: z.number().nonnegative().nullable(),
+  mineCells: z.array(z.number().int().min(0).max(24)).nullable(),
+  createdAt: isoDateTimeSchema, settledAt: isoDateTimeSchema.nullable(),
+  version: z.number().int().positive(), ruleVersion: z.literal(1),
+}).strict();
+export const minesActiveResponseSchema = z.object({ round: minesRoundSchema.nullable() }).strict();
+export const minesRoundResponseSchema = z.object({ round: minesRoundSchema }).strict();
+export const minesMutationResponseSchema = z.object({ round: minesRoundSchema, balance: moneySchema, walletVersion: z.number().int().nonnegative().safe().optional() }).strict();
+export const minesHistoryResponseSchema = z.object({ items: z.array(minesRoundSchema), nextCursor: z.string().nullable() }).strict();
+export type MinesRound = z.infer<typeof minesRoundSchema>;

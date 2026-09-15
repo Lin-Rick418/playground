@@ -86,4 +86,43 @@ describe("auth store", () => {
     expect(store.error).toBe("此帳號已在其他裝置登入，您已被登出。");
     expect(getStoredToken()).toBe("");
   });
+
+  it("does not let a late wallet refresh overwrite a newer live snapshot", async () => {
+    const store = useAuthStore();
+    let resolveRequest!: (value: { data: unknown }) => void;
+    vi.spyOn(api, "get").mockImplementationOnce(() => new Promise((resolve) => { resolveRequest = resolve; }));
+
+    const request = store.fetchMe({ preserveNewerLiveSnapshot: true });
+    store.setUser({ ...user, balance: 999.75 });
+    resolveRequest({ data: { ...user, balance: 900 } });
+
+    await expect(request).resolves.toMatchObject({ balance: 999.75 });
+    expect(store.user?.balance).toBe(999.75);
+  });
+
+  it("uses walletVersion to accept a newer HTTP value after a live update and reject older balances", () => {
+    const store = useAuthStore();
+    store.setUser({ ...user, balance: 800, walletVersion: 4 });
+    store.applyUserSnapshot({ ...user, balance: 900, walletVersion: 5 });
+    expect(store.user?.balance).toBe(900);
+    store.patchBalance(700, 4);
+    expect(store.user?.balance).toBe(900);
+    store.patchBalance(999, 6);
+    expect(store.user).toMatchObject({ balance: 999, walletVersion: 6 });
+    expect(store.walletVersion).toBe(6);
+  });
+});
+
+it("ignores an account snapshot that completes after a different login", async () => {
+  const store = useAuthStore();
+  store.setUser({ ...user, walletVersion: 1 });
+  store.token = "first-token";
+  let resolve!: (value: { data: unknown }) => void;
+  vi.spyOn(api, "get").mockImplementationOnce(() => new Promise((done) => { resolve = done; }));
+  const pending = store.fetchMe({ preserveNewerLiveSnapshot: true });
+  store.setUser({ ...user, id: "other-user", balance: 500, walletVersion: 2 });
+  store.token = "second-token";
+  resolve({ data: { ...user, balance: 9999, walletVersion: 100 } });
+  await pending;
+  expect(store.user).toMatchObject({ id: "other-user", balance: 500, walletVersion: 2 });
 });

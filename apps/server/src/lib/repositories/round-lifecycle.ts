@@ -22,7 +22,7 @@ export async function cancelRoundAndRefundBets(
 
   const refundRows = await queryRows(
     executor,
-    `SELECT user_id, SUM(amount)::bigint AS refund
+    `SELECT user_id, SUM(amount) AS refund
      FROM bets
      WHERE round_id = $1
      GROUP BY user_id

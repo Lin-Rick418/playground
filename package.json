@@ -43,7 +43,8 @@
     "test:ops": "bash deploy/tests/run.sh",
     "db:seed": "npm run db:seed --workspace server",
     "test:deploy": "node deploy/scripts/test-systemd-hardening.mjs",
-    "test:e2e": "playwright test"
+    "test:e2e": "playwright test",
+    "test:pwa": "playwright test --config playwright.pwa.config.ts"
   },
   "devDependencies": {
     "@eslint/js": "10.0.1",

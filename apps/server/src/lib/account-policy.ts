@@ -1,3 +1,4 @@
+import { toMinorUnits, fromMinorUnits, isMoney } from "@baccarat/contracts";
 import { z } from "zod";
 import { betTypes, type BetType } from "../types/domain.js";
 
@@ -5,7 +6,7 @@ export const MONEY_DENOMINATION = 100;
 export const MAX_ACCOUNT_BALANCE = 2_000_000_000;
 export const USERNAME_MIN_LENGTH = 3;
 export const USERNAME_MAX_LENGTH = 24;
-export const PASSWORD_MIN_LENGTH = 12;
+export const PASSWORD_MIN_LENGTH = 6;
 export const PASSWORD_MAX_LENGTH = 72;
 export const PASSWORD_BCRYPT_ROUNDS = 12;
 
@@ -26,8 +27,8 @@ export function getPasswordPolicyViolation(password: string, username?: string) 
   if (!printableAsciiPattern.test(password)) {
     return "Password must use printable ASCII characters without spaces";
   }
-  if (!/[a-z]/.test(password) || !/[A-Z]/.test(password) || !/[0-9]/.test(password) || !/[^A-Za-z0-9]/.test(password)) {
-    return "Password must include uppercase, lowercase, number, and symbol characters";
+  if (!/[A-Za-z]/.test(password) || !/[0-9]/.test(password)) {
+    return "Password must include an English letter and a number";
   }
   const normalizedUsername = username ? normalizeUsername(username) : "";
   if (normalizedUsername && password.toLowerCase().includes(normalizedUsername)) {
@@ -161,17 +162,15 @@ export function getMaximumPayout(betType: BetType, amount: number) {
 }
 
 export function getSafeBalanceAfterChange(balance: number, change: number) {
-  if (!Number.isSafeInteger(balance) || !Number.isSafeInteger(change)) {
+  if (!isMoney(balance) || !isMoney(change)) {
     return null;
   }
-  const nextBalance = balance + change;
-  return Number.isSafeInteger(nextBalance) && nextBalance >= 0 && nextBalance <= MAX_ACCOUNT_BALANCE
-    ? nextBalance
-    : null;
+  const nextMinor = toMinorUnits(balance) + toMinorUnits(change);
+  return nextMinor >= 0n && nextMinor <= toMinorUnits(MAX_ACCOUNT_BALANCE) ? fromMinorUnits(nextMinor) : null;
 }
 
 export function assertAccountBalance(balance: number) {
-  if (!Number.isSafeInteger(balance) || balance < 0 || balance > MAX_ACCOUNT_BALANCE) {
+  if (!isMoney(balance) || balance < 0 || balance > MAX_ACCOUNT_BALANCE) {
     throw new RangeError("Account balance is outside the supported range");
   }
 }

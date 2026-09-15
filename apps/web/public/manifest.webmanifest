@@ -1,0 +1,31 @@
+{
+  "name": "Casino",
+  "short_name": "Casino",
+  "id": "/",
+  "scope": "/",
+  "start_url": "/login",
+  "display": "standalone",
+  "lang": "zh-Hant",
+  "theme_color": "#1f6a45",
+  "background_color": "#093020",
+  "icons": [
+    {
+      "src": "/icons/casino-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "/icons/casino-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "/icons/casino-maskable-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "maskable"
+    }
+  ]
+}

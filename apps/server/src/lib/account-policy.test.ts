@@ -20,9 +20,20 @@ test("normalizes usernames before enforcing the canonical format", () => {
 
 test("enforces password strength and prevents username inclusion", () => {
   assert.match(getPasswordPolicyViolation("short") ?? "", /at least/);
-  assert.match(getPasswordPolicyViolation("OnlyLettersHere!") ?? "", /uppercase, lowercase, number/);
+  assert.match(getPasswordPolicyViolation("OnlyLettersHere!") ?? "", /English letter and a number/);
   assert.match(getPasswordPolicyViolation("Alice!Secure2026", "alice") ?? "", /username/);
   assert.equal(getPasswordPolicyViolation("Strong!Pass2026", "alice"), null);
+});
+
+test("accepts passwords with at least six characters, an English letter and a number", () => {
+  for (const password of ["abc123", "ABC123", "Abc123", "a12345", "abcdef1", "abc12!", "a".repeat(71) + "1"]) {
+    assert.equal(getPasswordPolicyViolation(password), null);
+    assert.equal(changePasswordSchema.safeParse({ currentPassword: "legacy", newPassword: password }).success, true);
+  }
+  for (const password of ["ab123", "abcdef", "123456", "!!!123", "abc 12", "中文abc1", "a".repeat(72) + "1"]) {
+    assert.notEqual(getPasswordPolicyViolation(password), null);
+    assert.equal(changePasswordSchema.safeParse({ currentPassword: "legacy", newPassword: password }).success, false);
+  }
 });
 
 test("rejects unsafe, non-denominated, duplicate, and extra bet inputs", () => {

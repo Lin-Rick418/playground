@@ -1,3 +1,4 @@
+import { fromMinorUnits, toMinorUnits, sumMoney, isMoney, minorUnitsToDecimal } from "@baccarat/contracts";
 import { randomUUID } from "node:crypto";
 import { betTypes, type BetType, type GameRoundRecord, type RoundStatus, type RoundWinner } from "../../types/domain.js";
 import type { Card } from "../baccarat.js";
@@ -145,8 +146,8 @@ export async function listUserHistory(
   const pageRows = rows.slice(0, limit);
   const items = pageRows.map((row: DbRow) => {
     const bets = parseJsonValue<{ id: string; betType: BetType; amount: number; payout: number; createdAt: string }[]>(row.bets);
-    const totalAmount = bets.reduce((sum: number, bet) => sum + bet.amount, 0);
-    const totalPayout = bets.reduce((sum: number, bet) => sum + bet.payout, 0);
+    const totalAmount = sumMoney(bets.map((bet) => bet.amount));
+    const totalPayout = sumMoney(bets.map((bet) => bet.payout));
 
     return {
       id: String(row.round_id),
@@ -188,24 +189,26 @@ export async function getUserDailyProfit(
 ) {
   const row = await queryRow(
     executor,
-    `SELECT
-       COALESCE(SUM(b.amount), 0) AS total_bet,
-       COALESCE(SUM(b.payout), 0) AS total_payout
-     FROM bets b
-     JOIN game_rounds g ON g.id = b.round_id
-     WHERE b.user_id = $1
-       AND g.status = 'SETTLED'
-       AND g.settled_at >= $2
-       AND g.settled_at < $3`,
+    `SELECT COALESCE(SUM(amount), 0) AS total_bet, COALESCE(SUM(payout), 0) AS total_payout
+     FROM (
+       SELECT b.amount, b.payout FROM bets b JOIN game_rounds g ON g.id = b.round_id
+       WHERE b.user_id = $1 AND g.status = 'SETTLED' AND g.settled_at >= $2 AND g.settled_at < $3
+       UNION ALL
+       SELECT amount, payout FROM mines_rounds
+       WHERE user_id = $1 AND status <> 'ACTIVE' AND settled_at >= $2 AND settled_at < $3
+       UNION ALL
+       SELECT amount, payout FROM plinko_rounds
+       WHERE user_id = $1 AND settled_at >= $2 AND settled_at < $3
+     ) AS settled_bets`,
     [userId, window.start.toISOString(), window.end.toISOString()],
   );
-  const totalBet = Number(row?.total_bet ?? 0);
-  const totalPayout = Number(row?.total_payout ?? 0);
+  const totalBet = fromMinorUnits(toMinorUnits(String(row?.total_bet ?? 0)));
+  const totalPayout = fromMinorUnits(toMinorUnits(String(row?.total_payout ?? 0)));
 
   return {
     totalBet,
     totalPayout,
-    netProfit: totalPayout - totalBet,
+    netProfit: sumMoney([totalPayout, -totalBet]),
   };
 }
 
@@ -278,7 +281,7 @@ export async function updateBetPayouts(
     return;
   }
 
-  if (payouts.some(({ payout }) => !Number.isSafeInteger(payout) || payout < 0 || payout > MAX_ACCOUNT_BALANCE)) {
+  if (payouts.some(({ payout }) => !isMoney(payout) || payout < 0 || payout > MAX_ACCOUNT_BALANCE)) {
     throw new RangeError("Bet payout violates money policy");
   }
 
@@ -286,8 +289,8 @@ export async function updateBetPayouts(
     const values: unknown[] = [];
     const rows = batch.map((item, index) => {
       const offset = index * 2;
-      values.push(item.betId, item.payout);
-      return `($${offset + 1}::text, $${offset + 2}::integer)`;
+      values.push(item.betId, minorUnitsToDecimal(toMinorUnits(item.payout)));
+      return `($${offset + 1}::text, $${offset + 2}::numeric(20,2))`;
     });
     await executor.query(
       `UPDATE bets AS bet
@@ -319,7 +322,8 @@ export async function getUserUnsettledMaximumPayout(userId: string, executor: Db
   if (!Number.isSafeInteger(maximumPayout)) {
     throw new RangeError("Unsettled payout exposure is outside the supported range");
   }
-  return maximumPayout;
+  const mines = await queryRow(executor, "SELECT COALESCE(SUM(maximum_payout), 0) AS exposure FROM mines_rounds WHERE user_id = $1 AND status = 'ACTIVE'", [userId]);
+  return fromMinorUnits(toMinorUnits(maximumPayout) + toMinorUnits(String(mines?.exposure ?? 0)));
 }
 
 export async function findRoundById(

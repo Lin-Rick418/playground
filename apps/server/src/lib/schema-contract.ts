@@ -5,16 +5,30 @@ import { coreIntegrityConstraints } from "./database-integrity.js";
 type SchemaExecutor = Pick<Pool | PoolClient, "query">;
 
 const columns = {
+  plinko_rounds: {
+    id: ["text", "NO"], user_id: ["text", "NO"], amount: ["numeric", "NO"],
+    rows: ["integer", "NO"], risk: ["text", "NO"], path: ["ARRAY", "NO"],
+    slot_index: ["integer", "NO"], multiplier_units: ["integer", "NO"], payout: ["numeric", "NO"],
+    rule_version: ["integer", "NO"], created_at: ["timestamp with time zone", "NO"],
+    settled_at: ["timestamp with time zone", "NO"],
+  },
+  mines_rounds: {
+    id: ["text", "NO"], user_id: ["text", "NO"], amount: ["numeric", "NO"],
+    mine_count: ["integer", "NO"], mine_cells: ["ARRAY", "NO"], revealed_cells: ["ARRAY", "NO"],
+    status: ["text", "NO"], payout: ["numeric", "NO"], maximum_payout: ["numeric", "NO"],
+    rule_version: ["integer", "NO"], version: ["integer", "NO"],
+    created_at: ["timestamp with time zone", "NO"], settled_at: ["timestamp with time zone", "YES"],
+  },
   game_tables: {
     id: ["text", "NO"], code: ["text", "NO"], name: ["text", "NO"], display_order: ["integer", "NO"],
     round_duration_ms: ["integer", "NO"], round_phase_offset_ms: ["integer", "NO"],
-    round_schedule_version: ["integer", "NO"], min_bet: ["integer", "NO"], max_bet: ["integer", "NO"],
+    round_schedule_version: ["integer", "NO"], min_bet: ["numeric", "NO"], max_bet: ["numeric", "NO"],
     current_shoe_id: ["text", "NO"], shoe_state: ["jsonb", "NO"], created_at: ["timestamp with time zone", "NO"],
     is_active: ["boolean", "NO"],
   },
   users: {
     id: ["text", "NO"], username: ["text", "NO"], password_hash: ["text", "NO"], role: ["text", "NO"],
-    is_active: ["boolean", "NO"], balance: ["integer", "NO"], created_at: ["timestamp with time zone", "NO"],
+    is_active: ["boolean", "NO"], balance: ["numeric", "NO"], balance_version: ["bigint", "NO"], created_at: ["timestamp with time zone", "NO"],
     updated_at: ["timestamp with time zone", "NO"],
   },
   game_rounds: {
@@ -27,10 +41,10 @@ const columns = {
   },
   bets: {
     id: ["text", "NO"], user_id: ["text", "NO"], round_id: ["text", "NO"], bet_type: ["text", "NO"],
-    amount: ["integer", "NO"], payout: ["integer", "NO"], created_at: ["timestamp with time zone", "NO"],
+    amount: ["numeric", "NO"], payout: ["numeric", "NO"], created_at: ["timestamp with time zone", "NO"],
   },
   balance_adjustments: {
-    id: ["text", "NO"], admin_id: ["text", "NO"], user_id: ["text", "NO"], amount: ["integer", "NO"],
+    id: ["text", "NO"], admin_id: ["text", "NO"], user_id: ["text", "NO"], amount: ["numeric", "NO"],
     note: ["text", "YES"], created_at: ["timestamp with time zone", "NO"],
   },
   login_rate_limits: {
@@ -46,7 +60,7 @@ const columns = {
   financial_ledger_entries: {
     id: ["text", "NO"], entry_sequence: ["bigint", "NO"], user_id: ["text", "NO"], actor_type: ["text", "NO"],
     actor_id: ["text", "YES"], source: ["text", "NO"], reference_type: ["text", "NO"], reference_id: ["text", "NO"],
-    delta: ["integer", "NO"], balance_before: ["integer", "NO"], balance_after: ["integer", "NO"],
+    delta: ["numeric", "NO"], balance_before: ["numeric", "NO"], balance_after: ["numeric", "NO"],
     metadata: ["jsonb", "NO"], created_at: ["timestamp with time zone", "NO"],
   },
   service_heartbeats: {
@@ -75,6 +89,8 @@ const columns = {
 } as const;
 
 const requiredConstraints = [
+  "plinko_rounds_path", "plinko_rounds_payout", "plinko_rounds_settled",
+  "mines_rounds_lifecycle", "mines_rounds_board",
   ...coreIntegrityConstraints.map(({ name }) => name),
   "users_balance_policy", "game_tables_bet_policy", "bets_amount_policy", "balance_adjustments_amount_policy",
   "game_rounds_cancellation_reason_ck", "financial_ledger_user_fk", "financial_ledger_balance_transition",
@@ -83,6 +99,8 @@ const requiredConstraints = [
 ] as const;
 
 const requiredIndexes = [
+  "idx_plinko_history",
+  "idx_mines_one_active_per_user", "idx_mines_history",
   "idx_game_rounds_one_active_per_table", "idx_users_username_normalized", "uq_game_tables_display_order",
   "idx_game_rounds_active", "idx_game_rounds_settled", "idx_game_rounds_shoe_settled", "idx_bets_user_round_created",
   "idx_bets_round_created", "idx_login_rate_limits_expires", "idx_financial_ledger_user_sequence",

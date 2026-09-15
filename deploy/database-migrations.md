@@ -54,3 +54,25 @@ ORDER BY version;
 ```
 
 若 status 回報 checksum drift 或 out-of-order history，將資料庫視為需人工處理的異常狀態；先比對部署 artifact 與資料庫來源，不得直接改 history 來繞過檢查。
+
+
+## Migration 10：Mines 與兩位小數錢包
+
+此版本不是僅新增欄位，必須安排維護時段，停止 API／worker 寫入、完成備份、build、migrate，再一起更新前端並要求既有分頁重新載入。不要讓舊版整數 client 連到新版小數 API。
+
+- 金額改為 `NUMERIC(20,2)`，原本 100 幣仍為 100.00 幣，沒有單位倍率轉換。
+- Migration 在同一 transaction 內重建 balance trigger 與 reconciliation view；ledger 原有紀錄與唯一約束保留。
+- `users.balance_version` 由最後一筆 ledger sequence 回填，之後隨金額異動更新，供 client 丟棄舊餘額。
+- 部署後檢查 `SELECT * FROM financial_balance_reconciliation WHERE NOT is_reconciled;`。正常應為空；並驗證登入、100 幣投注、Mines 收款、小數餘額切換百家樂及 history/daily-profit。
+- `MINES_ENABLED=false` 並重新啟動 API 可停止新局。讀取、續玩與收款仍可用，worker 不需要替 Mines 計時結算。
+- 產生小數交易後不能回退至舊版整數程式或將欄位改回 integer。優先停止新局，保留結算服務並採向前修復；不要透過捨去小數或刪除帳本回退。
+- Mines 的 idempotency keys 與遊戲紀錄持續保留，不受百家樂 retry metadata 的七日清理影響，避免長期保留局的重試變成新下注。
+
+## Plinko（migration 11）
+
+1. 保留現有 database 備份，停止 API／worker，避免混用 schema 版本。
+2. 以新版程式執行 `npm run db:migrate`，新增 `plinko_rounds`、歷史索引，擴充 ledger source/reference 與 per-user rate-limit scope；既有帳戶、Mines 及百家樂資料均保留。
+3. 執行 `npm run db:migrate:status`，確認 schema 為 11，再啟動 API／worker 與新版 frontend。
+4. 驗證 `/api/plinko/config` 的 27 組倍率、RTP 95%–96%、新局、歷史與 walletVersion，同時檢查 `financial_balance_reconciliation`。
+
+停止新投注可設定 `PLINKO_ENABLED=false` 並重啟 API；已提交請求的 idempotency replay 與歷史查詢繼續可用。若上線後需止血，保留新版 schema 與程式、關閉旗標，再 forward-fix。舊版程式的精確 schema fingerprint 不相容，不可直接回退 binary 或刪除 Plinko／ledger／idempotency 資料。Plinko 的 idempotency keys 永久保留，不可套用一般七日 retention。

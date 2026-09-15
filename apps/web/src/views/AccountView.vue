@@ -1,4 +1,6 @@
 <script setup lang="ts">
+import AppInput from "../components/ui/AppInput.vue";
+import AppButton from "../components/ui/AppButton.vue";
 import { computed, reactive, ref } from "vue";
 import { useRouter } from "vue-router";
 import { useAuthStore } from "../stores/auth";
@@ -40,36 +42,102 @@ async function submit() {
         <p class="topbar-label">Account Security</p>
         <h1>變更密碼</h1>
       </div>
-      <button class="button-secondary" type="button" @click="router.push(returnPath)">返回</button>
+      <AppButton
+        variant="secondary"
+        size="control"
+        class="button-secondary"
+        type="button"
+        @click="router.push(returnPath)"
+        >返回</AppButton
+      >
     </header>
 
     <form class="panel account-form" @submit.prevent="submit">
-      <p class="password-hint">新密碼須為 12–72 個 ASCII 字元，並包含英文大小寫、數字與符號，且不可包含帳號。</p>
+      <p class="password-hint">
+        新密碼至少 6 碼、最多 72 碼，須包含英文字母與數字；可使用符號，不可包含空白或帳號。
+      </p>
       <label class="field">
         <span>目前密碼</span>
-        <input v-model="form.currentPassword" type="password" autocomplete="current-password" required maxlength="256" />
+        <AppInput
+          v-model="form.currentPassword"
+          type="password"
+          autocomplete="current-password"
+          required
+          maxlength="256"
+        />
       </label>
       <label class="field">
         <span>新密碼</span>
-        <input v-model="form.newPassword" type="password" autocomplete="new-password" required minlength="12" maxlength="72" />
+        <AppInput
+          v-model="form.newPassword"
+          type="password"
+          autocomplete="new-password"
+          required
+          minlength="6"
+          maxlength="72"
+          pattern="(?=.*[A-Za-z])(?=.*[0-9])[\x21-\x7E]{6,72}"
+        />
       </label>
       <label class="field">
         <span>確認新密碼</span>
-        <input v-model="form.confirmPassword" type="password" autocomplete="new-password" required minlength="12" maxlength="72" />
+        <AppInput
+          v-model="form.confirmPassword"
+          type="password"
+          autocomplete="new-password"
+          required
+          minlength="6"
+          maxlength="72"
+          pattern="(?=.*[A-Za-z])(?=.*[0-9])[\x21-\x7E]{6,72}"
+        />
       </label>
       <p v-if="error" class="error-text">{{ error }}</p>
       <p v-if="success" class="success-text">{{ success }}</p>
-      <button class="button-primary" type="submit" :disabled="saving">{{ saving ? "更新中..." : "更新密碼" }}</button>
+      <AppButton
+        variant="primary"
+        size="action"
+        class="button-primary"
+        type="submit"
+        :disabled="saving"
+        >{{ saving ? "更新中..." : "更新密碼" }}</AppButton
+      >
     </form>
   </main>
 </template>
 
 <style scoped lang="scss">
-.account-page { display: grid; gap: $space-5; max-width: 720px; }
-.account-head { display: flex; align-items: center; justify-content: space-between; padding: $space-5; }
-.account-head h1 { margin: $space-1 0 0; }
-.topbar-label { margin: 0; color: rgba(247, 244, 233, 0.6); font-size: 12px; letter-spacing: 0.16em; text-transform: uppercase; }
-.account-form { display: flex; flex-direction: column; gap: $space-4; padding: $space-6; }
-.password-hint { margin: 0; color: rgba(247, 244, 233, 0.68); line-height: 1.6; }
-.success-text { color: #8ce6a8; }
+.account-page {
+  display: grid;
+  gap: $space-5;
+  max-width: 720px;
+}
+.account-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: $space-5;
+}
+.account-head h1 {
+  margin: $space-1 0 0;
+}
+.topbar-label {
+  margin: 0;
+  color: rgba(247, 244, 233, 0.6);
+  font-size: 12px;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+}
+.account-form {
+  display: flex;
+  flex-direction: column;
+  gap: $space-4;
+  padding: $space-6;
+}
+.password-hint {
+  margin: 0;
+  color: rgba(247, 244, 233, 0.68);
+  line-height: 1.6;
+}
+.success-text {
+  color: #8ce6a8;
+}
 </style>

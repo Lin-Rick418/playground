@@ -118,4 +118,45 @@ describe("useLiveChannel", () => {
     expect(mocks.createLiveSocket).toHaveBeenCalledOnce();
     wrapper.unmount();
   });
+
+  it("keeps the wallet version from user snapshots so stale balances are rejected", () => {
+    const wrapper = mountChannel();
+    const authStore = useAuthStore();
+    authStore.setUser({
+      id: "player",
+      username: "player",
+      role: "PLAYER",
+      isActive: true,
+      balance: 500,
+      walletVersion: 4,
+    });
+
+    callbackAt(0).onMessage({
+      type: "user_snapshot",
+      data: {
+        id: "player",
+        username: "player",
+        role: "PLAYER",
+        isActive: true,
+        balance: 750,
+        walletVersion: 5,
+        serverTime: "2026-09-14T10:00:00.000Z",
+      },
+    });
+    expect(authStore.user).toMatchObject({ balance: 750, walletVersion: 5 });
+    callbackAt(0).onMessage({
+      type: "user_snapshot",
+      data: {
+        id: "player",
+        username: "player",
+        role: "PLAYER",
+        isActive: true,
+        balance: 600,
+        walletVersion: 4,
+        serverTime: "2026-09-14T10:00:01.000Z",
+      },
+    });
+    expect(authStore.user).toMatchObject({ balance: 750, walletVersion: 5 });
+    wrapper.unmount();
+  });
 });

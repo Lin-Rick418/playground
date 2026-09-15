@@ -50,8 +50,8 @@ jobs:
           cache: npm
       - name: Install locked dependencies
         run: npm ci
-      - name: Install Chromium
-        run: npx playwright install --with-deps chromium
+      - name: Install Chromium and WebKit
+        run: npx playwright install --with-deps chromium webkit
       - name: Prepare test database
         run: npm run db:migrate && npm run db:bootstrap && npm run db:seed
       - name: Run player main-flow E2E

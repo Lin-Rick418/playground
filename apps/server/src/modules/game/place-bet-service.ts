@@ -1,4 +1,4 @@
-import type { ApiErrorCode } from "@baccarat/contracts";
+import { toMinorUnits, type ApiErrorCode } from "@baccarat/contracts";
 import {
   getMaximumPayout,
   getSafeBalanceAfterChange,
@@ -134,10 +134,9 @@ export async function placeBets(input: PlaceBetsInput): Promise<PlaceBetResult> 
       ),
     ]);
     const maximumPossibleBalance =
-      balanceAfterStake + existingUnsettledMaximumPayout + newMaximumPayout;
+      toMinorUnits(balanceAfterStake) + toMinorUnits(existingUnsettledMaximumPayout) + toMinorUnits(newMaximumPayout);
     if (
-      !Number.isSafeInteger(maximumPossibleBalance) ||
-      maximumPossibleBalance > MAX_ACCOUNT_BALANCE
+      maximumPossibleBalance > toMinorUnits(MAX_ACCOUNT_BALANCE)
     ) {
       return fail(400, "VALIDATION_ERROR", "Bet could exceed the supported account balance");
     }
@@ -177,6 +176,7 @@ export async function placeBets(input: PlaceBetsInput): Promise<PlaceBetResult> 
       round: activeRound,
       bets: placedBets,
       balance: updatedUser.balance,
+      walletVersion: updatedUser.walletVersion,
     };
     await publishLiveEvent(
       { type: "user_changed", userId: user.id, reason: "bet_placed", at: new Date().toISOString() },

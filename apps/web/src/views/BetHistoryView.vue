@@ -1,8 +1,11 @@
 <script setup lang="ts">
+import AppButton from "../components/ui/AppButton.vue";
+import AppPageHeader from "../components/ui/AppPageHeader.vue";
 import { computed, onMounted, ref } from "vue";
 import { useRouter } from "vue-router";
 import { BET_TYPE_LABELS } from "../const/game";
 import { useGameStore } from "../stores/game";
+import { formatMoney, sumMoney } from "../lib/money";
 import type { BetType, Card, RoundHistoryItem } from "../types/domain";
 
 const router = useRouter();
@@ -74,8 +77,8 @@ function betGroups(item: RoundHistoryItem) {
   const groups = new Map<BetType, { amount: number; payout: number }>();
   for (const bet of item.bets) {
     const group = groups.get(bet.betType) ?? { amount: 0, payout: 0 };
-    group.amount += bet.amount;
-    group.payout += bet.payout;
+    group.amount = sumMoney([group.amount, bet.amount]);
+    group.payout = sumMoney([group.payout, bet.payout]);
     groups.set(bet.betType, group);
   }
   return [...groups].map(([betType, group]) => ({
@@ -88,7 +91,7 @@ function betGroups(item: RoundHistoryItem) {
 }
 
 function roundNetAmount(item: RoundHistoryItem) {
-  return item.totalPayout - item.totalAmount;
+  return sumMoney([item.totalPayout, -item.totalAmount]);
 }
 
 function cardSuitSymbol(suit: Card["suit"]) {
@@ -109,17 +112,12 @@ onMounted(() => {
 
 <template>
   <main class="player-page history-page">
-    <header class="page-header history-topbar">
-      <button
-        class="page-header-back history-back"
-        type="button"
-        aria-label="返回"
-        @click="router.back()"
-      >
-        ‹
-      </button>
-      <h1>投注紀錄</h1>
-    </header>
+    <AppPageHeader
+      class="history-topbar"
+      title="投注紀錄"
+      back-label="返回"
+      @back="router.back()"
+    />
 
     <div class="history-list" :aria-busy="isLoading">
       <p v-if="isLoading && recentHistory.length === 0" class="history-empty" role="status">
@@ -127,7 +125,9 @@ onMounted(() => {
       </p>
       <div v-else-if="loadError && recentHistory.length === 0" class="history-error" role="alert">
         <p>{{ loadError }}</p>
-        <button type="button" @click="loadHistory">重新載入</button>
+        <AppButton variant="secondary" size="control" type="button" @click="loadHistory"
+          >重新載入</AppButton
+        >
       </div>
       <p v-else-if="recentHistory.length === 0" class="history-empty" role="status">
         近七日沒有投注紀錄
@@ -151,16 +151,16 @@ onMounted(() => {
             >
               <span v-if="bet.won" class="win-tag">WIN</span>
               <span class="stake-label">{{ bet.label }}</span>
-              <strong>{{ bet.amount.toLocaleString() }}</strong>
+              <strong>{{ formatMoney(bet.amount) }}</strong>
             </div>
           </div>
           <div
             class="round-net"
             role="group"
-            :aria-label="`本局收益 ${roundNetAmount(item).toLocaleString()}`"
+            :aria-label="`本局收益 ${formatMoney(roundNetAmount(item))}`"
           >
             <span class="coin-symbol" aria-hidden="true">$</span>
-            <strong aria-hidden="true">{{ roundNetAmount(item).toLocaleString() }}</strong>
+            <strong aria-hidden="true">{{ formatMoney(roundNetAmount(item)) }}</strong>
           </div>
         </div>
 
@@ -554,5 +554,4 @@ onMounted(() => {
 .hand-card.black {
   color: #16181d;
 }
-
 </style>
