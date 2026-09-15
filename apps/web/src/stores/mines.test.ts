@@ -2,8 +2,25 @@ import MockAdapter from "axios-mock-adapter";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { createPinia, setActivePinia } from "pinia";
 import { api } from "../lib/api";
-import { isValidMinesStake, PendingMinesMutationError, useMinesStore } from "./mines";
+import {
+  isValidMinesStake,
+  PendingMinesMutationError,
+  useMinesStore as createMinesStore,
+} from "./mines";
 import type { MinesRound } from "../types/domain";
+
+// Reuse the existing deterministic response fixtures at the transport boundary.
+// Actual WebSocket serialization/disconnects are covered in mines-rpc and E2E.
+function useMinesStore() {
+  const store = createMinesStore();
+  store.transport = async ({ action, idempotencyKey }) => {
+    const { kind, ...rest } = action;
+    const { roundId, ...payload } = rest as typeof rest & { roundId?: string };
+    const url = kind === "start" ? "/mines/rounds" : `/mines/rounds/${roundId}/${kind}`;
+    return (await api.post(url, payload, { headers: { "Idempotency-Key": idempotencyKey } })).data;
+  };
+  return store;
+}
 
 const now = "2026-09-14T10:00:00.000Z";
 const activeRound: MinesRound = {
@@ -164,12 +181,15 @@ describe("mines store", () => {
   });
   it("clears a definitive paused-game rejection so it cannot trap an old idempotency key", async () => {
     const store = useMinesStore();
-    mock.onGet("/mines/config").reply(200, {...config, enabled:false});
-    mock.onGet("/mines/active").reply(200, {round:null});
-    mock.onPost("/mines/rounds").replyOnce(503, {code:"SERVICE_UNAVAILABLE",message:"paused",requestId:"paused-1"});
-    await expect(store.start("user-a",100,3)).rejects.toMatchObject({response:{status:503}});
+    mock.onGet("/mines/config").reply(200, { ...config, enabled: false });
+    mock.onGet("/mines/active").reply(200, { round: null });
+    mock
+      .onPost("/mines/rounds")
+      .replyOnce(503, { code: "SERVICE_UNAVAILABLE", message: "paused", requestId: "paused-1" });
+    await expect(store.start("user-a", 100, 3)).rejects.toMatchObject({
+      response: { status: 503 },
+    });
     expect(store.pending).toBeNull();
     expect(store.config?.enabled).toBe(false);
   });
-
 });

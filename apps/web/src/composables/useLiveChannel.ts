@@ -1,10 +1,12 @@
-import { onMounted, onUnmounted } from "vue";
+import { onMounted, onUnmounted, ref } from "vue";
 import { useRouter } from "vue-router";
 import { liveClientMessageSchema, type LiveClientMessage } from "@baccarat/contracts";
 import { createLiveSocket, type LiveMessage } from "../lib/live";
 import { getAuthRevocationMessage } from "../lib/auth-session-message";
 import { parseRuntimeContract } from "../lib/contracts";
 import { useAuthStore } from "../stores/auth";
+import { createPlinkoRpc } from "../lib/plinko-rpc";
+import { createMinesRpc } from "../lib/mines-rpc";
 
 type ChannelMessage = Exclude<
   LiveMessage,
@@ -26,6 +28,10 @@ export function useLiveChannel(options: UseLiveChannelOptions) {
   let reconnectTimer: number | null = null;
   let reconnectAttempts = 0;
   let disposed = false;
+  let generation = 0;
+  const connected = ref(false);
+  const minesRpc = createMinesRpc(() => socket);
+  const plinkoRpc = createPlinkoRpc(() => socket);
 
   function clearReconnectTimer() {
     if (reconnectTimer) {
@@ -35,6 +41,10 @@ export function useLiveChannel(options: UseLiveChannelOptions) {
   }
 
   function disconnect() {
+    generation++;
+    connected.value = false;
+    minesRpc.disconnect();
+    plinkoRpc.disconnect();
     clearReconnectTimer();
     socket?.close();
     socket = null;
@@ -48,6 +58,12 @@ export function useLiveChannel(options: UseLiveChannelOptions) {
   }
 
   function handleMessage(message: LiveMessage) {
+    if (message.type === "mines_result" || message.type === "plinko_result") {
+      if (message.type === "mines_result") minesRpc.receive(message);
+      else plinkoRpc.receive(message);
+      if (!message.result.ok && message.result.status === 401) revokeSession();
+      return;
+    }
     if (message.type === "connected") {
       return;
     }
@@ -87,10 +103,17 @@ export function useLiveChannel(options: UseLiveChannelOptions) {
   }
 
   function connect() {
+    if (disposed) return;
     disconnect();
+    const currentGeneration = generation;
 
     socket = createLiveSocket({
       onOpen: (ws) => {
+        if (disposed || socket !== ws) {
+          ws.close();
+          return;
+        }
+        connected.value = true;
         reconnectAttempts = 0;
         try {
           const subscription = parseRuntimeContract(
@@ -106,8 +129,15 @@ export function useLiveChannel(options: UseLiveChannelOptions) {
           ws.close(1002, "Invalid subscription message");
         }
       },
-      onMessage: handleMessage,
+      onMessage: (message) => {
+        if (!disposed && generation === currentGeneration) handleMessage(message);
+      },
       onClose: () => {
+        if (generation !== currentGeneration) return;
+        socket = null;
+        connected.value = false;
+        minesRpc.disconnect();
+        plinkoRpc.disconnect();
         if (disposed) {
           return;
         }
@@ -115,6 +145,7 @@ export function useLiveChannel(options: UseLiveChannelOptions) {
         void authStore
           .ensureFreshAccessToken()
           .then(() => {
+            if (disposed || generation !== currentGeneration) return;
             clearReconnectTimer();
             const delayMs = Math.min(1000 * 2 ** reconnectAttempts, 30000);
             reconnectAttempts++;
@@ -123,6 +154,7 @@ export function useLiveChannel(options: UseLiveChannelOptions) {
             }, delayMs);
           })
           .catch(() => {
+            if (disposed || generation !== currentGeneration) return;
             authStore.invalidateSession("登入狀態已失效，請重新登入。");
             void router.push("/login");
           });
@@ -141,6 +173,9 @@ export function useLiveChannel(options: UseLiveChannelOptions) {
   });
 
   return {
+    connected,
+    requestMines: minesRpc.request,
+    requestPlinko: plinkoRpc.request,
     reconnect: connect,
     disconnect,
   };

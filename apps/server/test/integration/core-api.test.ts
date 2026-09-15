@@ -1,3 +1,8 @@
+import { plinkoCommandResultSchema, type PlinkoCommand, type PlinkoCommandResult } from "@baccarat/contracts";
+import { WebSocket } from "ws";
+import { once } from "node:events";
+import { attachLiveWebSocketServer } from "../../src/lib/live-ws.js";
+import { minesCommandResultSchema, type MinesCommand, type MinesCommandResult } from "@baccarat/contracts";
 import { type PlinkoMutationResponse, type PlinkoConfig, type PlinkoRound, plinkoMutationResponseSchema } from "@baccarat/contracts";
 import { getPlinkoTable, plinkoPayout } from "../../src/modules/plinko/math.js";
 import { plinkoRateLimitKey } from "../../src/modules/plinko/service.js";
@@ -33,6 +38,7 @@ type TestUser = {
 
 let server: Server;
 let baseUrl: string;
+let stopLive: (() => Promise<void>) | undefined;
 const runId = randomUUID().slice(0, 8);
 let nextDisplayOrder = 100;
 
@@ -231,6 +237,7 @@ before(async () => {
     VALUES ('legacy-money-entry','legacy-money-test','SYSTEM','LEGACY_OPENING_BALANCE','USER','legacy-money-test',1000,0,1000,NOW());`);
   await runMigrations(pool);
   server = createServer(createTestApp());
+  stopLive = await attachLiveWebSocketServer(server);
   await new Promise<void>((resolve, reject) => {
     server.once("error", reject);
     server.listen(0, "127.0.0.1", resolve);
@@ -240,6 +247,7 @@ before(async () => {
 });
 
 after(async () => {
+  await stopLive?.();
   if (server?.listening) {
     await new Promise<void>((resolve, reject) =>
       server.close((error) => (error ? reject(error) : resolve())),
@@ -1182,4 +1190,222 @@ test("Plinko history retains millisecond cursor precision and paginates tied tim
     cursor = page.body.nextCursor;
   } while (cursor);
   assert.deepEqual(found, ids.sort().reverse());
+});
+
+
+test("Mines WebSocket authenticates, settles and replays across reconnect without double debit", async () => {
+  const user = await insertUser({ username: `mines_ws_${runId}`, balance: 1000 });
+  const other = await insertUser({ username: `mines_ws_other_${runId}`, balance: 1000 });
+  const token = await login(user);
+  const otherToken = await login(other);
+  const sockets: WebSocket[] = [];
+  async function connect(token: string) {
+    const ws = new WebSocket(`${baseUrl.replace("http:", "ws:")}/ws`, ["bearer", token]);
+    sockets.push(ws);
+    await once(ws, "open");
+    return ws;
+  }
+  function command(ws: WebSocket, action: MinesCommand["action"], key = randomUUID()) {
+    const requestId = randomUUID();
+    return new Promise<MinesCommandResult["result"]>((resolve, reject) => {
+      const timer = setTimeout(() => {
+        cleanup();
+        reject(new Error("WS response timeout"));
+      }, 5000);
+      function cleanup() {
+        clearTimeout(timer);
+        ws.off("message", receive);
+      }
+      function receive(raw: Buffer) {
+        const value = JSON.parse(raw.toString());
+        if (value.type !== "mines_result" || value.requestId !== requestId) return;
+        cleanup();
+        resolve(minesCommandResultSchema.parse(value).result);
+      }
+      ws.on("message", receive);
+      ws.send(JSON.stringify({ type: "mines_command", requestId, idempotencyKey: key, action }));
+    });
+  }
+  try {
+    let ws = await connect(token);
+    const key = randomUUID();
+    const started = await command(ws, { kind: "start", amount: 100, mineCount: 3 }, key);
+    assert.equal(started.ok, true);
+    if (!started.ok) throw new Error("start failed");
+    assert.equal(started.data.balance, 900);
+    assert.equal(started.data.round.mineCells, null);
+    assert.deepEqual(
+      (await minesPost(token, "/rounds", { amount: 100, mineCount: 3 }, key)).body,
+      started.data,
+    );
+    ws.terminate();
+    await once(ws, "close");
+    ws = await connect(token);
+    assert.deepEqual(await command(ws, { kind: "start", amount: 100, mineCount: 3 }, key), started);
+    const conflict = await command(ws, { kind: "start", amount: 200, mineCount: 3 }, key);
+    assert.equal(conflict.ok, false);
+    if (!conflict.ok) assert.equal(conflict.status, 409);
+    const foreign = await command(await connect(otherToken), {
+      kind: "reveal",
+      roundId: started.data.round.id,
+      cellIndex: 0,
+    });
+    assert.equal(foreign.ok, false);
+    if (!foreign.ok) assert.equal(foreign.status, 404);
+    const board = await minesBoard(started.data.round.id);
+    const safe = Array.from({ length: 25 }, (_, i) => i).find((i) => !board.includes(i))!;
+    const revealKey = randomUUID();
+    const revealed = await command(
+      ws,
+      { kind: "reveal", roundId: started.data.round.id, cellIndex: safe },
+      revealKey,
+    );
+    assert.equal(revealed.ok, true);
+    if (revealed.ok) {
+      assert.equal(revealed.data.round.mineCells, null);
+      assert.equal(revealed.data.round.version, 2);
+    }
+    assert.deepEqual(
+      await command(
+        ws,
+        { kind: "reveal", roundId: started.data.round.id, cellIndex: safe },
+        revealKey,
+      ),
+      revealed,
+    );
+    const cashoutKey = randomUUID();
+    const paid = await command(ws, { kind: "cashout", roundId: started.data.round.id }, cashoutKey);
+    assert.equal(paid.ok, true);
+    if (paid.ok) {
+      assert.equal(paid.data.balance, 1007.95);
+      assert.equal(paid.data.round.payout, 107.95);
+    }
+    assert.deepEqual(
+      await command(ws, { kind: "cashout", roundId: started.data.round.id }, cashoutKey),
+      paid,
+    );
+    const ledger = await pool.query(
+      "SELECT source FROM financial_ledger_entries WHERE reference_id=$1 ORDER BY entry_sequence",
+      [started.data.round.id],
+    );
+    assert.deepEqual(
+      ledger.rows.map((row) => row.source),
+      ["MINES_BET_DEBIT", "MINES_SETTLEMENT_CREDIT"],
+    );
+    // Revocation is checked on every command, including an idempotency replay.
+    await pool.query("UPDATE users SET is_active=false WHERE id=$1", [user.id]);
+    const closed = once(ws, "close");
+    ws.send(
+      JSON.stringify({
+        type: "mines_command",
+        requestId: randomUUID(),
+        idempotencyKey: cashoutKey,
+        action: { kind: "cashout", roundId: started.data.round.id },
+      }),
+    );
+    const [code] = await closed;
+    assert.equal(code, 4403);
+  } finally {
+    for (const ws of sockets) ws.terminate();
+  }
+});
+
+
+test("Plinko WebSocket replays lost bets, shares HTTP keys and enforces quotas and sessions", async () => {
+  const user = await insertUser({ username: `plinko_ws_${runId}`, balance: 10000 });
+  const token = await login(user);
+  const sockets: WebSocket[] = [];
+  async function connect() {
+    const ws = new WebSocket(`${baseUrl.replace("http:", "ws:")}/ws`, ["bearer", token]);
+    sockets.push(ws);
+    await once(ws, "open");
+    return ws;
+  }
+  function command(
+    ws: WebSocket,
+    key: string,
+    payload: PlinkoCommand["payload"] = { amount: 100, rows: 16, risk: "medium", ruleVersion: 1 },
+  ) {
+    const requestId = randomUUID();
+    return new Promise<PlinkoCommandResult["result"]>((resolve, reject) => {
+      const timer = setTimeout(() => {
+        cleanup();
+        reject(new Error("WS response timeout"));
+      }, 5000);
+      function cleanup() {
+        clearTimeout(timer);
+        ws.off("message", receive);
+      }
+      function receive(raw: Buffer) {
+        const value = JSON.parse(raw.toString());
+        if (value.type !== "plinko_result" || value.requestId !== requestId) return;
+        cleanup();
+        resolve(plinkoCommandResultSchema.parse(value).result);
+      }
+      ws.on("message", receive);
+      ws.send(JSON.stringify({ type: "plinko_command", requestId, idempotencyKey: key, payload }));
+    });
+  }
+  try {
+    let ws = await connect();
+    const key = randomUUID();
+    const paid = await command(ws, key);
+    assert.equal(paid.ok, true);
+    if (!paid.ok) throw new Error("bet failed");
+    assert.equal(paid.data.round.path.length, 16);
+    assert.equal(paid.data.balance, sumMoney([10000, -100, paid.data.round.payout]));
+    // Both transports must address the same saved result and fingerprint.
+    assert.deepEqual((await plinkoPost(token, plinkoBet, key)).body, paid.data);
+    const closed = once(ws, "close");
+    ws.terminate();
+    await closed;
+    ws = await connect();
+    assert.deepEqual(await command(ws, key), paid);
+    const conflict = await command(ws, key, { ...plinkoBet, amount: 200, risk: "medium" });
+    assert.equal(conflict.ok, false);
+    if (!conflict.ok) assert.equal(conflict.status, 409);
+    const rateKey = plinkoRateLimitKey(user.id);
+    await pool.query(
+      "UPDATE login_rate_limits SET failures=240, expires_at=NOW()+INTERVAL '1 minute' WHERE scope=$1 AND key_hash=$2",
+      [rateKey.scope, rateKey.keyHash],
+    );
+    const limited = await command(ws, randomUUID());
+    assert.equal(limited.ok, false);
+    if (!limited.ok) assert.equal(limited.status, 429);
+    assert.deepEqual(await command(ws, key), paid);
+    const previous = env.plinkoEnabled;
+    env.plinkoEnabled = false;
+    try {
+      const disabled = await command(ws, randomUUID());
+      assert.equal(disabled.ok, false);
+      if (!disabled.ok) assert.equal(disabled.status, 503);
+      assert.deepEqual(await command(ws, key), paid);
+    } finally {
+      env.plinkoEnabled = previous;
+    }
+    const ledger = await pool.query(
+      "SELECT source FROM financial_ledger_entries WHERE reference_id=$1 ORDER BY entry_sequence",
+      [paid.data.round.id],
+    );
+    assert.deepEqual(
+      ledger.rows.map((row) => row.source),
+      ["PLINKO_BET_DEBIT", "PLINKO_SETTLEMENT_CREDIT"],
+    );
+    assert.equal(
+      (
+        await pool.query("SELECT COUNT(*)::int AS count FROM plinko_rounds WHERE user_id=$1", [
+          user.id,
+        ])
+      ).rows[0].count,
+      1,
+    );
+    assert.equal((await reconcileUserBalance(user.id))?.isReconciled, true);
+    // An already-open socket cannot replay results after its session is revoked.
+    await pool.query("UPDATE auth_sessions SET revoked_at=NOW() WHERE user_id=$1", [user.id]);
+    const invalid = await command(ws, key);
+    assert.equal(invalid.ok, false);
+    if (!invalid.ok) assert.equal(invalid.status, 401);
+  } finally {
+    for (const ws of sockets) ws.terminate();
+  }
 });

@@ -1,5 +1,6 @@
 import { z } from "zod";
 export * from "./plinko.js";
+import { plinkoStartRequestSchema, plinkoMutationResponseSchema } from "./plinko.js";
 import { isMoney } from "./money.js";
 export { toMinorUnits, fromMinorUnits, minorUnitsToDecimal, sumMoney, isMoney, roundHalfUp } from "./money.js";
 export const moneySchema = z.number().refine(isMoney, "Money must have at most two decimal places");
@@ -326,13 +327,94 @@ export const userSnapshotSchema = userSchema.extend({
   serverTime: isoDateTimeSchema,
 });
 
+export const minesStartRequestSchema = z.object({
+  amount: z.number().int().min(100).max(5000).refine((value) => value % 100 === 0),
+  mineCount: z.number().int().min(3).max(24),
+}).strict();
+export const minesRevealRequestSchema = z.object({ cellIndex: z.number().int().min(0).max(24) }).strict();
+export const minesConfigResponseSchema = z.object({
+  boardSize: z.literal(25), minMines: z.literal(3), maxMines: z.literal(24),
+  minBet: z.literal(100), maxBet: z.literal(5000), betStep: z.literal(100),
+  rtp: z.literal(0.95), enabled: z.boolean(),
+}).strict();
+export const minesRoundSchema = z.object({
+  id: z.string().uuid(), amount: moneySchema, mineCount: z.number().int().min(1).max(24),
+  revealedCells: z.array(z.number().int().min(0).max(24)).max(25),
+  status: z.enum(["ACTIVE", "LOST", "CASHED_OUT"]), payout: moneySchema,
+  cashoutAmount: moneySchema, multiplier: z.number().nonnegative(),
+  nextMultiplier: z.number().nonnegative().nullable(),
+  mineCells: z.array(z.number().int().min(0).max(24)).nullable(),
+  createdAt: isoDateTimeSchema, settledAt: isoDateTimeSchema.nullable(),
+  version: z.number().int().positive(), ruleVersion: z.literal(1),
+}).strict();
+export const minesActiveResponseSchema = z.object({ round: minesRoundSchema.nullable() }).strict();
+export const minesRoundResponseSchema = z.object({ round: minesRoundSchema }).strict();
+export const minesMutationResponseSchema = z.object({ round: minesRoundSchema, balance: moneySchema, walletVersion: z.number().int().nonnegative().safe().optional() }).strict();
+export const minesHistoryResponseSchema = z.object({ items: z.array(minesRoundSchema), nextCursor: z.string().nullable() }).strict();
+export type MinesRound = z.infer<typeof minesRoundSchema>;
+
+// Request IDs correlate a single attempt; idempotency keys survive reconnects.
+const gameIdempotencyKeySchema = z.string().regex(/^[A-Za-z0-9._:-]{8,128}$/);
+export const minesCommandSchema = z.object({
+  type: z.literal("mines_command"),
+  requestId: z.string().uuid(),
+  idempotencyKey: gameIdempotencyKeySchema,
+  action: z.discriminatedUnion("kind", [
+    minesStartRequestSchema.extend({ kind: z.literal("start") }).strict(),
+    minesRevealRequestSchema.extend({ kind: z.literal("reveal"), roundId: z.string().uuid() }).strict(),
+    z.object({ kind: z.literal("cashout"), roundId: z.string().uuid() }).strict(),
+  ]),
+}).strict();
+export const minesCommandResultSchema = z.object({
+  type: z.literal("mines_result"),
+  requestId: z.string().uuid(),
+  result: z.discriminatedUnion("ok", [
+    z.object({ ok: z.literal(true), data: minesMutationResponseSchema }).strict(),
+    z.object({ ok: z.literal(false), status: z.number().int().min(400).max(599), error: apiErrorResponseSchema }).strict(),
+  ]),
+}).strict();
+export type MinesCommand = z.infer<typeof minesCommandSchema>;
+export type MinesCommandResult = z.infer<typeof minesCommandResultSchema>;
+export type MinesMutationResponse = z.infer<typeof minesMutationResponseSchema>;
+
+export const plinkoCommandSchema = z
+  .object({
+    type: z.literal("plinko_command"),
+    requestId: z.string().uuid(),
+    idempotencyKey: gameIdempotencyKeySchema,
+    payload: plinkoStartRequestSchema,
+  })
+  .strict();
+export const plinkoCommandResultSchema = z
+  .object({
+    type: z.literal("plinko_result"),
+    requestId: z.string().uuid(),
+    result: z.discriminatedUnion("ok", [
+      z.object({ ok: z.literal(true), data: plinkoMutationResponseSchema }).strict(),
+      z
+        .object({
+          ok: z.literal(false),
+          status: z.number().int().min(400).max(599),
+          error: apiErrorResponseSchema,
+        })
+        .strict(),
+    ]),
+  })
+  .strict();
+export type PlinkoCommand = z.infer<typeof plinkoCommandSchema>;
+export type PlinkoCommandResult = z.infer<typeof plinkoCommandResultSchema>;
+
 export const liveClientMessageSchema = z.discriminatedUnion("type", [
+  minesCommandSchema,
+  plinkoCommandSchema,
   z.object({ type: z.literal("subscribe_user") }).strict(),
   z.object({ type: z.literal("subscribe_lobby") }).strict(),
   z.object({ type: z.literal("subscribe_table"), tableId: idSchema }).strict(),
 ]);
 
 export const liveServerMessageSchema = z.discriminatedUnion("type", [
+  minesCommandResultSchema,
+  plinkoCommandResultSchema,
   z.object({ type: z.literal("connected"), serverTime: isoDateTimeSchema }).strict(),
   z.object({ type: z.literal("error"), message: z.string().min(1) }).strict(),
   z
@@ -382,30 +464,3 @@ export type TableUserSnapshot = z.infer<typeof tableUserSnapshotSchema>;
 export type UserSnapshot = z.infer<typeof userSnapshotSchema>;
 export type LiveClientMessage = z.infer<typeof liveClientMessageSchema>;
 export type LiveServerMessage = z.infer<typeof liveServerMessageSchema>;
-
-
-export const minesStartRequestSchema = z.object({
-  amount: z.number().int().min(100).max(5000).refine((value) => value % 100 === 0),
-  mineCount: z.number().int().min(3).max(24),
-}).strict();
-export const minesRevealRequestSchema = z.object({ cellIndex: z.number().int().min(0).max(24) }).strict();
-export const minesConfigResponseSchema = z.object({
-  boardSize: z.literal(25), minMines: z.literal(3), maxMines: z.literal(24),
-  minBet: z.literal(100), maxBet: z.literal(5000), betStep: z.literal(100),
-  rtp: z.literal(0.95), enabled: z.boolean(),
-}).strict();
-export const minesRoundSchema = z.object({
-  id: z.string().uuid(), amount: moneySchema, mineCount: z.number().int().min(1).max(24),
-  revealedCells: z.array(z.number().int().min(0).max(24)).max(25),
-  status: z.enum(["ACTIVE", "LOST", "CASHED_OUT"]), payout: moneySchema,
-  cashoutAmount: moneySchema, multiplier: z.number().nonnegative(),
-  nextMultiplier: z.number().nonnegative().nullable(),
-  mineCells: z.array(z.number().int().min(0).max(24)).nullable(),
-  createdAt: isoDateTimeSchema, settledAt: isoDateTimeSchema.nullable(),
-  version: z.number().int().positive(), ruleVersion: z.literal(1),
-}).strict();
-export const minesActiveResponseSchema = z.object({ round: minesRoundSchema.nullable() }).strict();
-export const minesRoundResponseSchema = z.object({ round: minesRoundSchema }).strict();
-export const minesMutationResponseSchema = z.object({ round: minesRoundSchema, balance: moneySchema, walletVersion: z.number().int().nonnegative().safe().optional() }).strict();
-export const minesHistoryResponseSchema = z.object({ items: z.array(minesRoundSchema), nextCursor: z.string().nullable() }).strict();
-export type MinesRound = z.infer<typeof minesRoundSchema>;

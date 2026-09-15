@@ -6,10 +6,13 @@ import {
   minesHistoryResponseSchema,
   minesMutationResponseSchema,
   minesRoundResponseSchema,
+  minesCommandSchema,
 } from "@baccarat/contracts";
 import { api, createIdempotencyKey, shouldReuseIdempotencyKey } from "../lib/api";
 import { parseRuntimeContract } from "../lib/contracts";
 import type { MinesConfig, MinesRound } from "../types/domain";
+import type { MinesTransport } from "../lib/mines-rpc";
+import { useAuthStore } from "./auth";
 
 type Pending = { key: string; payload: string; operation: string; roundId?: string };
 
@@ -56,8 +59,23 @@ export const useMinesStore = defineStore("mines", {
     roundRequestVersion: 0,
     userId: "",
     userGeneration: 0,
+    transport: null as MinesTransport | null,
   }),
   actions: {
+    async sendCommand(pending: Pending) {
+      if (!this.transport) throw new Error("Mines 連線尚未就緒。");
+      const command = minesCommandSchema.parse({
+        type: "mines_command",
+        requestId: createIdempotencyKey(),
+        idempotencyKey: pending.key,
+        action: {
+          kind: pending.operation,
+          ...JSON.parse(pending.payload),
+          ...(pending.roundId ? { roundId: pending.roundId } : {}),
+        },
+      });
+      return this.transport({ idempotencyKey: command.idempotencyKey, action: command.action });
+    },
     isCurrentUser(userId: string, generation: number) {
       return this.userId === userId && this.userGeneration === generation;
     },
@@ -141,13 +159,7 @@ export const useMinesStore = defineStore("mines", {
       this.historyNextCursor = page.nextCursor;
       return page;
     },
-    async mutation(
-      userId: string,
-      operation: string,
-      url: string,
-      payload: object,
-      roundId?: string,
-    ) {
+    async mutation(userId: string, operation: string, payload: object, roundId?: string) {
       if (this.userId !== userId) this.restorePending(userId);
       const generation = this.userGeneration;
       const payloadText = JSON.stringify(payload);
@@ -170,17 +182,19 @@ export const useMinesStore = defineStore("mines", {
       this.persistPending(userId, pending);
       const requestVersion = ++this.roundRequestVersion;
       try {
-        const response = await api.post(url, payload, {
-          headers: { "Idempotency-Key": pending.key },
-        });
+        const response = await this.sendCommand(pending);
         const data = parseRuntimeContract(
           minesMutationResponseSchema,
-          response.data,
-          `POST ${url}`,
+          response,
+          `WS mines.${operation}`,
         );
         if (this.isCurrentUser(userId, generation) && requestVersion === this.roundRequestVersion)
           this.applyRound(data.round);
-        if (this.isCurrentUser(userId, generation)) this.persistPending(userId, null);
+        if (this.isCurrentUser(userId, generation)) {
+          const auth = useAuthStore();
+          if (auth.user?.id === userId) auth.patchBalance(data.balance, data.walletVersion);
+          this.persistPending(userId, null);
+        }
         return data;
       } catch (error) {
         if (!shouldKeepPending(error) && this.isCurrentUser(userId, generation)) {
@@ -211,17 +225,11 @@ export const useMinesStore = defineStore("mines", {
       if (!this.isCurrentUser(userId, generation)) return;
       if (this.round && this.round.status !== "ACTIVE") this.persistPending(userId, null);
       if (!this.pending) return;
-      const url =
-        pending.operation === "start"
-          ? "/mines/rounds"
-          : pending.operation === "reveal"
-            ? `/mines/rounds/${pending.roundId}/reveal`
-            : `/mines/rounds/${pending.roundId}/cashout`;
       try {
-        await api.post(url, JSON.parse(pending.payload), {
-          headers: { "Idempotency-Key": pending.key },
-        });
+        const result = await this.sendCommand(pending);
         if (!this.isCurrentUser(userId, generation)) return;
+        const auth = useAuthStore();
+        if (auth.user?.id === userId) auth.patchBalance(result.balance, result.walletVersion);
         // The replay response can be an older idempotency snapshot. Re-read the
         // current round so a subsequent reveal/cashout cannot be regressed.
         if (pending.roundId) await this.fetchRound(pending.roundId);
@@ -238,19 +246,13 @@ export const useMinesStore = defineStore("mines", {
       }
     },
     start(userId: string, amount: number, mineCount: number) {
-      return this.mutation(userId, "start", "/mines/rounds", { amount, mineCount });
+      return this.mutation(userId, "start", { amount, mineCount });
     },
     reveal(userId: string, roundId: string, cellIndex: number) {
-      return this.mutation(
-        userId,
-        "reveal",
-        `/mines/rounds/${roundId}/reveal`,
-        { cellIndex },
-        roundId,
-      );
+      return this.mutation(userId, "reveal", { cellIndex }, roundId);
     },
     cashout(userId: string, roundId: string) {
-      return this.mutation(userId, "cashout", `/mines/rounds/${roundId}/cashout`, {}, roundId);
+      return this.mutation(userId, "cashout", {}, roundId);
     },
   },
 });

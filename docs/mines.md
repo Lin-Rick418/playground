@@ -20,15 +20,42 @@ Mines 已移除「紀錄」入口與內頁，舊網址 `/history?game=mines` 返
 
 所有路徑在對外 `/api` 之下，必須用 PLAYER session。身份只取自伺服器驗證結果，玩家只能讀寫自己的局。
 
-| Method / path | Payload 或結果 |
-| --- | --- |
-| GET `/mines/config` | boardSize、minMines、maxMines、minBet、maxBet、betStep、rtp、enabled |
-| GET `/mines/active` | `{ round: MinesRound \| null }` |
-| POST `/mines/rounds` | `{ amount: 100, mineCount: 3 }` → `{ round, balance, walletVersion }` |
-| GET `/mines/rounds/:id` | `{ round }` |
-| POST `/mines/rounds/:id/reveal` | `{ cellIndex: 0 }` → `{ round, balance, walletVersion }` |
-| POST `/mines/rounds/:id/cashout` | `{}` → `{ round, balance, walletVersion }` |
-| GET `/mines/history?limit=20&cursor=…` | `{ items, nextCursor }`，limit 1–50，終局時間倒序 |
+### WebSocket 遊戲操作
+
+前端的開局、翻格、收款與不確定操作重試使用既有 `/api/ws` 連線；不另外建立遊戲 socket，也不自動退回 HTTP POST。設定、讀取局面與重連後確認局況仍使用 HTTP GET。下面的 POST endpoints 保留供舊 client 使用，兩種傳輸共用交易及 idempotency 範圍。
+
+連線使用 `Sec-WebSocket-Protocol: bearer, <token>` 驗證，token 不放 URL。每次指令重新檢查 session 與玩家權限，局的擁有者由後端確認。
+
+```json
+{
+  "type": "mines_command",
+  "requestId": "11111111-1111-4111-8111-111111111111",
+  "idempotencyKey": "22222222-2222-4222-8222-222222222222",
+  "action": { "kind": "start", "amount": 100, "mineCount": 3 }
+}
+```
+
+- `action` 另可為 `{ kind: "reveal", roundId, cellIndex }` 或 `{ kind: "cashout", roundId }`，strict schema 拒絕額外身份或結果欄位。
+- 成功回應：`{ type: "mines_result", requestId, result: { ok: true, data: { round, balance, walletVersion } } }`。
+- 失敗回應：`{ type: "mines_result", requestId, result: { ok: false, status, error: { code, message, requestId } } }`；status/code 與 HTTP 共用。無法解析的訊息使用既有 `error` 回應。
+- 每個 socket 同時最多處理一個遊戲指令，MINES／Plinko 共用每 10 秒最多 60 個的上限；既有連線數、payload 上限及心跳仍生效。
+- 前端每個操作最多等待 10 秒。斷線或逾時保留原操作與 idempotency key，停止其他操作，重連後先讀取局況，再視需要用原 key 重送；每次送出的 request ID 都不同，忽略遲到的舊回覆。離頁會清理等待計時器並關閉連線。
+- 正常回覆直接按 `round.version` / `walletVersion` 更新棋盤及餘額，不再串接 `/auth/me` 才解除操作鎖定。重連與不確定結果恢復仍讀取最新狀態，防止 idempotency 的歷史回應蓋掉較新的局面。
+- 地雷與派彩仍由後端確認，ACTIVE 局不傳完整地雷位置。WS 改變傳輸方式，不改玩法、資料庫 schema 或 ledger。
+
+部署先更新 server，再更新 web；回退 web 可以使用保留的 HTTP endpoints。觀察 server 的 `mines_command_completed`（operation、statusCode、durationMs、requestId）及 `mines_command_failed`，不記錄地雷位置或 token。
+
+### HTTP 相容介面
+
+| Method / path                          | Payload 或結果                                                        |
+| -------------------------------------- | --------------------------------------------------------------------- |
+| GET `/mines/config`                    | boardSize、minMines、maxMines、minBet、maxBet、betStep、rtp、enabled  |
+| GET `/mines/active`                    | `{ round: MinesRound \| null }`                                       |
+| POST `/mines/rounds`                   | `{ amount: 100, mineCount: 3 }` → `{ round, balance, walletVersion }` |
+| GET `/mines/rounds/:id`                | `{ round }`                                                           |
+| POST `/mines/rounds/:id/reveal`        | `{ cellIndex: 0 }` → `{ round, balance, walletVersion }`              |
+| POST `/mines/rounds/:id/cashout`       | `{}` → `{ round, balance, walletVersion }`                            |
+| GET `/mines/history?limit=20&cursor=…` | `{ items, nextCursor }`，limit 1–50，終局時間倒序                     |
 
 所有 POST 要求 8–128 字元的 `Idempotency-Key`。同 key 同 payload 回放原結果，同 key 不同 payload 為 409；回放結果中的餘額可能已過時，client 必須使用最新 user snapshot 或 `/auth/me`。前端保存不確定的請求並使用原 key 重試，不能換 key 猜測前次是否成功。
 

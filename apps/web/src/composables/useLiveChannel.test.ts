@@ -62,6 +62,38 @@ afterEach(() => {
 });
 
 describe("useLiveChannel", () => {
+  it("does not reconnect after unmount while token refresh is still pending", async () => {
+    const wrapper = mountChannel();
+    let finish!: (token: string) => void;
+    vi.spyOn(useAuthStore(), "ensureFreshAccessToken").mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          finish = resolve;
+        }),
+    );
+    callbackAt(0).onClose?.();
+    wrapper.unmount();
+    finish("token");
+    await vi.advanceTimersByTimeAsync(30_000);
+    expect(mocks.createLiveSocket).toHaveBeenCalledOnce();
+  });
+
+  it("ignores a superseded socket's close and messages after reconnect", async () => {
+    const wrapper = mountChannel();
+    const auth = useAuthStore();
+    vi.spyOn(auth, "ensureFreshAccessToken").mockResolvedValue("token");
+    const invalidate = vi.spyOn(auth, "invalidateSession");
+    callbackAt(0).onClose?.();
+    await vi.advanceTimersByTimeAsync(1000);
+    expect(mocks.createLiveSocket).toHaveBeenCalledTimes(2);
+    callbackAt(0).onMessage({ type: "auth_revoked", reason: "signed_in_elsewhere" });
+    callbackAt(0).onClose?.();
+    await vi.advanceTimersByTimeAsync(30_000);
+    expect(invalidate).not.toHaveBeenCalled();
+    expect(mocks.createLiveSocket).toHaveBeenCalledTimes(2);
+    wrapper.unmount();
+  });
+
   it("refreshes the session and reconnects with bounded exponential backoff", async () => {
     const wrapper = mountChannel();
     const authStore = useAuthStore();

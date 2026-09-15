@@ -21,7 +21,8 @@ const loading = ref(true);
 const pending = ref(false);
 const synchronizing = ref(false);
 const controlsBusy = computed(
-  () => pending.value || synchronizing.value || Boolean(minesStore.pending),
+  () =>
+    !live.connected.value || pending.value || synchronizing.value || Boolean(minesStore.pending),
 );
 let activeOperation: Promise<void> | null = null;
 const error = ref("");
@@ -91,7 +92,6 @@ async function runOperation(operation: () => Promise<unknown>, fallback: string)
   const running = (async () => {
     try {
       await operation();
-      await refreshWallet();
     } catch (cause) {
       if (isInsufficientBalance(cause)) warnInsufficientBalance();
       else error.value = apiError(cause, fallback);
@@ -143,10 +143,10 @@ async function cashout() {
 }
 async function retryPending() {
   if (!userId.value || pending.value || synchronizing.value) return;
-  await runOperation(
-    () => minesStore.reconcilePending(userId.value),
-    "仍無法確認上一個操作，請稍後重試。",
-  );
+  await runOperation(async () => {
+    await minesStore.reconcilePending(userId.value);
+    await refreshWallet();
+  }, "仍無法確認上一個操作，請稍後重試。");
 }
 function cellClass(cell: number) {
   if (!round.value) return "";
@@ -177,6 +177,7 @@ async function restoreMinesState() {
       if (!active && previousRoundId) await minesStore.fetchRound(previousRoundId);
     }
     await refreshWallet();
+    error.value = "";
   })().finally(() => {
     restorePromise = null;
     synchronizing.value = false;
@@ -184,7 +185,7 @@ async function restoreMinesState() {
   return restorePromise;
 }
 
-useLiveChannel({
+const live = useLiveChannel({
   getSubscribeMessage: () => ({ type: "subscribe_user" }),
   onMessage: () => {},
   onConnected: () =>
@@ -192,6 +193,7 @@ useLiveChannel({
       error.value = "遊戲同步失敗，請重試載入。";
     }),
 });
+minesStore.transport = live.requestMines;
 onMounted(async () => {
   try {
     if (!userId.value) return;
@@ -205,6 +207,7 @@ onMounted(async () => {
 });
 watch(userId, clearWalletWarning);
 onUnmounted(() => {
+  if (minesStore.transport === live.requestMines) minesStore.transport = null;
   disposed = true;
   clearWalletWarning();
 });
@@ -357,17 +360,18 @@ onUnmounted(() => {
         </AppButton>
       </section>
       <div
-        v-if="error || (minesStore.pending && !pending && !synchronizing)"
+        v-if="!live.connected.value || error || (minesStore.pending && !pending && !synchronizing)"
         class="mines-feedback"
       >
-        <p v-if="error" class="mines-error" role="alert">{{ error }}</p>
+        <p v-if="!live.connected.value" role="status">連線中，正在同步遊戲…</p>
+        <p v-else-if="error" class="mines-error" role="alert">{{ error }}</p>
         <AppButton
           v-if="minesStore.pending"
           variant="secondary"
           size="control"
           class="button-secondary retry-pending"
           type="button"
-          :disabled="pending || synchronizing"
+          :disabled="!live.connected.value || pending || synchronizing"
           @click="retryPending"
         >
           重試上一個操作
@@ -378,7 +382,7 @@ onUnmounted(() => {
           size="control"
           class="button-secondary"
           type="button"
-          :disabled="pending || synchronizing"
+          :disabled="!live.connected.value || pending || synchronizing"
           @click="
             restoreMinesState()
               .then(() => (error = ''))

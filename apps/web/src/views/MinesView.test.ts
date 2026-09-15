@@ -2,6 +2,8 @@ import MockAdapter from "axios-mock-adapter";
 import { createPinia, setActivePinia } from "pinia";
 import { mount, flushPromises, enableAutoUnmount } from "@vue/test-utils";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { ref } from "vue";
+import { useLiveChannel } from "../composables/useLiveChannel";
 import { api } from "../lib/api";
 
 vi.mock("../composables/useLiveChannel", () => ({ useLiveChannel: vi.fn() }));
@@ -47,6 +49,23 @@ describe("MinesView", () => {
     setActivePinia(pinia);
     sessionStorage.clear();
     mock = new MockAdapter(api);
+    vi.mocked(useLiveChannel).mockReturnValue({
+      requestPlinko: vi.fn(),
+      connected: ref(true),
+      reconnect: vi.fn(),
+      disconnect: vi.fn(),
+      requestMines: async ({ action, idempotencyKey }) => {
+        const { kind, ...rest } = action;
+        const { roundId, ...payload } = rest as typeof rest & { roundId?: string };
+        return (
+          await api.post(
+            kind === "start" ? "/mines/rounds" : `/mines/rounds/${roundId}/${kind}`,
+            payload,
+            { headers: { "Idempotency-Key": idempotencyKey } },
+          )
+        ).data;
+      },
+    });
     const auth = useAuthStore();
     auth.user = { id: "user-1", username: "player", role: "PLAYER", isActive: true, balance: 1000 };
     mock.onGet("/auth/me").reply(200, auth.user);
@@ -100,8 +119,10 @@ describe("MinesView", () => {
     },
   );
 
-  it("offers exactly 100..5000 stakes and uses fresh /auth/me balance after a mutation", async () => {
-    mock.onPost("/mines/rounds").reply(200, { round: activeRound, balance: 1 });
+  it("offers exactly 100..5000 stakes and uses the mutation wallet version without another /auth/me request", async () => {
+    mock
+      .onPost("/mines/rounds")
+      .reply(200, { round: activeRound, balance: 899.75, walletVersion: 2 });
     mock.onGet("/auth/me").reply(200, {
       id: "user-1",
       username: "player",
@@ -119,9 +140,10 @@ describe("MinesView", () => {
     );
     expect(stakeOptions[0]!.attributes("value")).toBe("100");
     expect(stakeOptions.at(-1)!.attributes("value")).toBe("5000");
+    const readsBefore = mock.history.get.length;
     await wrapper.get(".button-primary").trigger("click");
     await flushPromises();
-    expect(mock.history.get.some((request) => request.url === "/auth/me")).toBe(true);
+    expect(mock.history.get.length).toBe(readsBefore);
     expect(wrapper.text()).toContain("$899");
   });
 

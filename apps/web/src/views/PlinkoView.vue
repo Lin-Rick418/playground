@@ -184,6 +184,7 @@ watch(
 let raf = 0;
 let generation = 0;
 let disposed = false;
+let attemptedOnThisPage = false;
 const userId = computed(() => auth.user?.id ?? "");
 const config = computed(() => store.config);
 const activeBalls = computed(() => balls.value.filter((ball) => !ball.done));
@@ -193,6 +194,7 @@ const recentResults = computed(() => {
 });
 const controlsBusy = computed(
   () =>
+    !live.connected.value ||
     submitting.value ||
     syncing.value ||
     store.requestInFlight ||
@@ -209,6 +211,27 @@ const table = computed(() =>
   config.value?.tables.find((entry) => entry.rows === rows.value && entry.risk === risk.value),
 );
 const multipliers = computed(() => table.value?.multipliers ?? []);
+const slotLegend = ref<HTMLElement | null>(null);
+const canScrollLeft = ref(false);
+const canScrollRight = ref(false);
+function updateLegendHints() {
+  const legend = slotLegend.value;
+  canScrollLeft.value = Boolean(legend && legend.scrollLeft > 1);
+  canScrollRight.value = Boolean(
+    legend && legend.scrollWidth - legend.clientWidth - legend.scrollLeft > 1,
+  );
+}
+watch(
+  [slotLegend, multipliers],
+  ([legend], _previous, onCleanup) => {
+    updateLegendHints();
+    if (!legend || typeof ResizeObserver === "undefined") return;
+    const observer = new ResizeObserver(updateLegendHints);
+    observer.observe(legend);
+    onCleanup(() => observer.disconnect());
+  },
+  { flush: "post" },
+);
 const pins = computed(() =>
   Array.from({ length: rows.value }, (_, row) =>
     Array.from({ length: row + 3 }, (_, column) => ({
@@ -369,6 +392,7 @@ async function submit(): Promise<boolean> {
   reservedStake.value = amount.value;
   error.value = "";
   try {
+    attemptedOnThisPage = true;
     const result = await store.place(requestUser, {
       amount: amount.value,
       rows: rows.value,
@@ -393,13 +417,21 @@ async function submit(): Promise<boolean> {
   }
 }
 async function reconcile() {
-  if (!userId.value || submitting.value || syncing.value || store.requestInFlight || !store.pending)
+  if (
+    !live.connected.value ||
+    !userId.value ||
+    submitting.value ||
+    syncing.value ||
+    store.requestInFlight ||
+    !store.pending
+  )
     return;
   const requestUser = userId.value,
     version = generation;
   submitting.value = true;
   error.value = "";
   try {
+    attemptedOnThisPage = true;
     const result = await store.reconcilePending(requestUser);
     if (result && current(requestUser, version)) {
       accept(result.round, result.balance, result.walletVersion, true);
@@ -434,13 +466,37 @@ async function load() {
     }
   }
 }
-useLiveChannel({
+const live = useLiveChannel({
   getSubscribeMessage: () => ({ type: "subscribe_user" }),
   onMessage: () => {},
   onConnected: () => {
     if (!submitting.value && !disposed) void refreshWallet().catch(() => undefined);
   },
 });
+store.transport = live.requestPlinko;
+let recoverAfterReconnect = false;
+watch(
+  [live.connected, submitting, syncing, loading, () => store.requestInFlight],
+  ([connected]) => {
+    if (!connected) {
+      stopAuto();
+      if (store.pending && attemptedOnThisPage) recoverAfterReconnect = true;
+      return;
+    }
+    if (
+      recoverAfterReconnect &&
+      !loading.value &&
+      !syncing.value &&
+      !submitting.value &&
+      !store.requestInFlight &&
+      !disposed
+    ) {
+      recoverAfterReconnect = false;
+      void reconcile();
+    }
+  },
+  { flush: "sync" },
+);
 onMounted(() => {
   reducedMotion.value = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
   void load();
@@ -458,6 +514,8 @@ watch(
 watch(
   userId,
   (next) => {
+    recoverAfterReconnect = false;
+    attemptedOnThisPage = false;
     stopAuto();
     clearCelebration();
     generation++;
@@ -476,6 +534,7 @@ watch(
   { flush: "sync" },
 );
 onUnmounted(() => {
+  if (store.transport === live.requestPlinko) store.transport = null;
   stopAuto();
   clearCelebration();
   clearWalletWarning();
@@ -590,14 +649,28 @@ onUnmounted(() => {
             </svg>
           </div>
           <div class="legend-heading">落槽倍率 <span>由左至右 · 含本金</span></div>
-          <div class="slot-legend" aria-label="落槽倍率" tabindex="0">
-            <span
-              v-for="(multiplier, index) in multipliers"
-              :key="index"
-              :class="{ landed: litSlots.has(index) }"
+          <div class="slot-legend-scroll">
+            <span v-show="canScrollLeft" class="legend-hint legend-hint-left" aria-hidden="true">
+              <svg viewBox="0 0 24 24"><path d="m15 6-6 6 6 6" /></svg>
+            </span>
+            <div
+              ref="slotLegend"
+              class="slot-legend"
+              aria-label="落槽倍率"
+              tabindex="0"
+              @scroll.passive="updateLegendHints"
             >
-              <small>{{ String(index + 1).padStart(2, "0") }}</small
-              ><strong>{{ multiplierText(multiplier) }}</strong>
+              <span
+                v-for="(multiplier, index) in multipliers"
+                :key="index"
+                :class="{ landed: litSlots.has(index) }"
+              >
+                <small>{{ String(index + 1).padStart(2, "0") }}</small
+                ><strong>{{ multiplierText(multiplier) }}</strong>
+              </span>
+            </div>
+            <span v-show="canScrollRight" class="legend-hint legend-hint-right" aria-hidden="true">
+              <svg viewBox="0 0 24 24"><path d="m9 6 6 6-6 6" /></svg>
             </span>
           </div>
         </section>
@@ -689,14 +762,20 @@ onUnmounted(() => {
           >
         </section>
       </dialog>
-      <section v-if="error || showPendingRecovery || store.storageError" class="plinko-feedback">
-        <p v-if="error || store.storageError" role="alert">{{ error || store.storageError }}</p>
+      <section
+        v-if="!live.connected.value || error || showPendingRecovery || store.storageError"
+        class="plinko-feedback"
+      >
+        <p v-if="!live.connected.value" role="status">連線中，自動投球已停止…</p>
+        <p v-else-if="error || store.storageError" role="alert">
+          {{ error || store.storageError }}
+        </p>
         <AppButton
           v-if="store.pending"
           variant="secondary"
           size="control"
           type="button"
-          :disabled="submitting || syncing || store.requestInFlight"
+          :disabled="!live.connected.value || submitting || syncing || store.requestInFlight"
           @click="reconcile"
         >
           確認上一筆投注
@@ -722,20 +801,16 @@ onUnmounted(() => {
 </template>
 
 <style scoped lang="scss">
-:global(#app:has(.plinko-page)) {
-  width: 100%;
-  max-width: none !important; // Override the mobile plugin’s root width only for this route.
-  margin: 0;
-  min-height: 0;
-}
 :global(body:has(.plinko-page)) {
   min-height: 100dvh;
+  background: #1b283d;
 }
 .plinko-page {
   height: 100vh;
   height: 100dvh;
   min-height: 0;
-  padding: env(safe-area-inset-top, 0px) 16px max(14px, env(safe-area-inset-bottom, 0px));
+  padding: env(safe-area-inset-top, 0px) var(--ui-page-gutter)
+    max(14px, env(safe-area-inset-bottom, 0px));
   color: #eef4ff;
   background: radial-gradient(ellipse at 50% 0, #273855, #101827 65%, #0b101a);
   gap: 12px;
@@ -833,6 +908,54 @@ onUnmounted(() => {
   color: #8ca0bc;
   font-size: 11px;
 }
+.slot-legend-scroll {
+  position: relative;
+  min-width: 0;
+  padding-inline: 20px;
+}
+.legend-hint {
+  position: absolute;
+  top: 0;
+  bottom: 5px;
+  display: flex;
+  align-items: center;
+  width: 20px;
+  color: #7de4ff;
+  pointer-events: none;
+}
+.legend-hint-left {
+  left: 0;
+  --hint-travel: -3px;
+}
+.legend-hint-right {
+  right: 0;
+  --hint-travel: 3px;
+}
+.legend-hint svg {
+  width: 20px;
+  height: 24px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 2.5;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  filter: drop-shadow(0 0 4px #7de4ff80);
+  animation: legend-hint-bounce 1.1s ease-in-out infinite;
+}
+@keyframes legend-hint-bounce {
+  0%,
+  100% {
+    transform: translateX(0);
+  }
+  50% {
+    transform: translateX(var(--hint-travel));
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .legend-hint svg {
+    animation: none;
+  }
+}
 .slot-legend {
   display: flex;
   gap: 6px;
@@ -892,7 +1015,7 @@ onUnmounted(() => {
 }
 .plinko-bet-action {
   display: grid;
-  grid-template-columns: 110px minmax(0, 1fr);
+  grid-template-columns: 144px minmax(0, 1fr);
   gap: 8px;
 }
 .plinko-toolbar {

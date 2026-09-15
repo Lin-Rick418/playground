@@ -159,7 +159,7 @@ function syncSlide() {
   --ui-title-color: #f0e6cf;
   --ui-title-spacing: 0.15em;
   position: static;
-  margin: 0 16px;
+  margin: 0 var(--ui-page-gutter);
 }
 .game-gallery {
   display: flex;

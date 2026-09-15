@@ -2,12 +2,14 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createPinia, setActivePinia } from "pinia";
 import { flushPromises, mount, type VueWrapper } from "@vue/test-utils";
 import MockAdapter from "axios-mock-adapter";
+import { ref } from "vue";
+import { useLiveChannel } from "../composables/useLiveChannel";
 import { api } from "../lib/api";
 import { useAuthStore } from "../stores/auth";
 import { usePlinkoStore } from "../stores/plinko";
 import PlinkoView from "./PlinkoView.vue";
 
-vi.mock("../composables/useLiveChannel", () => ({ useLiveChannel: () => ({}) }));
+vi.mock("../composables/useLiveChannel", () => ({ useLiveChannel: vi.fn() }));
 vi.mock("vue-router", () => ({ useRouter: () => ({ push: vi.fn() }) }));
 const multipliers = [
   106.1236, 39.5552, 9.6476, 4.8238, 2.8943, 1.4471, 0.9648, 0.4824, 0.2894, 0.4824, 0.9648, 1.4471,
@@ -67,6 +69,18 @@ describe("PlinkoView", () => {
     setActivePinia(pinia);
     sessionStorage.clear();
     mock = new MockAdapter(api);
+    vi.mocked(useLiveChannel).mockReturnValue({
+      connected: ref(true),
+      reconnect: vi.fn(),
+      disconnect: vi.fn(),
+      requestMines: vi.fn(),
+      requestPlinko: async ({ payload, idempotencyKey }) =>
+        (
+          await api.post("/plinko/rounds", payload, {
+            headers: { "Idempotency-Key": idempotencyKey },
+          })
+        ).data,
+    });
     useAuthStore().setUser(user);
     mock.onGet("/plinko/config").reply(200, config);
     mock.onGet("/plinko/history").reply(200, { items: [], nextCursor: null });

@@ -11,6 +11,25 @@ test("Mines persists fractional cashout and restores the real board across reloa
   ) {
     throw new Error("Mines E2E requires an isolated baccarat_e2e database");
   }
+  const commands = new Map<string, string>();
+  const results: {
+    kind: string;
+    data: { round: { id: string; mineCells: number[] | null; payout: number }; balance: number };
+  }[] = [];
+  page.on("request", (request) => {
+    expect(request.method() === "POST" && request.url().includes("/mines/")).toBe(false);
+  });
+  page.on("websocket", (socket) => {
+    socket.on("framesent", ({ payload }) => {
+      const message = JSON.parse(String(payload));
+      if (message.type === "mines_command") commands.set(message.requestId, message.action.kind);
+    });
+    socket.on("framereceived", ({ payload }) => {
+      const message = JSON.parse(String(payload));
+      if (message.type === "mines_result" && message.result.ok)
+        results.push({ kind: commands.get(message.requestId)!, data: message.result.data });
+    });
+  });
   const pool = new Pool({ connectionString: databaseUrl });
   try {
     await page.goto("/login");
@@ -20,16 +39,11 @@ test("Mines persists fractional cashout and restores the real board across reloa
     await expect(page).toHaveURL(/\/lobby$/);
     await page.getByRole("button", { name: /Mines/ }).click();
     await expect(page.getByRole("heading", { name: "Mines", exact: true })).toBeVisible();
-    await page.getByLabel("投注額").selectOption("100");
+    await page.getByLabel("投注額", { exact: true }).selectOption("100");
     await page.getByLabel("地雷數").selectOption("3");
-    const startedResponse = page.waitForResponse(
-      (r) => r.request().method() === "POST" && r.url().endsWith("/mines/rounds"),
-    );
     await page.getByRole("button", { name: "開始遊戲", exact: true }).click();
-    const started = (await (await startedResponse).json()) as {
-      round: { id: string; mineCells: null };
-      balance: number;
-    };
+    await expect.poll(() => results.some((result) => result.kind === "start")).toBe(true);
+    const started = results.find((result) => result.kind === "start")!.data;
     expect(started.round.mineCells).toBeNull();
     // The test harness reads only its isolated database; the production API never exposes active mines.
     const board = (
@@ -43,14 +57,9 @@ test("Mines persists fractional cashout and restores the real board across reloa
     await expect(page.getByRole("button", { name: "安全格", exact: true })).toHaveCount(1);
     await page.reload();
     await expect(page.getByRole("button", { name: "安全格", exact: true })).toHaveCount(1);
-    const paidResponse = page.waitForResponse(
-      (r) => r.request().method() === "POST" && r.url().endsWith("/cashout"),
-    );
     await page.getByRole("button", { name: "收款 107", exact: true }).click();
-    const paid = (await (await paidResponse).json()) as {
-      round: { payout: number };
-      balance: number;
-    };
+    await expect.poll(() => results.some((result) => result.kind === "cashout")).toBe(true);
+    const paid = results.find((result) => result.kind === "cashout")!.data;
     expect(paid.round.payout).toBe(107.95);
     const balance = (Math.round(started.balance * 100) + 10795) / 100;
     expect(paid.balance).toBe(balance);

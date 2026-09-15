@@ -8,6 +8,11 @@ import {
   liveServerMessageSchema,
   type LiveClientMessage,
   type LiveServerMessage,
+  type MinesCommand,
+  minesCommandResultSchema,
+  plinkoCommandResultSchema,
+  type PlinkoCommand,
+  apiErrorCodeSchema,
 } from "@baccarat/contracts";
 import { verifyToken } from "./auth.js";
 import { contractIssues } from "./contracts.js";
@@ -40,6 +45,8 @@ import {
 } from "./live-ws-policy.js";
 import { getRoundConfig } from "./round-manager.js";
 import type { UserRole } from "../types/domain.js";
+import { placePlinkoBet } from "../modules/plinko/service.js";
+import { mutateMines } from "../modules/mines/service.js";
 
 type LiveSocketConnection = {
   id: string;
@@ -50,6 +57,8 @@ type LiveSocketConnection = {
   socket: WebSocket;
   lastPongAt: number;
   messageWindow: RateWindow;
+  gameWindow: RateWindow;
+  gameBusy: boolean;
   subscription: { scope: "user" } | { scope: "none" } | { scope: "lobby" } | { scope: "table"; tableId: string };
 };
 
@@ -186,7 +195,105 @@ async function pushTableUserSnapshot(connection: LiveSocketConnection, tableId: 
   });
 }
 
-async function handleSubscriptionMessage(connection: LiveSocketConnection, message: LiveClientMessage) {
+type GameCommand = MinesCommand | PlinkoCommand;
+async function handleGameCommand(connection: LiveSocketConnection, message: GameCommand) {
+  const game = message.type === "mines_command" ? "Mines" : "Plinko";
+  const schema =
+    message.type === "mines_command" ? minesCommandResultSchema : plinkoCommandResultSchema;
+  const resultType = message.type === "mines_command" ? "mines_result" : "plinko_result";
+  const operation = message.type === "mines_command" ? message.action.kind : "start";
+  const startedAt = Date.now();
+  const fail = (
+    status: number,
+    code: "CONFLICT" | "AUTHENTICATION_REQUIRED" | "INTERNAL_ERROR",
+    text: string,
+  ) =>
+    sendMessage(
+      connection.socket,
+      schema.parse({
+        type: resultType,
+        requestId: message.requestId,
+        result: { ok: false, status, error: { code, message: text, requestId: message.requestId } },
+      }),
+    );
+  if (connection.gameBusy) {
+    fail(409, "CONFLICT", `上一個 ${game} 操作仍在處理中。`);
+    return;
+  }
+  connection.gameBusy = true;
+  try {
+    // A socket may outlive a revoked login; authorize every money command.
+    if (
+      !connections.has(connection.id) ||
+      connection.socket.readyState !== WebSocket.OPEN ||
+      !(await isAuthSessionActive(connection.sessionId))
+    ) {
+      fail(401, "AUTHENTICATION_REQUIRED", "Session is no longer valid");
+      connection.socket.close(4401, "Session ended");
+      return;
+    }
+    if (!(await revalidateLiveConnection(connection))) return;
+    // Match the HTTP action's property order: existing idempotency fingerprints
+    // hash its JSON representation, including keys created before this rollout.
+    const result = await (async () => {
+      if (message.type === "plinko_command")
+        return placePlinkoBet(connection.userId, message.idempotencyKey, message.payload);
+      const input = message.action;
+      const action =
+        input.kind === "start"
+          ? { kind: input.kind, amount: input.amount, mineCount: input.mineCount }
+          : input.kind === "reveal"
+            ? { kind: input.kind, roundId: input.roundId, cellIndex: input.cellIndex }
+            : { kind: input.kind, roundId: input.roundId };
+      return mutateMines(connection.userId, message.idempotencyKey, action);
+    })();
+    sendMessage(
+      connection.socket,
+      schema.parse({
+        type: resultType,
+        requestId: message.requestId,
+        result:
+          result.statusCode < 400
+            ? { ok: true, data: result.body }
+            : {
+                ok: false,
+                status: result.statusCode,
+                error: {
+                  code: apiErrorCodeSchema.parse(result.body.code),
+                  message: String(result.body.message),
+                  requestId: message.requestId,
+                },
+              },
+      }),
+    );
+    wsLogger.info(
+      {
+        event: `${game.toLowerCase()}_command_completed`,
+        requestId: message.requestId,
+        userId: connection.userId,
+        operation,
+        statusCode: result.statusCode,
+        durationMs: Date.now() - startedAt,
+      },
+      `${game} command completed`,
+    );
+  } catch (error) {
+    wsLogger.error(
+      {
+        event: `${game.toLowerCase()}_command_failed`,
+        requestId: message.requestId,
+        userId: connection.userId,
+        err: toLogError(error),
+      },
+      `${game} command failed`,
+    );
+    fail(500, "INTERNAL_ERROR", `${game} 結果尚未確認，請重試原操作。`);
+  } finally {
+    connection.gameBusy = false;
+  }
+}
+
+async function handleSubscriptionMessage(connection: LiveSocketConnection, message: Exclude<LiveClientMessage, GameCommand>) {
   if (!(await pushUserSnapshot(connection))) {
     return;
   }
@@ -539,6 +646,8 @@ export async function attachLiveWebSocketServer(server: Server) {
         socket: ws,
         lastPongAt: Date.now(),
         messageWindow: { timestamps: [] },
+        gameWindow: { timestamps: [] },
+        gameBusy: false,
         subscription: { scope: "none" },
       };
 
@@ -571,11 +680,12 @@ export async function attachLiveWebSocketServer(server: Server) {
           return;
         }
 
+        const message = parseClientMessage(raw.toString(), connection);
         if (
           !consumeRateLimit(
-            connection.messageWindow,
+            (message?.type === "mines_command" || message?.type === "plinko_command") ? connection.gameWindow : connection.messageWindow,
             Date.now(),
-            MAX_WEBSOCKET_MESSAGES_PER_WINDOW,
+            (message?.type === "mines_command" || message?.type === "plinko_command") ? 60 : MAX_WEBSOCKET_MESSAGES_PER_WINDOW,
             WEBSOCKET_MESSAGE_WINDOW_MS,
           )
         ) {
@@ -584,7 +694,6 @@ export async function attachLiveWebSocketServer(server: Server) {
           return;
         }
 
-        const message = parseClientMessage(raw.toString(), connection);
         if (!message) {
           sendMessage(ws, {
             type: "error",
@@ -593,7 +702,10 @@ export async function attachLiveWebSocketServer(server: Server) {
           return;
         }
 
-        void handleSubscriptionMessage(connection, message).catch((error: unknown) => {
+        const handling = (message.type === "mines_command" || message.type === "plinko_command")
+          ? handleGameCommand(connection, message)
+          : handleSubscriptionMessage(connection, message);
+        void handling.catch((error: unknown) => {
           wsLogger.error({
             event: "websocket_message_handler_failed",
             connectionId: connection.id,

@@ -193,6 +193,38 @@ test("zoom is locked globally while normal keyboard and scrolling events remain 
   );
 });
 
+test("lobby to Plinko keeps the back button stationary during loading and after navigation", async ({
+  page,
+}) => {
+  for (const viewport of [
+    { width: 320, height: 568 },
+    { width: 390, height: 844 },
+    { width: 483, height: 771 },
+  ]) {
+    await page.setViewportSize(viewport);
+    let releaseConfig!: () => void;
+    const configReady = new Promise<void>((resolve) => (releaseConfig = resolve));
+    await page.route("**/api/plinko/config", async (route) => {
+      await configReady;
+      await route.fallback();
+    });
+    await page.goto("/lobby");
+    const button = page.locator(".ui-page-header .page-header-back");
+    await expect(button).toBeVisible();
+    const before = await button.boundingBox();
+    await page.getByRole("button", { name: "進入Plinko", exact: true }).click();
+    await expect(page.getByText("載入遊戲中…", { exact: true })).toBeVisible();
+    expect(await button.boundingBox()).toEqual(before);
+    releaseConfig();
+    await expect(page.getByText("載入遊戲中…", { exact: true })).toHaveCount(0);
+    expect(await button.boundingBox()).toEqual(before);
+    await button.click();
+    await expect(page).toHaveURL(/\/lobby$/);
+    expect(await button.boundingBox()).toEqual(before);
+    await page.unroute("**/api/plinko/config");
+  }
+});
+
 test("shared headers keep return buttons aligned and shared dialog buttons preserve focus", async ({
   page,
 }) => {

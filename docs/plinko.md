@@ -16,12 +16,36 @@
 
 以下為對外 `/api` 路徑，均要求 PLAYER session。user ID 只取自驗證結果，單局與歷史僅能查詢自己的資料。
 
-| Method / path | Request / response |
-| --- | --- |
-| GET `/plinko/config` | minRows、maxRows、risks、minBet、maxBet、betStep、ruleVersion、enabled、tables（rows、risk、multipliers、rtp） |
-| POST `/plinko/rounds` | `{ amount: 100, rows: 16, risk: "medium", ruleVersion: 1 }` → `{ round, balance, walletVersion }` |
-| GET `/plinko/rounds/:id` | `{ round }` |
-| GET `/plinko/history?limit=20&cursor=…` | `{ items, nextCursor }`，limit 1–50，結算時間倒序 |
+### WebSocket 投球
+
+前端投球與不確定結果重試使用既有 `/api/ws`，共用 MINES 的 request ID、逾時及重連處理。設定、歷史與錢包恢復仍使用 HTTP GET；下方 POST 保留給舊 client，兩種傳輸共用同一個 idempotency scope 與交易，不會因換協定重複扣款。
+
+```json
+{
+  "type": "plinko_command",
+  "requestId": "11111111-1111-4111-8111-111111111111",
+  "idempotencyKey": "22222222-2222-4222-8222-222222222222",
+  "payload": { "amount": 100, "rows": 16, "risk": "medium", "ruleVersion": 1 }
+}
+```
+
+- 回覆為 `{ type: "plinko_result", requestId, result: { ok: true, data: { round, balance, walletVersion } } }`。失敗為 `result: { ok: false, status, error: { code, message, requestId } }`；使用既有 API status/code，WS 不傳 HTTP headers。
+- 連線以 bearer subprotocol 驗證，token 不放 URL；每次指令重新確認 session 和 PLAYER 權限。strict schema 不接受 client 提供落點、路徑、派彩或身份。
+- 每個 socket 同時最多處理一個遊戲指令，MINES／Plinko 共用每 10 秒 60 個訊息的上限；Plinko 原有每帳號每分鐘 240 筆新投注的資料庫限流仍生效。已提交結果的原 key 回放不再消耗投注 quota。
+- 每顆球保存獨立 idempotency key；每次傳送使用新的 request ID，拒收舊 attempt 的回覆。10 秒未收到結果就關閉並重連，保留未確認操作。
+- 斷線立即停止自動投球。同頁重連自動確認當時尚未收到結果的球，確認完成後由玩家自行再次啟動自動投球；不繼續剩餘球數。重新整理或重新開頁仍顯示「確認上一筆投注」，由玩家手動恢復既有 pending key。
+- 每球仍等待後端確認後播放前端動畫，成功回覆直接按 walletVersion 更新餘額。結果回放不再觸發大獎動畫。投球間隔與原本 350ms 排程不變。
+
+部署先更新 server 再更新 web，不需新增 migration。回退 web 可使用保留的 HTTP 介面。server 記錄 `plinko_command_completed` 的 requestId、operation、statusCode、durationMs；錯誤記錄 `plinko_command_failed`，不記錄 token。
+
+### HTTP 相容介面
+
+| Method / path                           | Request / response                                                                                             |
+| --------------------------------------- | -------------------------------------------------------------------------------------------------------------- |
+| GET `/plinko/config`                    | minRows、maxRows、risks、minBet、maxBet、betStep、ruleVersion、enabled、tables（rows、risk、multipliers、rtp） |
+| POST `/plinko/rounds`                   | `{ amount: 100, rows: 16, risk: "medium", ruleVersion: 1 }` → `{ round, balance, walletVersion }`              |
+| GET `/plinko/rounds/:id`                | `{ round }`                                                                                                    |
+| GET `/plinko/history?limit=20&cursor=…` | `{ items, nextCursor }`，limit 1–50，結算時間倒序                                                              |
 
 round 包含 id、amount、rows、risk、path（0 左／1 右）、slotIndex、multiplier、payout、ruleVersion、createdAt、settledAt。每個成功的 POST 已結算，不需要 client 再呼叫結算 API。
 

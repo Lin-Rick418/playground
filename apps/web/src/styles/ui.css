@@ -1,5 +1,6 @@
 /* Physical CSS-pixel sizes shared by scaled pages and the responsive Plinko page. */
 :root {
+  --ui-page-gutter: 16px;
   --ui-control-height: 44px;
   --ui-action-height: 52px;
   --ui-compact-height: 36px;

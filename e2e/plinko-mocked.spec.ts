@@ -1,3 +1,4 @@
+import { mockPlinkoSocket } from "./helpers/plinko-ws";
 import { expect, test, type Page } from "@playwright/test";
 
 const expiresAt = new Date(Date.now() + 3_600_000).toISOString();
@@ -31,6 +32,83 @@ const config = {
   ),
 };
 
+for (const failure of ["disconnect", "timeout"] as const) {
+  test(`Plinko stops auto on disconnect and confirms only the original ball after reconnect (${failure})`, async ({
+    page,
+  }) => {
+    await page.clock.install();
+    await page.emulateMedia({ reducedMotion: "reduce" });
+    const keys: string[] = [];
+    let writes = 0;
+    const result = {
+      round: {
+        id: "11111111-1111-4111-8111-111111111111",
+        amount: 100,
+        rows: 16,
+        risk: "medium",
+        path: Array(16).fill(1),
+        slotIndex: 16,
+        multiplier: 106.1236,
+        payout: 10612.36,
+        ruleVersion: 1,
+        createdAt: now,
+        settledAt: now,
+      },
+      balance: 11512.36,
+      walletVersion: 2,
+    };
+    await page.routeWebSocket("**/api/ws", (socket) => {
+      socket.onMessage((raw) => {
+        const message = JSON.parse(String(raw));
+        if (message.type !== "plinko_command") return;
+        keys.push(message.idempotencyKey);
+        if (keys.length === 1) {
+          writes++;
+          if (failure === "disconnect")
+            socket.close({ code: 1011, reason: "Lost reply after commit" });
+        } else
+          socket.send(
+            JSON.stringify({
+              type: "plinko_result",
+              requestId: message.requestId,
+              result: { ok: true, data: result },
+            }),
+          );
+      });
+    });
+    await page.route("**/api/**", (route) => {
+      const path = new URL(route.request().url()).pathname;
+      expect(route.request().method() === "POST" && path.includes("/plinko/rounds")).toBe(false);
+      const currentUser = writes ? { ...user, balance: result.balance, walletVersion: 2 } : user;
+      if (path === "/api/auth/refresh")
+        return route.fulfill({
+          json: { token: "token", accessTokenExpiresAt: expiresAt, user: currentUser },
+        });
+      if (path === "/api/auth/me") return route.fulfill({ json: currentUser });
+      if (path === "/api/plinko/config") return route.fulfill({ json: config });
+      if (path === "/api/plinko/history")
+        return route.fulfill({ json: { items: [], nextCursor: null } });
+      return route.fulfill({ status: 404 });
+    });
+    await page.goto("/plinko");
+    await page.getByRole("combobox", { name: "自動投球" }).selectOption("30");
+    await page.getByRole("button", { name: "投球", exact: true }).click();
+    await expect.poll(() => keys.length).toBe(1);
+    if (failure === "timeout") await page.clock.runFor(10_001);
+    await expect(page.getByRole("button", { name: /停止投球/ })).toHaveCount(0);
+    await page.clock.runFor(2000);
+    await expect.poll(() => keys.length).toBe(2);
+    expect(keys[0]).toBe(keys[1]);
+    expect(writes).toBe(1);
+    await expect(page.getByRole("button", { name: "投球", exact: true })).toBeEnabled();
+    await expect(page.getByRole("button", { name: "確認上一筆投注", exact: true })).toHaveCount(0);
+    await expect(page.locator(".plinko-win")).toHaveCount(0);
+    await expect(page.locator(".recent-results li")).toHaveCount(1);
+    await page.clock.runFor(5000);
+    expect(keys).toHaveLength(2);
+  });
+}
+
 async function expectBoardLayout(page: Page) {
   const board = await page.locator(".plinko-board").boundingBox();
   const slots = await page.locator(".slots").boundingBox();
@@ -54,10 +132,32 @@ for (const motion of ["reduce", "no-preference"] as const) {
   }) => {
     await page.setViewportSize({ width: 483, height: 771 });
     await page.emulateMedia({ reducedMotion: motion });
-    await page.routeWebSocket("**/api/ws", (socket) => socket.close());
+    await page.routeWebSocket("**/api/ws", () => {});
     let releaseRound!: () => void;
     const roundGate = new Promise<void>((resolve) => {
       releaseRound = resolve;
+    });
+    const setBetReply = await mockPlinkoSocket(page, async () => {
+      await roundGate;
+      return {
+        json: {
+          round: {
+            id: "11111111-1111-4111-8111-111111111111",
+            amount: 100,
+            rows: 16,
+            risk: "medium",
+            path: Array(16).fill(1),
+            slotIndex: 16,
+            multiplier: 2.5,
+            payout: 250,
+            ruleVersion: 1,
+            createdAt: now,
+            settledAt: now,
+          },
+          balance: 1150,
+          walletVersion: 2,
+        },
+      };
     });
     await page.route("**/api/**", async (route) => {
       const url = new URL(route.request().url());
@@ -68,28 +168,7 @@ for (const motion of ["reduce", "no-preference"] as const) {
       if (url.pathname === "/api/plinko/history")
         return route.fulfill({ json: { items: [], nextCursor: null } });
       if (url.pathname === "/api/auth/me") return route.fulfill({ json: user });
-      if (url.pathname === "/api/plinko/rounds" && method === "POST") {
-        await roundGate;
-        return route.fulfill({
-          json: {
-            round: {
-              id: "11111111-1111-4111-8111-111111111111",
-              amount: 100,
-              rows: 16,
-              risk: "medium",
-              path: Array(16).fill(1),
-              slotIndex: 16,
-              multiplier: 2.5,
-              payout: 250,
-              ruleVersion: 1,
-              createdAt: now,
-              settledAt: now,
-            },
-            balance: 1150,
-            walletVersion: 2,
-          },
-        });
-      }
+
       return route.fulfill({
         status: 404,
         json: { code: "NOT_FOUND", message: "unexpected route", requestId: "mock" },
@@ -205,27 +284,38 @@ for (const motion of ["reduce", "no-preference"] as const) {
     }
     await page.setViewportSize({ width: 483, height: 771 });
     const legend = page.getByLabel("落槽倍率", { exact: true });
+    const leftHint = page.locator(".legend-hint-left");
+    const rightHint = page.locator(".legend-hint-right");
+    await expect(leftHint).toBeHidden();
+    await expect(rightHint).toBeVisible();
+    await legend.evaluate((element) => {
+      element.scrollLeft = (element.scrollWidth - element.clientWidth) / 2;
+    });
+    await expect(leftHint).toBeVisible();
+    await expect(rightHint).toBeVisible();
     await legend.evaluate((element) => {
       element.scrollLeft = element.scrollWidth;
     });
     await expect(legend.locator("strong").last()).toBeInViewport();
+    await expect(leftHint).toBeVisible();
+    await expect(rightHint).toBeHidden();
     await legend.evaluate((element) => {
       element.scrollLeft = 0;
     });
+    await expect(leftHint).toBeHidden();
+    await expect(rightHint).toBeVisible();
     await page.screenshot({ path: test.info().outputPath("plinko-mobile.png"), fullPage: true });
     await page.setViewportSize({ width: 1360, height: 960 });
     await page.screenshot({ path: test.info().outputPath("plinko-desktop.png"), fullPage: true });
     await page.setViewportSize({ width: 483, height: 771 });
-    await page.route("**/api/plinko/rounds", (route) =>
-      route.fulfill({
-        status: 400,
-        json: {
-          code: "VALIDATION_ERROR",
-          message: "餘額不足。",
-          requestId: "low-balance",
-        },
-      }),
-    );
+    setBetReply(() => ({
+      status: 400,
+      json: {
+        code: "VALIDATION_ERROR",
+        message: "餘額不足。",
+        requestId: "low-balance",
+      },
+    }));
     const boardBeforeError = await page.locator(".plinko-board").boundingBox();
     await page.getByRole("button", { name: "投球", exact: true }).click();
     await expect(page.locator(".plinko-wallet")).toHaveClass(/insufficient/);
@@ -259,7 +349,7 @@ test("Plinko displays only the latest ten multipliers beside settings", async ({
     createdAt: now,
     settledAt: now,
   }));
-  await page.routeWebSocket("**/api/ws", (socket) => socket.close());
+  await page.routeWebSocket("**/api/ws", () => {});
   await page.route("**/api/**", (route) => {
     const path = new URL(route.request().url()).pathname;
     if (path === "/api/auth/refresh")
@@ -306,7 +396,30 @@ test("Plinko auto selector starts a batch and the play button stops it while a r
   await page.clock.install();
   await page.clock.pauseAt(new Date(Date.now() + 1000));
   await page.emulateMedia({ reducedMotion: "reduce" });
-  await page.routeWebSocket("**/api/ws", (socket) => socket.close());
+  await page.routeWebSocket("**/api/ws", () => {});
+  const setBetReply = await mockPlinkoSocket(page, async () => {
+    const sequence = ++posts;
+    if (sequence === 2) await secondGate;
+    return {
+      json: {
+        round: {
+          id: `11111111-1111-4111-8111-${String(sequence).padStart(12, "0")}`,
+          amount: 100,
+          rows: 16,
+          risk: "medium",
+          path: Array(16).fill(1),
+          slotIndex: 16,
+          multiplier: 2.5,
+          payout: 250,
+          ruleVersion: 1,
+          createdAt: now,
+          settledAt: now,
+        },
+        balance: 1000 + sequence * 150,
+        walletVersion: sequence + 1,
+      },
+    };
+  });
   await page.route("**/api/**", async (route) => {
     const path = new URL(route.request().url()).pathname;
     if (path === "/api/auth/refresh")
@@ -315,29 +428,7 @@ test("Plinko auto selector starts a batch and the play button stops it while a r
     if (path === "/api/plinko/config") return route.fulfill({ json: config });
     if (path === "/api/plinko/history")
       return route.fulfill({ json: { items: [], nextCursor: null } });
-    if (path === "/api/plinko/rounds") {
-      const sequence = ++posts;
-      if (sequence === 2) await secondGate;
-      return route.fulfill({
-        json: {
-          round: {
-            id: `11111111-1111-4111-8111-${String(sequence).padStart(12, "0")}`,
-            amount: 100,
-            rows: 16,
-            risk: "medium",
-            path: Array(16).fill(1),
-            slotIndex: 16,
-            multiplier: 2.5,
-            payout: 250,
-            ruleVersion: 1,
-            createdAt: now,
-            settledAt: now,
-          },
-          balance: 1000 + sequence * 150,
-          walletVersion: sequence + 1,
-        },
-      });
-    }
+
     return route.fulfill({ status: 404 });
   });
   await page.goto("/plinko");
@@ -389,8 +480,30 @@ for (const motion of ["reduce", "no-preference"] as const) {
   test(`Plinko celebrates landed wins without blocking auto stop (${motion})`, async ({ page }) => {
     await page.setViewportSize({ width: 393, height: 695 });
     await page.emulateMedia({ reducedMotion: motion });
-    await page.routeWebSocket("**/api/ws", (socket) => socket.close());
+    await page.routeWebSocket("**/api/ws", () => {});
     let sequence = 0;
+    const setBetReply = await mockPlinkoSocket(page, async () => {
+      sequence++;
+      return {
+        json: {
+          round: {
+            id: `11111111-1111-4111-8111-${String(sequence).padStart(12, "0")}`,
+            amount: 100,
+            rows: 16,
+            risk: "medium",
+            path: Array(16).fill(1),
+            slotIndex: 16,
+            multiplier: 106.1236,
+            payout: 10612.36,
+            ruleVersion: 1,
+            createdAt: now,
+            settledAt: now,
+          },
+          balance: 1000 + sequence * 10512.36,
+          walletVersion: sequence + 1,
+        },
+      };
+    });
     await page.route("**/api/**", (route) => {
       const path = new URL(route.request().url()).pathname;
       if (path === "/api/auth/refresh")
@@ -399,28 +512,7 @@ for (const motion of ["reduce", "no-preference"] as const) {
       if (path === "/api/plinko/config") return route.fulfill({ json: config });
       if (path === "/api/plinko/history")
         return route.fulfill({ json: { items: [], nextCursor: null } });
-      if (path === "/api/plinko/rounds") {
-        sequence++;
-        return route.fulfill({
-          json: {
-            round: {
-              id: `11111111-1111-4111-8111-${String(sequence).padStart(12, "0")}`,
-              amount: 100,
-              rows: 16,
-              risk: "medium",
-              path: Array(16).fill(1),
-              slotIndex: 16,
-              multiplier: 106.1236,
-              payout: 10612.36,
-              ruleVersion: 1,
-              createdAt: now,
-              settledAt: now,
-            },
-            balance: 1000 + sequence * 10512.36,
-            walletVersion: sequence + 1,
-          },
-        });
-      }
+
       return route.fulfill({ status: 404 });
     });
     await page.goto("/plinko");

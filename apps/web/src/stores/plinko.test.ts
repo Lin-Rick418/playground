@@ -2,7 +2,16 @@ import { beforeEach, describe, expect, it } from "vitest";
 import MockAdapter from "axios-mock-adapter";
 import { createPinia, setActivePinia } from "pinia";
 import { api } from "../lib/api";
-import { PendingPlinkoMutationError, usePlinkoStore } from "./plinko";
+import { PendingPlinkoMutationError, usePlinkoStore as createPlinkoStore } from "./plinko";
+
+// Preserve the existing deterministic fixtures behind the injected WS transport.
+function usePlinkoStore() {
+  const store = createPlinkoStore();
+  store.transport = async ({ payload, idempotencyKey }) =>
+    (await api.post("/plinko/rounds", payload, { headers: { "Idempotency-Key": idempotencyKey } }))
+      .data;
+  return store;
+}
 
 const config = {
   minRows: 8,

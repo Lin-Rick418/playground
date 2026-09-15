@@ -15,6 +15,8 @@ import { parseRuntimeContract } from "../lib/contracts";
 import type { PlinkoConfig, PlinkoRound } from "../types/domain";
 
 type Payload = { amount: number; rows: number; risk: PlinkoRisk; ruleVersion: number };
+import type { PlinkoTransport } from "../lib/plinko-rpc";
+
 type Pending = { key: string; payload: Payload };
 
 function storageKey(userId: string) {
@@ -58,6 +60,7 @@ export const usePlinkoStore = defineStore("plinko", {
     storageError: "",
     userId: "",
     generation: 0,
+    transport: null as PlinkoTransport | null,
   }),
   actions: {
     acceptResponse(userId: string, generation: number, result: PlinkoMutationResponse) {
@@ -150,13 +153,15 @@ export const usePlinkoStore = defineStore("plinko", {
       this.requestInFlight = true;
       const requestToken = ++this.requestToken;
       try {
-        const response = await api.post("/plinko/rounds", pending.payload, {
-          headers: { "Idempotency-Key": pending.key },
+        if (!this.transport) throw new Error("Plinko 連線尚未就緒。");
+        const response = await this.transport({
+          payload: pending.payload,
+          idempotencyKey: pending.key,
         });
         const result = parseRuntimeContract(
           plinkoMutationResponseSchema,
-          response.data,
-          "POST /plinko/rounds",
+          response,
+          "WS plinko.start",
         );
         this.acceptResponse(userId, generation, result);
         return result;
@@ -179,13 +184,15 @@ export const usePlinkoStore = defineStore("plinko", {
       this.requestInFlight = true;
       const requestToken = ++this.requestToken;
       try {
-        const response = await api.post("/plinko/rounds", pending.payload, {
-          headers: { "Idempotency-Key": pending.key },
+        if (!this.transport) throw new Error("Plinko 連線尚未就緒。");
+        const response = await this.transport({
+          payload: pending.payload,
+          idempotencyKey: pending.key,
         });
         const result = parseRuntimeContract(
           plinkoMutationResponseSchema,
-          response.data,
-          "POST /plinko/rounds replay",
+          response,
+          "WS plinko.start replay",
         );
         this.acceptResponse(userId, generation, result);
         return result;

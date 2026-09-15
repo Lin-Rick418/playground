@@ -42,6 +42,71 @@ async function expectControlHeights(page: Page) {
   }
 }
 
+test("Mines reconnects and confirms a lost reveal reply with the same key", async ({ page }) => {
+  let current = { ...round, mineCount: 3, revealedCells: [] as number[] };
+  let writes = 0;
+  const keys: string[] = [];
+  await page.routeWebSocket("**/api/ws", (socket) => {
+    socket.onMessage((raw) => {
+      const message = JSON.parse(String(raw));
+      if (message.type !== "mines_command") return;
+      expect(message.action.kind).toBe("reveal");
+      keys.push(message.idempotencyKey);
+      if (keys.length === 1) {
+        writes++;
+        current = {
+          ...current,
+          revealedCells: [0],
+          version: 2,
+          cashoutAmount: 107.95,
+          multiplier: 1.079545,
+        };
+        socket.close({ code: 1011, reason: "Simulated lost reply after commit" });
+        return;
+      }
+      socket.send(
+        JSON.stringify({
+          type: "mines_result",
+          requestId: message.requestId,
+          result: { ok: true, data: { round: current, balance: 1000, walletVersion: 1 } },
+        }),
+      );
+    });
+  });
+  await page.route("**/api/**", (route) => {
+    const path = new URL(route.request().url()).pathname;
+    expect(route.request().method() === "POST" && path.includes("/mines/")).toBe(false);
+    if (path === "/api/auth/refresh")
+      return route.fulfill({ json: { token: "token", accessTokenExpiresAt: expiresAt, user } });
+    if (path === "/api/auth/me") return route.fulfill({ json: user });
+    if (path === "/api/mines/config")
+      return route.fulfill({
+        json: {
+          boardSize: 25,
+          minMines: 3,
+          maxMines: 24,
+          minBet: 100,
+          maxBet: 5000,
+          betStep: 100,
+          rtp: 0.95,
+          enabled: true,
+        },
+      });
+    if (path === "/api/mines/active" || path === `/api/mines/rounds/${round.id}`)
+      return route.fulfill({ json: { round: current } });
+    return route.fulfill({ status: 404 });
+  });
+  await page.goto("/mines");
+  await page.getByRole("button", { name: "翻開第 1 格", exact: true }).click();
+  await expect.poll(() => keys.length).toBe(2);
+  expect(keys[0]).toBe(keys[1]);
+  expect(writes).toBe(1);
+  await expect(page.getByRole("button", { name: "安全格", exact: true })).toHaveCount(1);
+  await expect(page.getByRole("button", { name: "翻開第 2 格", exact: true })).toBeEnabled();
+  await expect(page.getByRole("button", { name: "收款 107", exact: true })).toBeEnabled();
+  await expect(page.getByRole("button", { name: "重試上一個操作" })).toHaveCount(0);
+});
+
 test("Mines restores an active round and renders a deterministic full-clear settlement", async ({
   page,
 }) => {
@@ -50,8 +115,44 @@ test("Mines restores an active round and renders a deterministic full-clear sett
   const revealGate = new Promise<void>((resolve) => {
     releaseReveal = resolve;
   });
-  await page.routeWebSocket("**/api/ws", (socket) => socket.close());
+  await page.routeWebSocket("**/api/ws", (socket) => {
+    socket.onMessage(async (raw) => {
+      const message = JSON.parse(String(raw));
+      if (message.type !== "mines_command") return;
+      expect(message.action.kind).toBe("reveal");
+      revealReceived = true;
+      await revealGate;
+      socket.send(
+        JSON.stringify({
+          type: "mines_result",
+          requestId: message.requestId,
+          result: {
+            ok: true,
+            data: {
+              round: {
+                ...round,
+                revealedCells: [0],
+                status: "CASHED_OUT",
+                payout: 2375,
+                cashoutAmount: 2375,
+                multiplier: 23.75,
+                nextMultiplier: null,
+                version: 2,
+                mineCells: Array.from({ length: 24 }, (_, index) => index + 1),
+                settledAt: now,
+              },
+              balance: 3275,
+              walletVersion: 2,
+            },
+          },
+        }),
+      );
+    });
+  });
   await page.route("**/api/**", async (route) => {
+    expect(route.request().method() === "POST" && route.request().url().includes("/mines/")).toBe(
+      false,
+    );
     const url = new URL(route.request().url());
     const method = route.request().method();
     if (url.pathname === "/api/auth/refresh" && method === "POST")
@@ -70,27 +171,6 @@ test("Mines restores an active round and renders a deterministic full-clear sett
         },
       });
     if (url.pathname === "/api/mines/active") return route.fulfill({ json: { round } });
-    if (url.pathname.endsWith("/reveal") && method === "POST") {
-      revealReceived = true;
-      await revealGate;
-      return route.fulfill({
-        json: {
-          round: {
-            ...round,
-            revealedCells: [0],
-            status: "CASHED_OUT",
-            payout: 2375,
-            cashoutAmount: 2375,
-            multiplier: 23.75,
-            nextMultiplier: null,
-            mineCells: Array.from({ length: 24 }, (_, index) => index + 1),
-            settledAt: now,
-          },
-          balance: 3275,
-          walletVersion: 2,
-        },
-      });
-    }
     if (url.pathname === "/api/auth/me")
       return route.fulfill({ json: { ...user, balance: 3275, walletVersion: 2 } });
     return route.fulfill({
@@ -175,8 +255,32 @@ for (const motion of ["reduce", "no-preference"] as const) {
     let starts = 0;
     await page.setViewportSize({ width: 483, height: 771 });
     await page.emulateMedia({ reducedMotion: motion });
-    await page.routeWebSocket("**/api/ws", (socket) => socket.close());
+    await page.routeWebSocket("**/api/ws", (socket) => {
+      socket.onMessage((raw) => {
+        const message = JSON.parse(String(raw));
+        if (message.type !== "mines_command") return;
+        starts++;
+        socket.send(
+          JSON.stringify({
+            type: "mines_result",
+            requestId: message.requestId,
+            result: {
+              ok: false,
+              status: 400,
+              error: {
+                code: "VALIDATION_ERROR",
+                message: "餘額不足。",
+                requestId: message.requestId,
+              },
+            },
+          }),
+        );
+      });
+    });
     await page.route("**/api/**", (route) => {
+      expect(route.request().method() === "POST" && route.request().url().includes("/mines/")).toBe(
+        false,
+      );
       const path = new URL(route.request().url()).pathname;
       if (path === "/api/auth/refresh")
         return route.fulfill({
@@ -197,13 +301,6 @@ for (const motion of ["reduce", "no-preference"] as const) {
           },
         });
       if (path === "/api/mines/active") return route.fulfill({ json: { round: null } });
-      if (path === "/api/mines/rounds") {
-        starts++;
-        return route.fulfill({
-          status: 400,
-          json: { code: "VALIDATION_ERROR", message: "餘額不足。", requestId: "low-balance" },
-        });
-      }
       return route.fulfill({ status: 404 });
     });
     await page.goto("/mines");
