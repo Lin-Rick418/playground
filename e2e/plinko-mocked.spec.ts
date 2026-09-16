@@ -385,96 +385,99 @@ test("Plinko displays only the latest ten multipliers beside settings", async ({
   });
 });
 
-test("Plinko auto selector starts a batch and the play button stops it while a request is pending", async ({
-  page,
-}) => {
-  let posts = 0;
-  let releaseSecond!: () => void;
-  const secondGate = new Promise<void>((resolve) => {
-    releaseSecond = resolve;
-  });
-  await page.clock.install();
-  await page.clock.pauseAt(new Date(Date.now() + 1000));
-  await page.emulateMedia({ reducedMotion: "reduce" });
-  await page.routeWebSocket("**/api/ws", () => {});
-  const setBetReply = await mockPlinkoSocket(page, async () => {
-    const sequence = ++posts;
-    if (sequence === 2) await secondGate;
-    return {
-      json: {
-        round: {
-          id: `11111111-1111-4111-8111-${String(sequence).padStart(12, "0")}`,
-          amount: 100,
-          rows: 16,
-          risk: "medium",
-          path: Array(16).fill(1),
-          slotIndex: 16,
-          multiplier: 2.5,
-          payout: 250,
-          ruleVersion: 1,
-          createdAt: now,
-          settledAt: now,
+for (const autoCount of ["30", "-1"]) {
+  test(`Plinko auto selector starts a batch and the play button stops it while a request is pending (${autoCount})`, async ({
+    page,
+  }) => {
+    let posts = 0;
+    let releaseSecond!: () => void;
+    const secondGate = new Promise<void>((resolve) => {
+      releaseSecond = resolve;
+    });
+    await page.clock.install();
+    await page.clock.pauseAt(new Date(Date.now() + 1000));
+    await page.emulateMedia({ reducedMotion: "reduce" });
+    await page.routeWebSocket("**/api/ws", () => {});
+    const setBetReply = await mockPlinkoSocket(page, async () => {
+      const sequence = ++posts;
+      if (sequence === 2) await secondGate;
+      return {
+        json: {
+          round: {
+            id: `11111111-1111-4111-8111-${String(sequence).padStart(12, "0")}`,
+            amount: 100,
+            rows: 16,
+            risk: "medium",
+            path: Array(16).fill(1),
+            slotIndex: 16,
+            multiplier: 2.5,
+            payout: 250,
+            ruleVersion: 1,
+            createdAt: now,
+            settledAt: now,
+          },
+          balance: 1000 + sequence * 150,
+          walletVersion: sequence + 1,
         },
-        balance: 1000 + sequence * 150,
-        walletVersion: sequence + 1,
-      },
-    };
-  });
-  await page.route("**/api/**", async (route) => {
-    const path = new URL(route.request().url()).pathname;
-    if (path === "/api/auth/refresh")
-      return route.fulfill({ json: { token: "token", accessTokenExpiresAt: expiresAt, user } });
-    if (path === "/api/auth/me") return route.fulfill({ json: user });
-    if (path === "/api/plinko/config") return route.fulfill({ json: config });
-    if (path === "/api/plinko/history")
-      return route.fulfill({ json: { items: [], nextCursor: null } });
+      };
+    });
+    await page.route("**/api/**", async (route) => {
+      const path = new URL(route.request().url()).pathname;
+      if (path === "/api/auth/refresh")
+        return route.fulfill({ json: { token: "token", accessTokenExpiresAt: expiresAt, user } });
+      if (path === "/api/auth/me") return route.fulfill({ json: user });
+      if (path === "/api/plinko/config") return route.fulfill({ json: config });
+      if (path === "/api/plinko/history")
+        return route.fulfill({ json: { items: [], nextCursor: null } });
 
-    return route.fulfill({ status: 404 });
+      return route.fulfill({ status: 404 });
+    });
+    await page.goto("/plinko");
+    const auto = page.getByRole("combobox", { name: "自動投球" });
+    const play = page.locator(".plinko-play");
+    await expect(auto).toBeEnabled();
+    await expect(auto.locator("option")).toHaveText([
+      "自動：關閉",
+      "30 球",
+      "50 球",
+      "100 球",
+      "300 球",
+      "500 球",
+      "1000 球",
+      "∞",
+    ]);
+    for (const width of [320, 375, 483, 1360]) {
+      await page.setViewportSize({ width, height: 771 });
+      const selectBox = await auto.boundingBox();
+      const playBox = await play.boundingBox();
+      expect(selectBox!.x + selectBox!.width).toBeLessThan(playBox!.x);
+      expect(selectBox!.height).toBe(playBox!.height);
+      expect(selectBox!.y).toBe(playBox!.y);
+    }
+    await page.setViewportSize({ width: 483, height: 771 });
+    await auto.selectOption(autoCount);
+    const boardBefore = await page.locator(".plinko-board").boundingBox();
+    await play.click();
+    await expect(play).toHaveText(autoCount === "-1" ? "停止投球（∞）" : "停止投球（29）");
+    await expect(auto).toBeDisabled();
+    await page.screenshot({
+      path: test.info().outputPath("plinko-auto-playing.png"),
+      fullPage: true,
+    });
+    await page.clock.runFor(350);
+    await expect.poll(() => posts).toBe(2);
+    await expect(play).toBeEnabled();
+    await play.click();
+    releaseSecond();
+    await expect(play).toHaveText("投球");
+    await expect(play).toBeEnabled();
+    await expect(auto).toBeEnabled();
+    await page.clock.runFor(5000);
+    expect(posts).toBe(2);
+    expect(await page.locator(".plinko-board").boundingBox()).toEqual(boardBefore);
+    await expect(page.locator(".recent-results li")).toHaveCount(2);
   });
-  await page.goto("/plinko");
-  const auto = page.getByRole("combobox", { name: "自動投球" });
-  const play = page.locator(".plinko-play");
-  await expect(auto).toBeEnabled();
-  await expect(auto.locator("option")).toHaveText([
-    "自動：關閉",
-    "30 球",
-    "50 球",
-    "100 球",
-    "300 球",
-    "500 球",
-    "1000 球",
-  ]);
-  for (const width of [320, 375, 483, 1360]) {
-    await page.setViewportSize({ width, height: 771 });
-    const selectBox = await auto.boundingBox();
-    const playBox = await play.boundingBox();
-    expect(selectBox!.x + selectBox!.width).toBeLessThan(playBox!.x);
-    expect(selectBox!.height).toBe(playBox!.height);
-    expect(selectBox!.y).toBe(playBox!.y);
-  }
-  await page.setViewportSize({ width: 483, height: 771 });
-  await auto.selectOption("30");
-  const boardBefore = await page.locator(".plinko-board").boundingBox();
-  await play.click();
-  await expect(play).toHaveText("停止投球（29）");
-  await expect(auto).toBeDisabled();
-  await page.screenshot({
-    path: test.info().outputPath("plinko-auto-playing.png"),
-    fullPage: true,
-  });
-  await page.clock.runFor(350);
-  await expect.poll(() => posts).toBe(2);
-  await expect(play).toBeEnabled();
-  await play.click();
-  releaseSecond();
-  await expect(play).toHaveText("投球");
-  await expect(play).toBeEnabled();
-  await expect(auto).toBeEnabled();
-  await page.clock.runFor(5000);
-  expect(posts).toBe(2);
-  expect(await page.locator(".plinko-board").boundingBox()).toEqual(boardBefore);
-  await expect(page.locator(".recent-results li")).toHaveCount(2);
-});
+}
 
 for (const motion of ["reduce", "no-preference"] as const) {
   test(`Plinko celebrates landed wins without blocking auto stop (${motion})`, async ({ page }) => {

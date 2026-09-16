@@ -30,6 +30,7 @@ const amount = ref(100);
 const rows = ref(16);
 const risk = ref<PlinkoRisk>("medium");
 const autoCounts = [30, 50, 100, 300, 500, 1000];
+const infiniteAutoCount = -1;
 const autoCount = ref(0);
 const autoRunning = ref(false);
 const celebration = ref<{ multiplier: number; payout: number; count: number } | null>(null);
@@ -68,10 +69,12 @@ async function runAuto(version: number) {
       stopAuto();
       return;
     }
-    autoRemaining.value--;
-    if (autoRemaining.value === 0) {
-      stopAuto();
-      return;
+    if (autoRemaining.value > 0) {
+      autoRemaining.value--;
+      if (autoRemaining.value === 0) {
+        stopAuto();
+        return;
+      }
     }
   }
   autoTimer = setTimeout(() => void runAuto(version), 350);
@@ -86,7 +89,7 @@ async function togglePlay() {
     await submit();
     return;
   }
-  if (!autoCounts.includes(autoCount.value)) return;
+  if (autoCount.value !== infiniteAutoCount && !autoCounts.includes(autoCount.value)) return;
   autoRemaining.value = autoCount.value;
   autoRunning.value = true;
   void runAuto(++autoGeneration);
@@ -685,6 +688,7 @@ onUnmounted(() => {
         >
           <option :value="0">自動：關閉</option>
           <option v-for="count in autoCounts" :key="count" :value="count">{{ count }} 球</option>
+          <option :value="infiniteAutoCount" aria-label="無限">∞</option>
         </AppSelect>
         <AppButton
           variant="primary"
@@ -698,7 +702,7 @@ onUnmounted(() => {
         >
           {{
             autoRunning
-              ? `停止投球（${autoRemaining}）`
+              ? `停止投球（${autoRemaining === infiniteAutoCount ? "∞" : autoRemaining}）`
               : submitting
                 ? "處理中…"
                 : !config?.enabled
