@@ -2,6 +2,10 @@ import { defineConfig, devices } from "@playwright/test";
 
 export default defineConfig({
   testDir: "./e2e",
+  testMatch:
+    process.env.E2E_MOCKED_ONLY === "true"
+      ? ["*-mocked.spec.ts", "lobby-carousel.spec.ts", "viewport.spec.ts"]
+      : undefined,
   testIgnore: "pwa.spec.ts", // Uses its own production builds and preview server.
   fullyParallel: false,
   workers: 1,
@@ -22,17 +26,26 @@ export default defineConfig({
     },
     {
       name: "webkit-mobile",
-      testMatch: ["plinko-mocked.spec.ts", "mines-mocked.spec.ts", "viewport.spec.ts"],
+      testMatch: [
+        "hilo-mocked.spec.ts",
+        "plinko-mocked.spec.ts",
+        "mines-mocked.spec.ts",
+        "viewport.spec.ts",
+      ],
       use: { ...devices["iPhone 13"] },
     },
   ],
   webServer: [
-    {
-      command: 'npx concurrently -k -n api,worker "npm:dev:server" "npm:dev:worker"',
-      url: "http://127.0.0.1:4000/health/live",
-      reuseExistingServer: !process.env.CI,
-      timeout: 60_000,
-    },
+    ...(process.env.E2E_MOCKED_ONLY === "true"
+      ? []
+      : [
+          {
+            command: 'npx concurrently -k -n api,worker "npm:dev:server" "npm:dev:worker"',
+            url: "http://127.0.0.1:4000/health/live",
+            reuseExistingServer: !process.env.CI,
+            timeout: 60_000,
+          },
+        ]),
     {
       // Call the workspace script directly: routing through the root dev:web
       // alias drops the "--host" flag at the inner "npm run" boundary, so

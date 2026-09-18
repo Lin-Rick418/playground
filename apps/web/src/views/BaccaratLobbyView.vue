@@ -80,6 +80,7 @@ onMounted(async () => {
 
 <style scoped lang="scss">
 .baccarat-lobby {
+  padding-inline: var(--ui-page-gutter);
   background: $gradient-felt;
 }
 .loading {

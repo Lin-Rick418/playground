@@ -408,7 +408,8 @@ onUnmounted(() => {
   height: 100dvh;
   min-height: 0;
   gap: 8px;
-  padding: env(safe-area-inset-top, 0px) 16px max(8px, env(safe-area-inset-bottom, 0px));
+  padding: env(safe-area-inset-top, 0px) var(--ui-page-gutter)
+    max(8px, env(safe-area-inset-bottom, 0px));
   color: #f3f4f7;
   background: radial-gradient(ellipse at 50% 15%, #303743 0, #1b2029 55%, #171b23 100%);
 }
@@ -509,10 +510,6 @@ onUnmounted(() => {
     box-shadow 0.15s;
   touch-action: manipulation;
 }
-.mine-cell:not(:disabled):hover {
-  background: linear-gradient(145deg, #4b5360, #343c48);
-  transform: translateY(-2px);
-}
 .mine-cell:not(:disabled):active {
   transform: translateY(2px);
   box-shadow: 0 1px 0 #10151d;
@@ -561,10 +558,6 @@ onUnmounted(() => {
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));
   gap: 4px;
-}
-.mines-page :is(button, select, summary):focus-visible {
-  outline: 2px solid #ffd1a1;
-  outline-offset: 3px;
 }
 .mines-status,
 .mines-error {

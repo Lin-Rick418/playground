@@ -1299,13 +1299,6 @@ watch(
       back-label="返回大廳"
       @back="backToLobby"
     >
-      <template #subtitle
-        ><p class="table-meta-line">
-          {{ currentTable?.code ?? "--" }}｜{{
-            Math.round((currentTable?.roundDurationMs ?? 30000) / 1000)
-          }}秒｜限紅 {{ formatMoney(currentTable?.minBet) }}-{{ formatMoney(currentTable?.maxBet) }}
-        </p></template
-      >
       <template #actions
         ><AppButton class="nav-text-button" variant="ghost" @click="openGameRules"
           >遊戲規則</AppButton
@@ -1722,6 +1715,7 @@ watch(
 
 <style scoped lang="scss">
 .game-page {
+  padding-inline: var(--ui-page-gutter);
   overflow: hidden;
   height: 100vh;
   height: 100dvh;
@@ -1741,21 +1735,6 @@ watch(
   --ui-header-side: 64px;
   align-content: center;
   row-gap: 2px;
-}
-
-.table-meta-line {
-  grid-column: 2;
-  grid-row: 2;
-  width: 100%;
-  margin: 0;
-  color: rgba(255, 255, 255, 0.72);
-  font-size: 11px;
-  line-height: 1.2;
-  letter-spacing: 0.02em;
-  text-align: center;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
 }
 
 .nav-text-button {

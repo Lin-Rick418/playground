@@ -110,3 +110,32 @@ it("rejects malformed persisted wagers without sending a request", async () => {
     store.place("user-a", { amount: 100, rows: 16, risk: "medium", ruleVersion: 1 }),
   ).rejects.toBeInstanceOf(PendingPlinkoMutationError);
 });
+
+it("refreshes v2 config after rejecting a stale v1 bet without automatically placing another", async () => {
+  setActivePinia(createPinia());
+  sessionStorage.clear();
+  const adapter = new MockAdapter(api);
+  const store = usePlinkoStore();
+  adapter.onGet("/plinko/config").reply(200, { ...config, ruleVersion: 2 });
+  adapter.onPost("/plinko/rounds").reply(409, { code: "CONFLICT", message: "規則已更新" });
+  try {
+    await expect(
+      store.place("user-a", { amount: 100, rows: 16, risk: "medium", ruleVersion: 1 }),
+    ).rejects.toThrow();
+    expect(store.pending).toBeNull();
+    expect(store.config?.ruleVersion).toBe(2);
+    expect(adapter.history.post).toHaveLength(1);
+    adapter
+      .onPost("/plinko/rounds")
+      .reply(200, { round: { ...round, ruleVersion: 2 }, balance: 1000, walletVersion: 2 });
+    await store.place("user-a", {
+      amount: 100,
+      rows: 16,
+      risk: "medium",
+      ruleVersion: store.config!.ruleVersion,
+    });
+    expect(JSON.parse(adapter.history.post[1]!.data).ruleVersion).toBe(2);
+  } finally {
+    adapter.restore();
+  }
+});

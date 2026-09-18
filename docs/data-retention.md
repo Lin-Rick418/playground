@@ -3,19 +3,22 @@
 This policy separates retry/session metadata that may be deleted from game,
 financial, and fairness records that must remain available for audit.
 
-| Data | Retention | Reason |
-| --- | --- | --- |
-| `idempotency_keys` | 7 days by default (`IDEMPOTENCY_RETENTION_DAYS`) | Supports client retries and short-term incident diagnosis. `bets` and `financial_ledger_entries` remain the source of truth. |
-| `auth_sessions` | Delete 30 days after expiration or revocation by default (`AUTH_SESSION_RETENTION_DAYS`) | Allows bounded security investigation without retaining unusable refresh-token hashes forever. |
-| `login_rate_limits` | Delete after `expires_at` | The rows have no value after their enforcement window. |
-| `game_rounds`, `bets` | Permanent | Game and wagering history. |
-| `financial_ledger_entries` | Permanent | Append-only financial source of truth. |
-| `shoe_commitments`, `shoe_secrets`, `shoe_reveals`, `shoe_deal_audits` | Permanent | Fairness and shoe reconstruction evidence. |
-| `service_heartbeats` | One current row per service | Updated in place rather than accumulated. |
+| Data                                                                                      | Retention                                                                                | Reason                                                                                                   |
+| ----------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------- |
+| `idempotency_keys`, except the permanent game scopes below                                | 7 days by default (`IDEMPOTENCY_RETENTION_DAYS`)                                         | Includes free `hilo-preview` operations; financial history remains available separately.                 |
+| `idempotency_keys` scopes matching `mines.%`, `plinko.%`, `hilo.%`                        | Permanent                                                                                | Prevents historical retries from becoming new wagers or settlements, including long-lived ACTIVE rounds. |
+| `auth_sessions`                                                                           | Delete 30 days after expiration or revocation by default (`AUTH_SESSION_RETENTION_DAYS`) | Allows bounded security investigation without retaining unusable refresh-token hashes forever.           |
+| `login_rate_limits`                                                                       | Delete after `expires_at`                                                                | The rows have no value after their enforcement window.                                                   |
+| `game_rounds`, `bets`, `mines_rounds`, `plinko_rounds`, `hilo_rounds`, `hilo_round_steps` | Permanent                                                                                | Game and wagering history.                                                                               |
+| `financial_ledger_entries`                                                                | Permanent                                                                                | Append-only financial source of truth.                                                                   |
+| `shoe_commitments`, `shoe_secrets`, `shoe_reveals`, `shoe_deal_audits`                    | Permanent                                                                                | Fairness and shoe reconstruction evidence.                                                               |
+| `service_heartbeats`                                                                      | One current row per service                                                              | Updated in place rather than accumulated.                                                                |
 
 If growth of a permanent table becomes operationally significant, add an
 archive design and legal review in a separate issue. The retention maintenance
 job must not delete or archive permanent records.
+
+`hilo-preview` (hyphen) is not covered by `hilo.%` (dot). Do not merge these scopes or apply ordinary seven-day cleanup to `hilo.mutation`. Preview IDs must remain non-reusable after consumption.
 
 ## Automated cleanup
 

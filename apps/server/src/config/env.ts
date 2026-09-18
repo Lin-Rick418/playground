@@ -30,8 +30,13 @@ if (process.env.PLINKO_ENABLED !== undefined && !["true", "false"].includes(proc
   throw new Error("PLINKO_ENABLED must be true or false");
 }
 
+if (process.env.HILO_ENABLED !== undefined && !["true", "false"].includes(process.env.HILO_ENABLED)) {
+  throw new Error("HILO_ENABLED must be true or false");
+}
+
 export const env = {
   plinkoEnabled: process.env.PLINKO_ENABLED !== "false",
+  hiloEnabled: process.env.HILO_ENABLED === "true",
   minesEnabled: process.env.MINES_ENABLED !== "false",
   isProduction,
   port: parseBoundedInteger("PORT", process.env.PORT, 4000, { min: 1, max: 65_535 }),

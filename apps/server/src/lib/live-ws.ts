@@ -8,6 +8,8 @@ import {
   liveServerMessageSchema,
   type LiveClientMessage,
   type LiveServerMessage,
+  type HiloCommand,
+  hiloCommandResultSchema,
   type MinesCommand,
   minesCommandResultSchema,
   plinkoCommandResultSchema,
@@ -47,6 +49,7 @@ import { getRoundConfig } from "./round-manager.js";
 import type { UserRole } from "../types/domain.js";
 import { placePlinkoBet } from "../modules/plinko/service.js";
 import { mutateMines } from "../modules/mines/service.js";
+import { mutateHilo } from "../modules/hilo/service.js";
 
 type LiveSocketConnection = {
   id: string;
@@ -195,13 +198,19 @@ async function pushTableUserSnapshot(connection: LiveSocketConnection, tableId: 
   });
 }
 
-type GameCommand = MinesCommand | PlinkoCommand;
+type GameCommand = MinesCommand | PlinkoCommand | HiloCommand;
 async function handleGameCommand(connection: LiveSocketConnection, message: GameCommand) {
-  const game = message.type === "mines_command" ? "Mines" : "Plinko";
+  const game = message.type === "hilo_command"
+    ? "Hilo"
+    : message.type === "mines_command" ? "Mines" : "Plinko";
   const schema =
-    message.type === "mines_command" ? minesCommandResultSchema : plinkoCommandResultSchema;
-  const resultType = message.type === "mines_command" ? "mines_result" : "plinko_result";
-  const operation = message.type === "mines_command" ? message.action.kind : "start";
+    message.type === "hilo_command"
+      ? hiloCommandResultSchema
+      : message.type === "mines_command" ? minesCommandResultSchema : plinkoCommandResultSchema;
+  const resultType = message.type === "hilo_command"
+    ? "hilo_result"
+    : message.type === "mines_command" ? "mines_result" : "plinko_result";
+  const operation = message.type === "plinko_command" ? "start" : message.action.kind;
   const startedAt = Date.now();
   const fail = (
     status: number,
@@ -236,6 +245,8 @@ async function handleGameCommand(connection: LiveSocketConnection, message: Game
     // Match the HTTP action's property order: existing idempotency fingerprints
     // hash its JSON representation, including keys created before this rollout.
     const result = await (async () => {
+      if (message.type === "hilo_command")
+        return mutateHilo(connection.userId, message.idempotencyKey, message.action);
       if (message.type === "plinko_command")
         return placePlinkoBet(connection.userId, message.idempotencyKey, message.payload);
       const input = message.action;
@@ -683,9 +694,9 @@ export async function attachLiveWebSocketServer(server: Server) {
         const message = parseClientMessage(raw.toString(), connection);
         if (
           !consumeRateLimit(
-            (message?.type === "mines_command" || message?.type === "plinko_command") ? connection.gameWindow : connection.messageWindow,
+            (message?.type === "mines_command" || message?.type === "plinko_command" || message?.type === "hilo_command") ? connection.gameWindow : connection.messageWindow,
             Date.now(),
-            (message?.type === "mines_command" || message?.type === "plinko_command") ? 60 : MAX_WEBSOCKET_MESSAGES_PER_WINDOW,
+            (message?.type === "mines_command" || message?.type === "plinko_command" || message?.type === "hilo_command") ? 60 : MAX_WEBSOCKET_MESSAGES_PER_WINDOW,
             WEBSOCKET_MESSAGE_WINDOW_MS,
           )
         ) {
@@ -702,7 +713,7 @@ export async function attachLiveWebSocketServer(server: Server) {
           return;
         }
 
-        const handling = (message.type === "mines_command" || message.type === "plinko_command")
+        const handling = (message.type === "mines_command" || message.type === "plinko_command" || message.type === "hilo_command")
           ? handleGameCommand(connection, message)
           : handleSubscriptionMessage(connection, message);
         void handling.catch((error: unknown) => {

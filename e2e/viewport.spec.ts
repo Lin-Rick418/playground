@@ -233,6 +233,7 @@ test("shared headers keep return buttons aligned and shared dialog buttons prese
     "/baccarat",
     "/mines",
     "/plinko",
+    "/hilo",
     "/game/table-1",
     "/history",
     "/game/table-1/rules",
@@ -263,4 +264,45 @@ test("shared headers keep return buttons aligned and shared dialog buttons prese
   await page.keyboard.press("Escape");
   await expect(close).toHaveCount(0);
   await expect(trigger).toBeFocused();
+});
+
+test("Baccarat, Hi-Lo, Plinko and Mines share the lobby return-button position", async ({
+  page,
+}) => {
+  for (const viewport of [
+    { width: 320, height: 568 },
+    { width: 390, height: 844 },
+    { width: 483, height: 771 },
+  ]) {
+    await page.setViewportSize(viewport);
+    const positions = [];
+    for (const path of ["/lobby", "/baccarat", "/game/table-1", "/hilo", "/plinko", "/mines"]) {
+      await page.goto(path);
+      const header = page.locator(".ui-page-header");
+      await expect(header.getByRole("heading")).toBeVisible();
+      if (path === "/game/table-1") {
+        await expect(header.locator(".page-header-subtitle")).toHaveCount(0);
+        await expect(header).not.toContainText("限紅");
+        await expect(header.getByRole("button", { name: "遊戲規則", exact: true })).toBeVisible();
+      }
+      positions.push({
+        path,
+        button: await header.locator(".page-header-back").boundingBox(),
+        arrow: await header.locator(".page-header-back svg").boundingBox(),
+        title: await header.locator("h1").boundingBox(),
+      });
+    }
+    for (const position of positions.slice(1)) {
+      expect(position.button, position.path).toEqual(positions[0]!.button);
+      expect(position.arrow, position.path).toEqual(positions[0]!.arrow);
+      expect(
+        Math.abs(
+          position.title!.y +
+            position.title!.height / 2 -
+            position.arrow!.y -
+            position.arrow!.height / 2,
+        ),
+      ).toBeLessThan(1);
+    }
+  }
 });

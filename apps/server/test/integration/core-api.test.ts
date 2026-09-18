@@ -1,10 +1,18 @@
+import { fingerprintIdempotencyRequest } from "../../src/lib/idempotency.js";
+import { claimIdempotencyKey, completeIdempotencyKey } from "../../src/lib/repositories/idempotency-store.js";
+import { hiloMutationResponseSchema, hiloCommandResultSchema, type HiloPreview, type HiloAction, type HiloRound, type HiloCommandResult } from "@baccarat/contracts";
+import { mutateHilo, findHiloRound, hiloHistory } from "../../src/modules/hilo/service.js";
+import { rank, payout as hiloPayout } from "../../src/modules/hilo/math.js";
+import { mutateMines } from "../../src/modules/mines/service.js";
+import { placePlinkoBet, publicPlinkoRound } from "../../src/modules/plinko/service.js";
+import { getUserDailyProfit, getUserUnsettledMaximumPayout } from "../../src/lib/db.js";
 import { plinkoCommandResultSchema, type PlinkoCommand, type PlinkoCommandResult } from "@baccarat/contracts";
 import { WebSocket } from "ws";
 import { once } from "node:events";
 import { attachLiveWebSocketServer } from "../../src/lib/live-ws.js";
 import { minesCommandResultSchema, type MinesCommand, type MinesCommandResult } from "@baccarat/contracts";
 import { type PlinkoMutationResponse, type PlinkoConfig, type PlinkoRound, plinkoMutationResponseSchema } from "@baccarat/contracts";
-import { getPlinkoTable, plinkoPayout } from "../../src/modules/plinko/math.js";
+import { getPlinkoTable, plinkoPayout, plinkoV1Tables, PLINKO_RULE_VERSION } from "../../src/modules/plinko/math.js";
 import { plinkoRateLimitKey } from "../../src/modules/plinko/service.js";
 import { migrationDefinitions } from "../../src/migrations/index.js";
 import { type MinesRound, sumMoney } from "@baccarat/contracts";
@@ -1005,7 +1013,7 @@ test("Mines history cursor returns all own terminal rounds once", async () => {
   assert.equal((await request("/mines/history?limit=51", { token })).status, 400);
 });
 
-const plinkoBet = { amount: 100, rows: 16, risk: "medium", ruleVersion: 1 };
+const plinkoBet = { amount: 100, rows: 16, risk: "medium", ruleVersion: PLINKO_RULE_VERSION };
 function plinkoPost(token: string, body: unknown = plinkoBet, key = randomUUID()) {
   return request<PlinkoMutationResponse>("/plinko/rounds", {
     method: "POST", token, body, headers: { "idempotency-key": key },
@@ -1017,6 +1025,7 @@ test("Plinko config, validation, atomic settlement, history, daily profit and du
   const token = await login(user);
   const config = await request<PlinkoConfig>("/plinko/config", { token });
   assert.equal(config.status, 200);
+  assert.equal(config.body.ruleVersion, 2);
   assert.equal(config.body.tables.length, 27);
   for (const table of config.body.tables) assert.ok(table.rtp >= .95 && table.rtp <= .96);
   assert.equal((await request("/plinko/config")).status, 401);
@@ -1024,12 +1033,13 @@ test("Plinko config, validation, atomic settlement, history, daily profit and du
     { slotIndex: 0 }, { multiplier: 1000 }, { payout: 1000 }, { userId: user.id }])
     assert.equal((await plinkoPost(token, { ...plinkoBet, ...change })).status, 400);
   assert.equal((await request("/plinko/rounds", { token, method: "POST", body: plinkoBet })).status, 400);
-  assert.equal((await plinkoPost(token, { ...plinkoBet, ruleVersion: 2 })).status, 409);
+  assert.equal((await plinkoPost(token, { ...plinkoBet, ruleVersion: 1 })).status, 409);
   const key = randomUUID();
   const placed = await plinkoPost(token, plinkoBet, key);
   assert.equal(placed.status, 200);
   assert.ok(plinkoMutationResponseSchema.safeParse(placed.body).success);
   const round = placed.body.round;
+  assert.equal(round.ruleVersion, 2);
   const table = getPlinkoTable(round.rows, round.risk);
   assert.equal(round.path.length, 16);
   assert.equal(round.slotIndex, round.path.reduce<number>((sum, direction) => sum + direction, 0));
@@ -1324,7 +1334,7 @@ test("Plinko WebSocket replays lost bets, shares HTTP keys and enforces quotas a
   function command(
     ws: WebSocket,
     key: string,
-    payload: PlinkoCommand["payload"] = { amount: 100, rows: 16, risk: "medium", ruleVersion: 1 },
+    payload: PlinkoCommand["payload"] = { amount: 100, rows: 16, risk: "medium", ruleVersion: PLINKO_RULE_VERSION },
   ) {
     const requestId = randomUUID();
     return new Promise<PlinkoCommandResult["result"]>((resolve, reject) => {
@@ -1408,4 +1418,236 @@ test("Plinko WebSocket replays lost bets, shares HTTP keys and enforces quotas a
   } finally {
     for (const ws of sockets) ws.terminate();
   }
+});
+
+// Hi-Lo uses deterministic server-side draws here; the WS path always uses crypto RNG.
+async function hiloSetup(name: string, balance = 10000) {
+  env.hiloEnabled = true;
+  const user = await insertUser({ username: `hilo_${name}_${runId}`, balance });
+  const prepared = hiloMutationResponseSchema.parse((await mutateHilo(user.id, randomUUID(), { kind: "prepare" }, () => 0)).body);
+  return { user, preview: prepared.preview! };
+}
+async function hiloStart(userId: string, preview: HiloPreview, amount = 100, key = randomUUID()) {
+  const action = { kind: "start" as const, amount, previewId: preview.id, expectedVersion: preview.version };
+  const result = await mutateHilo(userId, key, action);
+  assert.equal(result.statusCode, 200);
+  return { data: hiloMutationResponseSchema.parse(result.body), key, action };
+}
+const noDraw = () => { throw new Error("Rejected/replayed commands must not draw"); };
+
+test("Hi-Lo preview versions, parallel starts, replay and stale guesses preserve exactly one debit", async () => {
+  const { user, preview } = await hiloSetup("versions");
+  const refreshed = hiloMutationResponseSchema.parse((await mutateHilo(user.id, randomUUID(), { kind: "refresh_preview", previewId: preview.id, expectedVersion: 1 }, () => 24)).body).preview!;
+  assert.equal((await mutateHilo(user.id, randomUUID(), { kind: "start", amount: 100, previewId: preview.id, expectedVersion: 1 }, noDraw)).statusCode, 409);
+  const action = { kind: "start" as const, amount: 100, previewId: refreshed.id, expectedVersion: refreshed.version };
+  const key = randomUUID();
+  const starts = await Promise.all([mutateHilo(user.id, key, action, noDraw), mutateHilo(user.id, randomUUID(), action, noDraw)]);
+  assert.deepEqual(starts.map((x) => x.statusCode).sort(), [200, 409]);
+  const successful = starts.find((x) => x.statusCode === 200)!;
+  const round = hiloMutationResponseSchema.parse(successful.body).round!;
+  assert.equal(round.initialCard, 24);
+  assert.equal((await pool.query("SELECT count(*) FROM financial_ledger_entries WHERE source='HILO_BET_DEBIT' AND user_id=$1", [user.id])).rows[0].count, "1");
+  const choice = { kind: "guess" as const, roundId: round.id, expectedVersion: 1, choice: "higher_or_equal" as const };
+  const guessKey = randomUUID();
+  const correct = await mutateHilo(user.id, guessKey, choice, () => 24);
+  assert.equal(correct.statusCode, 200);
+  assert.deepEqual(await mutateHilo(user.id, guessKey, choice, noDraw), correct);
+  assert.equal((await mutateHilo(user.id, randomUUID(), choice, noDraw)).statusCode, 409);
+  assert.equal((await mutateHilo(user.id, guessKey, { ...choice, choice: "lower_or_equal" }, noDraw)).statusCode, 409);
+  assert.equal((await reconcileUserBalance(user.id))?.isReconciled, true);
+});
+
+test("Hi-Lo exact payouts, cashout race, daily profit and durable idempotency", async () => {
+  const { user, preview } = await hiloSetup("cashout");
+  const { data } = await hiloStart(user.id, preview);
+  let round = data.round!;
+  assert.equal((await mutateHilo(user.id, randomUUID(), { kind: "cashout", roundId: round.id, expectedVersion: 1 }, noDraw)).statusCode, 409);
+  // A -> K succeeds with 12/13, K -> A succeeds with 12/13, without another 6% deduction.
+  for (const [choice, card] of [["higher", 48], ["lower", 0]] as const) {
+    round = hiloMutationResponseSchema.parse((await mutateHilo(user.id, randomUUID(), { kind: "guess", roundId: round.id, expectedVersion: round.version, choice }, () => card)).body).round!;
+  }
+  assert.equal(round.cashoutAmount, 110.32);
+  const key = randomUUID(), action = { kind: "cashout" as const, roundId: round.id, expectedVersion: round.version };
+  const settled = await mutateHilo(user.id, key, action, noDraw);
+  assert.equal(hiloMutationResponseSchema.parse(settled.body).balance, 10010.32);
+  await pool.query("UPDATE idempotency_keys SET created_at=NOW()-INTERVAL '30 days' WHERE actor_id=$1", [user.id]);
+  await runRetentionCleanup({ idempotencyRetentionDays: 7, authSessionRetentionDays: 7 });
+  assert.deepEqual(await mutateHilo(user.id, key, action, noDraw), settled);
+  assert.equal((await mutateHilo(user.id, randomUUID(), action, noDraw)).statusCode, 409);
+  assert.equal((await reconcileUserBalance(user.id))?.isReconciled, true);
+  const profit = await getUserDailyProfit(user.id, { start: new Date(Date.now()-60000), end: new Date(Date.now()+60000) });
+  assert.deepEqual(profit, { totalBet: 100, totalPayout: 110.32, netProfit: 10.32 });
+  const page = await hiloHistory(user.id, { limit: 1, cursor: null });
+  assert.equal(page.items[0]?.steps.length, 2);
+  assert.equal(page.items[0]?.payout, 110.32);
+});
+
+test("Hi-Lo skip limits, forbidden ownership, loss and transaction rollback", async () => {
+  const { user, preview } = await hiloSetup("skip");
+  const other = await insertUser({ username: `hilo_other_${runId}` });
+  let round = (await hiloStart(user.id, preview)).data.round!;
+  assert.equal((await mutateHilo(other.id, randomUUID(), { kind: "skip", roundId: round.id, expectedVersion: 1 }, noDraw)).statusCode, 404);
+  const key = randomUUID(), action = { kind: "guess" as const, roundId: round.id, expectedVersion: 1, choice: "higher" as const };
+  await assert.rejects(() => mutateHilo(user.id, key, action, () => { throw new Error("simulated RNG failure"); }), /simulated/);
+  assert.equal((await findHiloRound(user.id))?.version, 1);
+  assert.equal((await pool.query("SELECT count(*) FROM idempotency_keys WHERE actor_id=$1 AND idempotency_key=$2", [user.id, key])).rows[0].count, "0");
+  for (let i = 0; i < 52; i++) {
+    round = hiloMutationResponseSchema.parse((await mutateHilo(user.id, randomUUID(), { kind: "skip", roundId: round.id, expectedVersion: round.version }, () => 0)).body).round!;
+    assert.equal(round.multiplier, 0);
+    assert.equal(round.cashoutAmount, 0);
+    assert.equal(round.steps.at(-1)?.multiplier, 0);
+  }
+  assert.equal((await mutateHilo(user.id, randomUUID(), { kind: "skip", roundId: round.id, expectedVersion: round.version }, noDraw)).statusCode, 409);
+  const lost = hiloMutationResponseSchema.parse((await mutateHilo(user.id, randomUUID(), { ...action, expectedVersion: round.version }, () => 0)).body);
+  assert.equal(lost.round?.status, "LOST");
+  assert.equal(lost.round?.payout, 0);
+  assert.equal(lost.balance, 9900);
+  assert.equal(await findHiloRound(other.id, round.id), null);
+  assert.equal((await reconcileUserBalance(user.id))?.isReconciled, true);
+});
+
+test("Hi-Lo reserves exposure across games and stops only new rounds when disabled", async () => {
+  const { user, preview } = await hiloSetup("exposure", 1998999900);
+  const round = (await hiloStart(user.id, preview)).data.round!;
+  assert.equal(await getUserUnsettledMaximumPayout(user.id), 1000000);
+  const mines = await mutateMines(user.id, randomUUID(), { kind: "start", amount: 100, mineCount: 24 });
+  assert.equal(mines.statusCode, 400);
+  const plinko = await placePlinkoBet(user.id, randomUUID(), { amount: 100, rows: 16, risk: "high", ruleVersion: PLINKO_RULE_VERSION });
+  assert.equal(plinko.statusCode, 400);
+  env.hiloEnabled = false;
+  try {
+    assert.equal((await mutateHilo(user.id, randomUUID(), { kind: "prepare" }, noDraw)).statusCode, 503);
+    const won = hiloMutationResponseSchema.parse((await mutateHilo(user.id, randomUUID(), { kind: "guess", roundId: round.id, expectedVersion: 1, choice: "higher" }, () => 48)).body).round!;
+    assert.equal((await mutateHilo(user.id, randomUUID(), { kind: "cashout", roundId: won.id, expectedVersion: won.version }, noDraw)).statusCode, 200);
+  } finally { env.hiloEnabled = true; }
+});
+
+test("Hi-Lo caps before drawing and atomically settles at the global limit", async () => {
+  const { user, preview } = await hiloSetup("cap");
+  let round = (await hiloStart(user.id, preview)).data.round!;
+  // Reach a high multiplier with real service operations, preserving exact fractions and step history.
+  for (let i = 0; i < 3; i++) round = hiloMutationResponseSchema.parse((await mutateHilo(user.id, randomUUID(), { kind: "guess", roundId: round.id, expectedVersion: round.version, choice: "same" }, () => 0)).body).round!;
+  assert.equal(round.options.find((x) => x.choice === "same")?.enabled, false);
+  assert.equal((await mutateHilo(user.id, randomUUID(), { kind: "guess", roundId: round.id, expectedVersion: round.version, choice: "same" }, noDraw)).statusCode, 409);
+  while (round.status === "ACTIVE") {
+    const current = rank(round.card);
+    round = hiloMutationResponseSchema.parse((await mutateHilo(user.id, randomUUID(), { kind: "guess", roundId: round.id, expectedVersion: round.version, choice: current === 1 ? "higher" : "lower" }, () => current === 1 ? 48 : 0)).body).round!;
+  }
+  assert.equal(round.status, "CASHED_OUT");
+  assert.ok(round.multiplier <= 10000 && round.multiplier > 10000 * 12 / 13);
+  assert.equal(round.payout, hiloPayout(100, { numerator: BigInt((await pool.query("SELECT numerator::text FROM hilo_rounds WHERE id=$1", [round.id])).rows[0].numerator), denominator: BigInt((await pool.query("SELECT denominator::text FROM hilo_rounds WHERE id=$1", [round.id])).rows[0].denominator) }));
+  assert.equal((await reconcileUserBalance(user.id))?.isReconciled, true);
+});
+
+test("Hi-Lo WebSocket and read APIs authenticate, replay across reconnect, and expose versioned state", async () => {
+  const { user } = await hiloSetup("ws");
+  const token = await login(user);
+  const sockets: WebSocket[] = [];
+  async function connect() { const ws = new WebSocket(`${baseUrl.replace("http:", "ws:")}/ws`, ["bearer", token]); sockets.push(ws); await once(ws, "open"); return ws; }
+  function command(ws: WebSocket, action: HiloAction, key = randomUUID()) {
+    const requestId = randomUUID();
+    return new Promise<HiloCommandResult["result"]>((resolve, reject) => {
+      const timer = setTimeout(() => { ws.off("message", receive); reject(new Error("Hi-Lo timeout")); }, 5000);
+      function receive(raw: Buffer) {
+        const value = JSON.parse(raw.toString());
+        if (value.type !== "hilo_result" || value.requestId !== requestId) return;
+        clearTimeout(timer); ws.off("message", receive); resolve(hiloCommandResultSchema.parse(value).result);
+      }
+      ws.on("message", receive); ws.send(JSON.stringify({ type: "hilo_command", requestId, idempotencyKey: key, action }));
+    });
+  }
+  try {
+    let ws = await connect();
+    const prepared = await command(ws, { kind: "prepare" }); assert.ok(prepared.ok);
+    const preview = prepared.data.preview!;
+    const action = { kind: "start" as const, amount: 100, previewId: preview.id, expectedVersion: preview.version }, key = randomUUID();
+    const started = await command(ws, action, key); assert.ok(started.ok);
+    ws.close(); await once(ws, "close"); ws = await connect();
+    assert.deepEqual(await command(ws, action, key), started);
+    const state = await request<{ round: HiloRound }>("/hilo/state", { token });
+    assert.equal(state.status, 200); assert.equal(state.body.round.id, started.data.round!.id);
+    assert.equal((await request("/hilo/config")).status, 401);
+    const other = await insertUser({ username: `hilo_ws_other_${runId}`, balance: 100 });
+    assert.equal((await request(`/hilo/rounds/${state.body.round.id}`, { token: await login(other) })).status, 404);
+  } finally { for (const ws of sockets) ws.terminate(); }
+});
+
+test("Hi-Lo concurrent guess/cashout applies one version, and exhausted skips auto-settle", async () => {
+  const { user, preview } = await hiloSetup("race");
+  let round = (await hiloStart(user.id, preview)).data.round!;
+  round = hiloMutationResponseSchema.parse((await mutateHilo(user.id, randomUUID(), { kind: "guess", roundId: round.id, expectedVersion: 1, choice: "higher" }, () => 48)).body).round!;
+  const ref = { roundId: round.id, expectedVersion: round.version };
+  const results = await Promise.all([
+    mutateHilo(user.id, randomUUID(), { kind: "guess", ...ref, choice: "lower" }, () => 0),
+    mutateHilo(user.id, randomUUID(), { kind: "cashout", ...ref }, noDraw),
+  ]);
+  assert.deepEqual(results.map((r) => r.statusCode).sort(), [200, 409]);
+  round = (await findHiloRound(user.id, round.id))!;
+  if (round.status === "ACTIVE") await mutateHilo(user.id, randomUUID(), { kind: "cashout", roundId: round.id, expectedVersion: round.version }, noDraw);
+  assert.equal((await pool.query("SELECT count(*) FROM financial_ledger_entries WHERE reference_id=$1 AND source='HILO_SETTLEMENT_CREDIT'", [round.id])).rows[0].count, "1");
+  assert.equal((await reconcileUserBalance(user.id))?.isReconciled, true);
+  // Boundary fixture: only the 52nd skip is left; middle ranks cannot continue at 9000x.
+  const boundary = await hiloSetup("skipcap");
+  const next = (await hiloStart(boundary.user.id, boundary.preview)).data.round!;
+  await pool.query("UPDATE hilo_rounds SET numerator=9000,denominator=1,success_count=1,skip_count=51 WHERE id=$1", [next.id]);
+  const settled = hiloMutationResponseSchema.parse((await mutateHilo(boundary.user.id, randomUUID(), { kind: "skip", roundId: next.id, expectedVersion: next.version }, () => 24)).body);
+  assert.equal(settled.round?.status, "CASHED_OUT");
+  assert.equal(settled.round?.payout, 900000);
+  assert.equal((await reconcileUserBalance(boundary.user.id))?.isReconciled, true);
+});
+
+test("Hi-Lo settlement failure rolls back the wallet, ledger, state and idempotency together", async () => {
+  const { user, preview } = await hiloSetup("rollback");
+  let round = (await hiloStart(user.id, preview)).data.round!;
+  round = hiloMutationResponseSchema.parse((await mutateHilo(user.id, randomUUID(), { kind: "guess", roundId: round.id, expectedVersion: 1, choice: "higher" }, () => 48)).body).round!;
+  const key = randomUUID(), action = { kind: "cashout" as const, roundId: round.id, expectedVersion: round.version };
+  await pool.query(`CREATE FUNCTION hilo_test_reject_settlement() RETURNS trigger LANGUAGE plpgsql AS $$
+    BEGIN IF NEW.status = 'CASHED_OUT' THEN RAISE EXCEPTION 'simulated state write failure'; END IF; RETURN NEW; END $$;
+    CREATE TRIGGER hilo_test_reject_settlement BEFORE UPDATE ON hilo_rounds FOR EACH ROW EXECUTE FUNCTION hilo_test_reject_settlement();`);
+  try { await assert.rejects(() => mutateHilo(user.id, key, action, noDraw), /simulated state write failure/); }
+  finally { await pool.query("DROP TRIGGER hilo_test_reject_settlement ON hilo_rounds; DROP FUNCTION hilo_test_reject_settlement();"); }
+  const current = await findHiloRound(user.id);
+  assert.equal(current?.version, round.version);
+  assert.equal(current?.status, "ACTIVE");
+  assert.equal((await pool.query("SELECT balance::text FROM users WHERE id=$1", [user.id])).rows[0].balance, "9900.00");
+  assert.equal((await pool.query("SELECT count(*) FROM financial_ledger_entries WHERE reference_id=$1 AND source='HILO_SETTLEMENT_CREDIT'", [round.id])).rows[0].count, "0");
+  assert.equal((await pool.query("SELECT count(*) FROM idempotency_keys WHERE actor_id=$1 AND idempotency_key=$2", [user.id, key])).rows[0].count, "0");
+  const result = hiloMutationResponseSchema.parse((await mutateHilo(user.id, key, action, noDraw)).body);
+  assert.equal(result.balance, 10001.83);
+  assert.equal(result.round?.status, "CASHED_OUT");
+  assert.equal((await reconcileUserBalance(user.id))?.isReconciled, true);
+});
+
+
+test("Plinko v2 replays a settled v1 wager without recalculating or crediting it again", async () => {
+  const user = await insertUser({ username: `plinko_v1_${runId}`, balance: 10000 });
+  const token = await login(user);
+  const key = randomUUID();
+  const input = { amount: 100, rows: 16, risk: "low" as const, ruleVersion: 1 };
+  const legacy = plinkoV1Tables.find((t) => t.rows === 16 && t.risk === "low")!;
+  const id = randomUUID();
+  const payout = plinkoPayout(100, legacy.units[0]!);
+  const saved = await withTransaction(async (client) => {
+    const claim = { actorId: user.id, scope: "plinko.start", key, requestHash: fingerprintIdempotencyRequest(input) };
+    assert.equal((await claimIdempotencyKey(claim, client)).kind, "claimed");
+    const inserted = await client.query(`INSERT INTO plinko_rounds
+      (id,user_id,amount,rows,risk,path,slot_index,multiplier_units,payout,rule_version)
+      VALUES ($1,$2,100,16,'low',$3,0,$4,$5,1) RETURNING *`,
+      [id, user.id, Array(16).fill(0), legacy.units[0], payout]);
+    await applyBalanceMutation({ userId: user.id, delta: -100, actorType: "PLAYER", actorId: user.id,
+      source: "PLINKO_BET_DEBIT", referenceType: "PLINKO_ROUND", referenceId: id }, client);
+    const credit = await applyBalanceMutation({ userId: user.id, delta: payout, actorType: "SYSTEM",
+      source: "PLINKO_SETTLEMENT_CREDIT", referenceType: "PLINKO_ROUND", referenceId: id }, client);
+    const response = { round: publicPlinkoRound(inserted.rows[0]), balance: credit.user.balance, walletVersion: credit.user.walletVersion };
+    await completeIdempotencyKey({ ...claim, statusCode: 200, response }, client);
+    return response;
+  });
+  const replay = await plinkoPost(token, input, key);
+  assert.equal(replay.status, 200);
+  assert.deepEqual(replay.body, saved);
+  assert.equal((await request<{ round: PlinkoRound }>(`/plinko/rounds/${id}`, { token })).body.round.multiplier, 15.4345);
+  assert.equal((await plinkoPost(token, input)).status, 409);
+  assert.equal((await request<{ balance: number }>("/auth/me", { token })).body.balance, saved.balance);
+  assert.equal((await reconcileUserBalance(user.id))?.isReconciled, true);
+  assert.equal((await plinkoPost(token)).status, 200);
 });

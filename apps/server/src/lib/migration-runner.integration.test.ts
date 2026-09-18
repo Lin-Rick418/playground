@@ -130,7 +130,7 @@ describe("versioned PostgreSQL migrations", { skip: !shouldRun }, () => {
 
   it("serializes concurrent runners so each migration is recorded exactly once", async () => {
     await pool.query(`
-      DROP TABLE IF EXISTS plinko_rounds, mines_rounds, balance_adjustments, bets, game_rounds, users, game_tables CASCADE;
+      DROP TABLE IF EXISTS hilo_round_steps, hilo_rounds, hilo_previews, plinko_rounds, mines_rounds, balance_adjustments, bets, game_rounds, users, game_tables CASCADE;
       DROP TABLE IF EXISTS schema_migrations;
     `);
     const secondPool = new Pool({ connectionString: databaseUrl });

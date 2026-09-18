@@ -1,4 +1,4 @@
-import { expect, test } from "@playwright/test";
+import { expect, test, type Locator } from "@playwright/test";
 
 test("lobby centers game covers, switches horizontally and opens the selected game", async ({
   page,
@@ -62,7 +62,7 @@ test("lobby centers game covers, switches horizontally and opens the selected ga
     );
   }
   const images = page.locator(".game-poster img");
-  await expect(images).toHaveCount(3);
+  await expect(images).toHaveCount(4);
   for (const image of await images.all()) {
     await expect(image).toHaveAttribute("src", /\.(webp|svg)$/);
     await expect
@@ -83,13 +83,47 @@ test("lobby centers game covers, switches horizontally and opens the selected ga
   await baccarat.press("ArrowRight");
   await expect(mines).toBeFocused();
   await expect(mines).toHaveClass(/active/);
+  const waitForCenteredCover = async (cover: Locator) => {
+    await expect
+      .poll(async () => {
+        const track = await page.locator(".game-carousel").boundingBox();
+        const card = await cover.boundingBox();
+        return Math.abs(card!.x + card!.width / 2 - track!.x - track!.width / 2);
+      })
+      .toBeLessThan(2);
+  };
   await page.setViewportSize({ width: 483, height: 771 });
   await page.getByRole("button", { name: "下一個遊戲" }).click();
   const plinko = page.getByRole("button", { name: "進入Plinko", exact: true });
   await expect(plinko).toHaveClass(/active/);
-  await expect(plinko.locator(".poster-copy")).toHaveText("Plinko進入遊戲 ↗");
+  await expect(plinko.locator(".poster-copy")).toHaveText("PLINKO落球進入遊戲 ↗");
+  for (const selector of [".poster-eyebrow", ".poster-title"]) {
+    const reference = await baccarat.locator(selector).evaluate((el) => ({
+      fontSize: getComputedStyle(el).fontSize,
+      margin: getComputedStyle(el).margin,
+    }));
+    await expect(plinko.locator(selector)).toHaveCSS("font-size", reference.fontSize);
+    await expect(plinko.locator(selector)).toHaveCSS("margin", reference.margin);
+  }
+  await expect(plinko.locator("img")).toHaveAttribute("src", "/images/games/plinko-simple.webp");
+  await waitForCenteredCover(plinko);
   await page.screenshot({ path: test.info().outputPath("plinko-lobby.png") });
   await page.getByRole("button", { name: "上一個遊戲" }).click();
+  await expect(mines).toHaveClass(/active/);
+  await expect(mines.locator(".poster-eyebrow")).toHaveText("MINES");
+  await expect(mines.locator(".poster-title")).toHaveText("掃雷");
+  await waitForCenteredCover(mines);
+  await page.screenshot({ path: test.info().outputPath("mines-lobby.png") });
+  await page.getByRole("button", { name: "第 4 張遊戲圖片" }).click();
+  const hilo = page.getByRole("button", { name: "進入Hi-Lo", exact: true });
+  await expect(hilo).toHaveClass(/active/);
+  await expect(hilo.locator("img")).toHaveAttribute("src", "/images/games/hilo-simple.webp");
+  await expect(hilo.locator(".poster-eyebrow")).toHaveText("HI-LO");
+  await expect(hilo.locator(".poster-title")).toHaveText("高低起伏");
+  await waitForCenteredCover(hilo);
+  await page.screenshot({ path: test.info().outputPath("hilo-lobby.png") });
+  await page.getByRole("button", { name: "第 2 張遊戲圖片" }).click();
+  await expect(mines).toHaveClass(/active/);
   await mines.press("Enter");
   await expect(page).toHaveURL(/\/mines$/);
   await expect(page.locator("body")).toHaveCSS("background-color", "rgb(23, 27, 35)");

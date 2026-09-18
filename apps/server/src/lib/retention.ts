@@ -12,7 +12,7 @@ const deleteQueries = {
     WITH candidates AS (
       SELECT ctid
       FROM idempotency_keys
-      WHERE created_at < $1 AND scope NOT LIKE 'mines.%' AND scope NOT LIKE 'plinko.%'
+      WHERE created_at < $1 AND scope NOT LIKE 'mines.%' AND scope NOT LIKE 'plinko.%' AND scope NOT LIKE 'hilo.%'
       ORDER BY created_at ASC
       LIMIT $2
       FOR UPDATE SKIP LOCKED

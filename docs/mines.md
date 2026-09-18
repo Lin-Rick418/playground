@@ -1,6 +1,6 @@
 # Mines
 
-登入後 `/lobby` 選擇遊戲，百家樂經 `/baccarat` 選桌，Mines 直接進 `/mines`。兩款遊戲使用同一個測試幣帳戶，沒有充值／提領金流。
+登入後 `/lobby` 選擇遊戲，百家樂經 `/baccarat` 選桌，Mines 直接進 `/mines`。百家樂、Mines、Plinko、Hi-Lo 使用同一個測試幣帳戶，沒有充值／提領金流。
 
 Mines 已移除「紀錄」入口與內頁，舊網址 `/history?game=mines` 返回遊戲。投注額與地雷數使用原生選單操作，外觀高度與同列按鈕一致。
 
@@ -14,7 +14,7 @@ Mines 已移除「紀錄」入口與內頁，舊網址 `/history?game=mines` 返
 - 最終派彩使用 BigInt 有理數計算，僅在入帳時 ROUND_HALF_UP 到 0.01 幣。例如 123.455 → 123.46；以 100 幣、3 顆雷翻一格收款為 107.95 幣。
 - 公式 RTP 為 95%；取整到 0.01 幣會造成微小的期望值差異，且不保證個別玩家返還率。1 顆雷翻一格的倍率低於 1，100 幣派彩為 98.96。
 - 前端金額朝零截斷顯示整數（123.99 → 123，-123.99 → -123），小數仍在帳戶中累積。倍率可顯示小數，顯示值不參與派彩計算。
-- 帳戶上限為 20 億幣。開局檢查剩餘餘額加上兩款遊戲全部未結算投注的最大可能派彩，超限即拒絕；因此部分雷數／餘額組合實際可下注上限低於 5,000。
+- 帳戶上限為 20 億幣。開局檢查剩餘餘額加上所有遊戲全部未結算投注的最大可能派彩，超限即拒絕；因此部分雷數／餘額組合實際可下注上限低於 5,000。
 
 ## API
 
@@ -38,7 +38,7 @@ Mines 已移除「紀錄」入口與內頁，舊網址 `/history?game=mines` 返
 - `action` 另可為 `{ kind: "reveal", roundId, cellIndex }` 或 `{ kind: "cashout", roundId }`，strict schema 拒絕額外身份或結果欄位。
 - 成功回應：`{ type: "mines_result", requestId, result: { ok: true, data: { round, balance, walletVersion } } }`。
 - 失敗回應：`{ type: "mines_result", requestId, result: { ok: false, status, error: { code, message, requestId } } }`；status/code 與 HTTP 共用。無法解析的訊息使用既有 `error` 回應。
-- 每個 socket 同時最多處理一個遊戲指令，MINES／Plinko 共用每 10 秒最多 60 個的上限；既有連線數、payload 上限及心跳仍生效。
+- 每個 socket 同時最多處理一個遊戲指令，Mines／Plinko／Hi-Lo 共用每 10 秒最多 60 個的上限；既有連線數、payload 上限及心跳仍生效。
 - 前端每個操作最多等待 10 秒。斷線或逾時保留原操作與 idempotency key，停止其他操作，重連後先讀取局況，再視需要用原 key 重送；每次送出的 request ID 都不同，忽略遲到的舊回覆。離頁會清理等待計時器並關閉連線。
 - 正常回覆直接按 `round.version` / `walletVersion` 更新棋盤及餘額，不再串接 `/auth/me` 才解除操作鎖定。重連與不確定結果恢復仍讀取最新狀態，防止 idempotency 的歷史回應蓋掉較新的局面。
 - 地雷與派彩仍由後端確認，ACTIVE 局不傳完整地雷位置。WS 改變傳輸方式，不改玩法、資料庫 schema 或 ledger。

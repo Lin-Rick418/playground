@@ -12,3 +12,28 @@ Generate a simple, friendly, minimal editorial illustration for a mobile baccara
 ## Mines prompt
 
 Generate a simple, friendly, minimal editorial illustration for a mobile Mines game cover. Portrait 2:3, 1024x1536. Flat muted blue-teal background, a centered small arrangement of four rounded square dark teal game tiles, a single large simple mint diamond and a small friendly charcoal spherical mine with a short curved fuse. Flat geometric illustration with subtle soft shadows and clean rounded shapes, restrained teal mint charcoal palette, lots of breathing room. The objects fill the middle area from 20% to 62% of image height, with bottom 30% empty solid blue-teal for a separately rendered interface title. Casual modern mobile game feel. No text, logos, watermarks, people, metallic gold, treasure cavern, columns, arches, ornate patterns, photorealism, dramatic lighting or explosions. Full bleed background.
+
+## Plinko regeneration
+
+Plinko uses a new raster illustration generated with the built-in `image_gen` tool, converted to 800 × 1200 WebP (quality 84, method 6). Its compact pegboard is centered with the bottom area reserved for the title.
+
+- Active asset: `apps/web/public/images/games/plinko-simple.webp`
+- The earlier `plinko-simple.svg` is no longer referenced by the lobby.
+
+### Final prompt
+
+Generate one finished game-cover illustration for Plinko, portrait 2:3 (1024x1536). Use case: stylized-illustration. A simple friendly premium casual mobile game illustration, matching softly shaded sculpted geometric artwork: muted dusty blue-teal full-bleed background, a single compact Plinko pegboard centered horizontally. Main subject grouped together ONLY within the middle area, around x20%-80% and y22%-62% of image, plenty of clean empty background above, entire bottom 32% completely empty for UI typography added separately. The board has a softly rounded dark teal backing, an orderly triangular array of small ivory pegs, one prominent mint colored ball above the pegs, and a compact row of mint and warm muted gold collection pockets directly under the pegs. Slight 3D thickness and subtle soft shadows, tactile matte surfaces, simple elegant geometry, front-facing with a very slight dimensional perspective. Ball, pegs, and collection pockets must form one cohesive centered object, no wide vertical gaps. Restrained teal/mint/ivory palette with a little muted gold. No text, no letters, no numerals, no multipliers, no titles, no UI, no logos, no watermarks, no casino scenery, no neon, no photorealism. The image must have an opaque full bleed background.
+
+## Hi-Lo regeneration
+
+Generated with the built-in `image_gen` tool and converted to 800 × 1200 WebP (quality 84, method 6). The centered A/K pair uses soft dimensional illustration, with empty space below for the existing title layout.
+
+- Active asset: `apps/web/public/images/games/hilo-simple.webp`
+
+### Final prompt
+
+Generate one finished Hi-Lo mobile game cover illustration. Portrait 2:3, 1024x1536. Use case: stylized-illustration. Softly shaded sculpted geometric illustration with tactile matte surfaces, subtle depth and soft shadows, friendly minimal casual mobile game style consistent with a softly dimensional teal Plinko board and teal Mines tiles. Full bleed muted sage teal-green background. Subject: a compact centered pair of slightly overlapping ivory playing cards, ace of spades on the left and king of hearts on the right, slightly fanned in opposite directions, clean rounded corners. Each card has one simple large suit symbol at its center and one small correct rank at the top left (A and K respectively); dark forest green spade, muted warm red heart. No other playing cards, no chips. A small subtle upward chevron near the left card and downward chevron near the right card may suggest higher/lower, but remain part of the compact centered group. Main artwork occupies the central area around x20%-80%, y22%-62%, balanced horizontally, generous breathing room. Bottom 32% is completely empty background reserved for separate UI typography. Restrained sage, ivory, forest green, warm muted red palette. No game title, no labels, no Chinese or English text except card ranks A and K, no multipliers, no UI, no border around the entire image, no logos, no watermark, no photorealism, no ornate casino setting, no neon or metallic gold. Opaque background.
+
+## Shared title placement
+
+`LobbyView.vue` renders text separately from the artwork. All four covers use the original Baccarat typography and placement: small uppercase English eyebrow above the large Chinese title. Titles are BACCARAT／百家樂, MINES／掃雷, PLINKO／落球, HI-LO／高低起伏. The entry link stays below the title. Hi-Lo uses the regenerated `apps/web/public/images/games/hilo-simple.webp`; the earlier SVG is no longer referenced by the lobby.

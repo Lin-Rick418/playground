@@ -1146,8 +1146,4 @@ legend {
   display: grid;
   place-items: center;
 }
-.plinko-page :is(button, select):focus-visible {
-  outline: 2px solid #86ebff;
-  outline-offset: 3px;
-}
 </style>

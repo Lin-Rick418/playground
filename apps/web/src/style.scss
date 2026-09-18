@@ -66,11 +66,11 @@ body:has(.login-layout),
   flex-direction: column;
 }
 
-// Lock only the three playable game screens; dialogs and local lists keep their own scrolling.
-html:has(.game-page, .mines-page, .plinko-page),
-body:has(.game-page, .mines-page, .plinko-page),
-#app:has(.game-page, .mines-page, .plinko-page),
-.player-page:is(.game-page, .mines-page, .plinko-page) {
+// Lock playable game screens; dialogs and local lists keep their own scrolling.
+html:has(.game-page, .mines-page, .plinko-page, .hilo-page),
+body:has(.game-page, .mines-page, .plinko-page, .hilo-page),
+#app:has(.game-page, .mines-page, .plinko-page, .hilo-page),
+.player-page:is(.game-page, .mines-page, .plinko-page, .hilo-page) {
   height: 100vh;
   height: 100dvh;
   min-height: 0;
@@ -123,12 +123,9 @@ a {
   padding: $space-3 $space-4;
 }
 
-button:focus-visible,
 input:focus-visible,
-select:focus-visible,
 textarea:focus-visible,
-[role="button"]:focus-visible,
-[tabindex]:focus-visible {
+[tabindex]:not(button, select, summary, [role="button"], [role="combobox"]):focus-visible {
   outline: 3px solid $color-gold;
   outline-offset: 3px;
 }

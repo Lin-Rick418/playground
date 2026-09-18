@@ -15,11 +15,31 @@ const games = [
   {
     name: "百家樂",
     english: "BACCARAT",
+    subtitle: "",
     image: "/images/games/baccarat-simple.webp",
     path: "/baccarat",
   },
-  { name: "Mines", english: "MINES", image: "/images/games/mines-simple.webp", path: "/mines" },
-  { name: "Plinko", english: "PLINKO", image: "/images/games/plinko-simple.svg", path: "/plinko" },
+  {
+    name: "Mines",
+    english: "MINES",
+    subtitle: "掃雷",
+    image: "/images/games/mines-simple.webp",
+    path: "/mines",
+  },
+  {
+    name: "Plinko",
+    english: "PLINKO",
+    subtitle: "落球",
+    image: "/images/games/plinko-simple.webp",
+    path: "/plinko",
+  },
+  {
+    name: "Hi-Lo",
+    english: "HI-LO",
+    subtitle: "高低起伏",
+    image: "/images/games/hilo-simple.webp",
+    path: "/hilo",
+  },
 ];
 useLiveChannel({ getSubscribeMessage: () => ({ type: "subscribe_user" }), onMessage: () => {} });
 function logout() {
@@ -95,8 +115,8 @@ function syncSlide() {
               decoding="async"
             />
             <span class="poster-copy">
-              <span v-if="game.path !== '/plinko'" class="poster-eyebrow">{{ game.english }}</span>
-              <span class="poster-title">{{ game.name }}</span>
+              <span class="poster-eyebrow">{{ game.english }}</span>
+              <span class="poster-title">{{ game.subtitle || game.name }}</span>
               <span class="poster-enter">進入遊戲 <span aria-hidden="true">↗</span></span>
             </span>
           </button>
@@ -306,10 +326,6 @@ function syncSlide() {
 .carousel-dots [aria-current="true"] span {
   width: 22px;
   background: #e5c58b;
-}
-.game-picker button:focus-visible {
-  outline: 2px solid #ffe1a4;
-  outline-offset: 4px;
 }
 @media (prefers-reduced-motion: reduce) {
   .game-poster,

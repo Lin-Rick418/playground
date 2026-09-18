@@ -5,6 +5,18 @@ import { coreIntegrityConstraints } from "./database-integrity.js";
 type SchemaExecutor = Pick<Pool | PoolClient, "query">;
 
 const columns = {
+  hilo_previews: { user_id: ["text", "NO"], id: ["text", "NO"], card: ["integer", "NO"], version: ["integer", "NO"] },
+  hilo_rounds: {
+    id: ["text", "NO"], user_id: ["text", "NO"], amount: ["numeric", "NO"],
+    initial_card: ["integer", "NO"], card: ["integer", "NO"], numerator: ["numeric", "NO"], denominator: ["numeric", "NO"],
+    success_count: ["integer", "NO"], skip_count: ["integer", "NO"], status: ["text", "NO"], payout: ["numeric", "NO"],
+    maximum_payout: ["numeric", "NO"], version: ["integer", "NO"], rule_version: ["integer", "NO"],
+    created_at: ["timestamp with time zone", "NO"], settled_at: ["timestamp with time zone", "YES"],
+  },
+  hilo_round_steps: {
+    round_id: ["text", "NO"], sequence: ["integer", "NO"], kind: ["text", "NO"], from_card: ["integer", "NO"],
+    card: ["integer", "NO"], choice: ["text", "YES"], won: ["boolean", "YES"], numerator: ["numeric", "NO"], denominator: ["numeric", "NO"],
+  },
   plinko_rounds: {
     id: ["text", "NO"], user_id: ["text", "NO"], amount: ["numeric", "NO"],
     rows: ["integer", "NO"], risk: ["text", "NO"], path: ["ARRAY", "NO"],
@@ -89,6 +101,7 @@ const columns = {
 } as const;
 
 const requiredConstraints = [
+  "hilo_rounds_ratio", "hilo_rounds_lifecycle", "hilo_steps_action",
   "plinko_rounds_path", "plinko_rounds_payout", "plinko_rounds_settled",
   "mines_rounds_lifecycle", "mines_rounds_board",
   ...coreIntegrityConstraints.map(({ name }) => name),
@@ -99,6 +112,7 @@ const requiredConstraints = [
 ] as const;
 
 const requiredIndexes = [
+  "idx_hilo_one_active_per_user", "idx_hilo_history",
   "idx_plinko_history",
   "idx_mines_one_active_per_user", "idx_mines_history",
   "idx_game_rounds_one_active_per_table", "idx_users_username_normalized", "uq_game_tables_display_order",

@@ -41,7 +41,8 @@ export const plinkoConfigResponseSchema = z
     minBet: z.literal(100),
     maxBet: z.literal(5000),
     betStep: z.literal(100),
-    ruleVersion: z.literal(1),
+    // Accept v1 during a frontend-first rollout; new bets use the server-provided version.
+    ruleVersion: z.union([z.literal(1), z.literal(2)]),
     enabled: z.boolean(),
     tables: z.array(plinkoTableSchema).min(1).max(27),
   })

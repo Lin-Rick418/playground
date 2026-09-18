@@ -197,6 +197,9 @@ export async function getUserDailyProfit(
        SELECT amount, payout FROM mines_rounds
        WHERE user_id = $1 AND status <> 'ACTIVE' AND settled_at >= $2 AND settled_at < $3
        UNION ALL
+       SELECT amount, payout FROM hilo_rounds
+       WHERE user_id = $1 AND status <> 'ACTIVE' AND settled_at >= $2 AND settled_at < $3
+       UNION ALL
        SELECT amount, payout FROM plinko_rounds
        WHERE user_id = $1 AND settled_at >= $2 AND settled_at < $3
      ) AS settled_bets`,
@@ -323,7 +326,8 @@ export async function getUserUnsettledMaximumPayout(userId: string, executor: Db
     throw new RangeError("Unsettled payout exposure is outside the supported range");
   }
   const mines = await queryRow(executor, "SELECT COALESCE(SUM(maximum_payout), 0) AS exposure FROM mines_rounds WHERE user_id = $1 AND status = 'ACTIVE'", [userId]);
-  return fromMinorUnits(toMinorUnits(maximumPayout) + toMinorUnits(String(mines?.exposure ?? 0)));
+  const hilo = await queryRow(executor, "SELECT COALESCE(SUM(maximum_payout), 0) AS exposure FROM hilo_rounds WHERE user_id = $1 AND status = 'ACTIVE'", [userId]);
+  return fromMinorUnits(toMinorUnits(maximumPayout) + toMinorUnits(String(mines?.exposure ?? 0)) + toMinorUnits(String(hilo?.exposure ?? 0)));
 }
 
 export async function findRoundById(

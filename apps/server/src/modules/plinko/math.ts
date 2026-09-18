@@ -1,7 +1,7 @@
 import { randomInt } from "node:crypto";
 import { fromMinorUnits, toMinorUnits, roundHalfUp, type PlinkoRisk } from "@baccarat/contracts";
 
-export const PLINKO_RULE_VERSION = 1;
+export const PLINKO_RULE_VERSION = 2;
 export const PLINKO_RISKS = ["low", "medium", "high"] as const;
 
 // Stake public paytable, verified 2026-09-15. Integer tenths, left edge to centre.
@@ -52,7 +52,7 @@ export function plinkoWeights(rows: number): bigint[] {
 }
 
 // Built once from exact rationals at startup, never adjusted per player or bet.
-export const plinkoTables = Object.freeze(
+export const plinkoV1Tables = Object.freeze(
   PLINKO_RISKS.flatMap((risk) =>
     baseHalfTenths[risk].map((half, index) => {
       const rows = index + 8;
@@ -79,15 +79,87 @@ export const plinkoTables = Object.freeze(
   ),
 );
 
+// v2 doubles each of the outer two slots on both sides exactly. The remaining
+// slots keep their relative probabilities and share the remaining probability mass.
+export function plinkoOutcomeWeights(rows: number): bigint[] {
+  const original = plinkoWeights(rows);
+  const total = 2n ** BigInt(rows);
+  const edges = 2n * (original[0] + original[1]);
+  return original.map((weight, slot) =>
+    slot < 2 || slot > rows - 2 ? 2n * weight * (total - edges) : weight * (total - 2n * edges),
+  );
+}
+
+export const plinkoTables = Object.freeze(
+  plinkoV1Tables.map((original) => {
+    const weights = plinkoOutcomeWeights(original.rows);
+    const denominator = weights.reduce((sum, weight) => sum + weight, 0n);
+    const v1Weights = plinkoWeights(original.rows);
+    const v1Return = original.units.reduce(
+      (sum, units, k) => sum + BigInt(units) * v1Weights[k],
+      0n,
+    );
+    const weightedReturn = original.units.reduce(
+      (sum, units, k) => sum + BigInt(units) * weights[k],
+      0n,
+    );
+    // Preserve this table's v1 expected return before rounding the new multipliers.
+    const units = Object.freeze(
+      original.units.map((value) =>
+        Number(
+          roundHalfUp(
+            BigInt(value) * v1Return * denominator,
+            2n ** BigInt(original.rows) * weightedReturn,
+          ),
+        ),
+      ),
+    );
+    const actualReturn = units.reduce((sum, value, k) => sum + BigInt(value) * weights[k], 0n);
+    const rtpDenominator = denominator * 10000n;
+    if (
+      actualReturn * 100000n < 95495n * rtpDenominator ||
+      actualReturn * 100000n > 95505n * rtpDenominator
+    )
+      throw new Error("Plinko v2 paytable RTP outside approved rounding range");
+    return Object.freeze({
+      rows: original.rows,
+      risk: original.risk,
+      units,
+      multipliers: Object.freeze(units.map((value) => value / 10000)),
+      rtp: Number(actualReturn) / Number(rtpDenominator),
+    });
+  }),
+);
+
 export function getPlinkoTable(rows: number, risk: PlinkoRisk) {
   const table = plinkoTables.find((entry) => entry.rows === rows && entry.risk === risk);
   if (!table) throw new RangeError("Invalid Plinko settings");
   return table;
 }
 
-export function generatePlinkoPath(rows: number): (0 | 1)[] {
-  plinkoWeights(rows);
-  return Array.from({ length: rows }, () => randomInt(2) as 0 | 1);
+export function generatePlinkoPath(
+  rows: number,
+  draw: (exclusiveMax: number) => number = (max) => randomInt(max),
+): (0 | 1)[] {
+  const weights = plinkoOutcomeWeights(rows);
+  // At most 2^16 * (2^16 - 34), well below crypto.randomInt's 2^48 limit.
+  const total = Number(weights.reduce((sum, weight) => sum + weight, 0n));
+  let ticket = draw(total);
+  let slot = 0;
+  while (slot < rows && ticket >= Number(weights[slot])) {
+    ticket -= Number(weights[slot]);
+    slot++;
+  }
+  // Uniformly choose a valid path conditional on the selected slot. This keeps
+  // every bounce consistent with the outcome without claiming independent 50/50 turns.
+  let rights = slot;
+  return Array.from({ length: rows }, (_, index) => {
+    const remaining = rows - index;
+    const direction =
+      rights === 0 ? 0 : rights === remaining ? 1 : draw(remaining) < rights ? 1 : 0;
+    rights -= direction;
+    return direction;
+  });
 }
 
 export function plinkoPayout(amount: number, multiplierUnits: number) {

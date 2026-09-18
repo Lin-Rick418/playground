@@ -2,10 +2,12 @@
 
 Vue 3 + Pinia 前端，Node.js + Express 後端，PostgreSQL 資料庫。
 
+AI 開發指引請先閱讀 [AGENTS.md](AGENTS.md)；Claude 使用相同指引。
+
 ## 功能
 
-- 玩家登入後選擇百家樂或 Mines，兩款遊戲共用錢包
-- Mines：5×5、1–24 顆雷，投注 100–5,000（每次遞增 100），公式 RTP 95%
+- 玩家登入後選擇百家樂、Mines、Plinko 或 Hi-Lo，四款遊戲共用錢包
+- Mines：5×5、新局 3–24 顆雷，投注 100–5,000（每次遞增 100），公式 RTP 95%
 - 後端保留兩位小數，畫面金額隱藏小數且不進位
 - 玩家登入
 - 百家樂自動輪局、封盤、開牌、結算
@@ -16,6 +18,7 @@ Vue 3 + Pinia 前端，Node.js + Express 後端，PostgreSQL 資料庫。
 ## 開發用預設帳號
 
 執行 `npm run db:seed` 後才會建立：
+
 - `player1 / LuckyShoes!2026`
 
 已存在的開發資料不會自動覆寫密碼；若資料庫曾建立舊帳號，請由帳號安全頁更新。
@@ -157,3 +160,7 @@ npm run test:pwa
 一般 `npm run dev:web` 不註冊 Service Worker。若曾在同一 origin 測試 production，請先在 DevTools → Application → Service Workers 取消註冊，再清除 `casino-pwa-offline` cache，避免殘留註冊影響開發。
 
 部署、更新與 rollback 詳見 [PWA 操作說明](deploy/README.md#casino-pwa)。
+
+## Hi-Lo
+
+新增 `/hilo`，支援下注前換牌、連續猜大小／相同、52 次免費跳牌與收款。整局 RTP **94%**，最高 **10,000×**，共用現有測試幣錢包。需執行 migration 12；`HILO_ENABLED` 預設 false，驗收後明確設為 true。完整規則與 API 見 [docs/hilo.md](docs/hilo.md)。

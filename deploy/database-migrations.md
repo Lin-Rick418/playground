@@ -76,3 +76,13 @@ ORDER BY version;
 4. 驗證 `/api/plinko/config` 的 27 組倍率、RTP 95%–96%、新局、歷史與 walletVersion，同時檢查 `financial_balance_reconciliation`。
 
 停止新投注可設定 `PLINKO_ENABLED=false` 並重啟 API；已提交請求的 idempotency replay 與歷史查詢繼續可用。若上線後需止血，保留新版 schema 與程式、關閉旗標，再 forward-fix。舊版程式的精確 schema fingerprint 不相容，不可直接回退 binary 或刪除 Plinko／ledger／idempotency 資料。Plinko 的 idempotency keys 永久保留，不可套用一般七日 retention。
+
+## Hi-Lo（migration 12）
+
+1. 備份並停止 API／worker 寫入；設定 `HILO_ENABLED=false`。舊版精確 schema fingerprint 與新版 schema 不相容，勿混用程序版本。
+2. 使用新版執行 `npm run db:migrate`，新增 hilo_previews／hilo_rounds／hilo_round_steps 及 ledger 來源。`npm run db:migrate:status` 應顯示版本 12。
+3. 啟動新版 API／worker，再部署 web。既有測試幣、其他遊戲資料與 ledger 保留。
+4. 完成隔離資料庫及瀏覽器驗收，確認 reconciliation 無差異後，設定 `HILO_ENABLED=true` 並重啟 API 接受新局。
+5. 觀察 hilo_command_completed／failed、結算 RTP 與 ledger 對帳。RTP 是長期理論值，不以短期數據調整 RNG。
+
+回退優先設定 `HILO_ENABLED=false` 停止新局，保留新版 server、schema 與既有局結算能力。不可刪除牌局、ledger 或永久 idempotency；尤其有 ACTIVE 局時，不得回退至不計 Hi-Lo 曝險的舊 server。免費 preview 的 hilo-preview scope 可依一般 retention 清理，hilo.mutation 必須永久保留。

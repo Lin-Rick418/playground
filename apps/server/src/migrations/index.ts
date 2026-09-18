@@ -1,3 +1,4 @@
+import { hiloMigration } from "./012-hilo.js";
 import { initialTablesMigration } from "./001-initial-tables.js";
 import { roundPhaseOffsetMigration } from "./002-round-phase-offset.js";
 import { roundScheduleVersionMigration } from "./003-round-schedule-version.js";
@@ -24,6 +25,7 @@ export const migrationDefinitions = [
   activeGameTablesMigration,
   minesAndDecimalMoneyMigration,
   plinkoMigration,
+  hiloMigration,
 ] as const;
 
 export type { MigrationDefinition } from "./types.js";

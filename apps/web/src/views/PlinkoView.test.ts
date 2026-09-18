@@ -70,6 +70,7 @@ describe("PlinkoView", () => {
     sessionStorage.clear();
     mock = new MockAdapter(api);
     vi.mocked(useLiveChannel).mockReturnValue({
+    requestHilo: vi.fn(),
       connected: ref(true),
       reconnect: vi.fn(),
       disconnect: vi.fn(),
@@ -192,6 +193,7 @@ describe("PlinkoView", () => {
       "300",
       "500",
       "1000",
+      "-1",
     ]);
     await auto.setValue("30");
     await view.get(".plinko-play").trigger("click");

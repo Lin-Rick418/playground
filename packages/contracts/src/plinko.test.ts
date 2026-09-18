@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import {
   plinkoStartRequestSchema,
+  plinkoConfigResponseSchema,
   plinkoRoundSchema,
   plinkoMutationResponseSchema,
 } from "./plinko.js";
@@ -48,4 +49,20 @@ test("Plinko response path, precision and wallet version are validated", () => {
   assert.ok(
     plinkoMutationResponseSchema.safeParse({ round, balance: 10.01, walletVersion: 2 }).success,
   );
+});
+
+test("Plinko config accepts v1 and v2 during rollout, but rejects unknown distributions", () => {
+  const config = {
+    minRows: 8,
+    maxRows: 16,
+    risks: ["medium"],
+    minBet: 100,
+    maxBet: 5000,
+    betStep: 100,
+    enabled: true,
+    tables: [{ rows: 16, risk: "medium", multipliers: Array(17).fill(1), rtp: 0.955 }],
+  };
+  for (const ruleVersion of [1, 2])
+    assert.ok(plinkoConfigResponseSchema.safeParse({ ...config, ruleVersion }).success);
+  assert.equal(plinkoConfigResponseSchema.safeParse({ ...config, ruleVersion: 3 }).success, false);
 });

@@ -1,3 +1,4 @@
+import { hiloRouter } from "./modules/hilo/router.js";
 import cors from "cors";
 import express, { type Express } from "express";
 import { env } from "./config/env.js";
@@ -92,6 +93,7 @@ export function createApp(options: CreateAppOptions = {}) {
   app.use("/game", gameRouter);
   app.use("/mines", minesRouter);
   app.use("/plinko", plinkoRouter);
+  app.use("/hilo", hiloRouter);
   options.registerAdditionalRoutes?.(app);
 
   app.use(notFoundHandler);

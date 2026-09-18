@@ -1,15 +1,17 @@
 # Plinko
 
-登入玩家從遊戲大廳進入 `/plinko`，與百家樂、Mines 共用測試幣錢包；沒有充值／提領金流。
+登入玩家從遊戲大廳進入 `/plinko`，與百家樂、Mines、Hi-Lo 共用測試幣錢包；沒有充值／提領金流。
 
 ## 玩法與 RTP
 
 - 8–16 排、低／中／高風險，預設 16 排、中風險。
-- 每球 100–5,000 幣，以 100 遞增，預設 100。倍率包含本金；100 幣落入 0.193× 派彩 19.30、淨損益 −80.70。
-- 後端 `crypto.randomInt(2)` 逐排獨立抽左右，右轉次數為左起零基落點索引。前端依結果播放動畫；關頁、斷線或跳過動畫不影響已提交結算。
-- v1 以 2026-09-15 核對的 [Stake 經典三種風險倍率](https://stake.com/zh/casino/games/plinko) 為基準。每組先用二項分布 `C(rows,k)/2^rows` 算出原始 RTP，再以 `0.955 / 原始RTP` 等比例縮放。倍率以 BigInt 有理數 ROUND_HALF_UP 到四位小數、存為萬分之一整數，在啟動時建立唯讀表，不因玩家或歷史結果調整。
-- 27 組設定均以 95.5% 為目標，四位小數取整後 RTP 的界限為 95.495%–95.505%；v1 的實際範圍為 95.4972265625%–95.50290283203124%。config 的 `rtp` 為各表實際計算值；不保證單人或短期返還率。
-- 16 排最高倍率：低 15.4345×、中 106.1236×、高 964.8761×；各組 RTP 約 95.500198%、95.500699%、95.502606%。
+- 每球 100–5,000 幣，以 100 遞增，預設 100。倍率包含本金；100 幣落入 0.1763× 派彩 17.63、淨損益 −82.37。
+- 目前 `ruleVersion=2`：全部 8–16 排、低／中／高風險都把「最左兩格＋最右兩格」各格機率提高到 v1 的恰好 2 倍。中間格按原有相對比例分配剩餘機率，左右保持對稱。
+- 後端使用 `crypto.randomInt` 依整數權重抽落點，再從通往該落點的合法路徑等機率抽選一條。右轉次數仍等於左起零基落點索引。v2 **不是逐排獨立左右各 50%**；前端依 server 路徑播放動畫，不另抽結果。關頁、斷線或跳過動畫不影響已提交結算。
+- v1 的原始倍率參考 Stake 經典三種風險表，以二項分布算出 RTP 後等比例縮放至約 95.5%；`plinkoV1Tables` 保留不變供稽核。v2 以新的落點權重重新計算整張表的共同縮放係數，使取整前期望回報等於各表原有 RTP，再用 BigInt ROUND_HALF_UP 把倍率取到四位小數。
+- 27 組設定的實際 RTP 為 **95.4967764946%–95.5044767926%**，仍在原有 95.495%–95.505% 界限內；與對應 v1 表最大差異為 **0.003887183 個百分點**，來自倍率取整。config 的 `rtp` 為各表實際值，不保證單人或短期返還率。機率與倍率在啟動時建立，不按玩家、近期輸贏或實測 RTP 調整。
+- 16 排兩側四格合計機率由 **0.0518798828125%** 提高至 **0.103759765625%**（平均約每 964 球一次，不是保證間隔）。16 排最高倍率：低 **15.3666×**、中 **103.7266×**、高 **881.5729×**；RTP 分別約 **95.501286%、95.500622%、95.499923%**。
+- [v2 精確驗算結果](plinko-v2-math-result.json) 保存全部 27 組的前後倍率、RTP 與機率分子／分母；這是逐槽精確計算，不是 Monte Carlo 樣本。
 - 遊戲畫面與近 10 顆結果的倍率固定顯示兩位小數；後端依完整四位小數倍率派彩，RTP 不受顯示取整影響。金額以整數分結算；100 的整數倍乘以四位小數倍率恰可精確入帳到分。畫面沿用整數截斷，小數仍在錢包累積。
 
 ## API
@@ -25,7 +27,7 @@
   "type": "plinko_command",
   "requestId": "11111111-1111-4111-8111-111111111111",
   "idempotencyKey": "22222222-2222-4222-8222-222222222222",
-  "payload": { "amount": 100, "rows": 16, "risk": "medium", "ruleVersion": 1 }
+  "payload": { "amount": 100, "rows": 16, "risk": "medium", "ruleVersion": 2 }
 }
 ```
 
@@ -43,7 +45,7 @@
 | Method / path                           | Request / response                                                                                             |
 | --------------------------------------- | -------------------------------------------------------------------------------------------------------------- |
 | GET `/plinko/config`                    | minRows、maxRows、risks、minBet、maxBet、betStep、ruleVersion、enabled、tables（rows、risk、multipliers、rtp） |
-| POST `/plinko/rounds`                   | `{ amount: 100, rows: 16, risk: "medium", ruleVersion: 1 }` → `{ round, balance, walletVersion }`              |
+| POST `/plinko/rounds`                   | `{ amount: 100, rows: 16, risk: "medium", ruleVersion: 2 }` → `{ round, balance, walletVersion }`              |
 | GET `/plinko/rounds/:id`                | `{ round }`                                                                                                    |
 | GET `/plinko/history?limit=20&cursor=…` | `{ items, nextCursor }`，limit 1–50，結算時間倒序                                                              |
 
@@ -75,4 +77,21 @@ POST 必須帶 8–128 字元 `Idempotency-Key`。同 key／payload 永久回放
 
 停止 API／worker 後執行 migration 11，再啟動新版程序。`PLINKO_ENABLED=false` 停止新投注，歷史／已提交 key 回放不受影響。保留 schema、round、ledger 與 idempotency 資料；不以回退資料庫刪除已結算投注。詳見 [migration runbook](../deploy/database-migrations.md)。
 
-測試包含 27 組 RTP 與所有合法投注額的逐槽精確派彩、完整二項路徑分布、HTTP contracts、並發重試、跨遊戲錢包鎖、quota、停用、rollback、資料約束及 client 復原。Integration tests 僅能使用 `baccarat_core_api_test_*` 專用空資料庫。
+測試包含 27 組 RTP 與所有合法投注額的逐槽精確派彩、v1 完整二項路徑分布、v2 兩側機率精確加倍、各槽抽選邊界與相符路徑、HTTP contracts、並發重試、跨遊戲錢包鎖、quota、停用、rollback、資料約束及 client 復原。Integration tests 僅能使用 `baccarat_core_api_test_*` 專用空資料庫。
+
+### v2 機率與倍率公式
+
+令排數為 n、舊格權重 `wₖ = C(n,k)`、`D = 2ⁿ`、兩側四格舊權重合計 `E = 2(n+1)`。新版使用分母 `T = D(D−E)`：
+
+- 邊緣四格的權重為 `2wₖ(D−E)`，故機率正好是舊版的 2 倍。
+- 中間格權重為 `wₖ(D−2E)`，所有權重加總仍為 T，且 8–16 排全部為正。
+- 用舊倍率整數 `uₖ` 算出舊期望 `A = Σuₖwₖ / D` 與套入新機率後的期望 `B = ΣuₖWₖ / T`，新倍率整數為 `ROUND_HALF_UP(uₖ × A / B)`。所有風險與排數同樣處理，不只改最高獎。
+- 選好落點 k 後，若剩餘 m 排、需 r 次右轉，下一步往右的機率為 r/m。這使通往 k 的每條路徑等機率，並確保動畫落在已抽中的格子。
+
+### v2 更新相容性
+
+此版本不需新增 migration。新投注必須帶目前 config 的 ruleVersion（2）；新版 server 對尚未接受的 v1 投注回傳 409，不抽球、不扣款。client 停止自動投注並更新 config，不能自動重下注。已接受的 v1 投注先按原 idempotency key 重播，再進行版本檢查；歷史仍使用保存的路徑、倍率與派彩，絕不按 v2 重算。
+
+上線先部署能讀取 config v1／v2 的 web，再切換 server v2（或短暫關閉新投注，完成部署後重開）。舊 web 的 config schema 只接受 v1，因此需要更新／重新載入頁面。回退時保留 v1／v2 的紀錄與永久 idempotency 資料；若回退成 v1 server，新 v2 指令會 409，client 需重新取得 config，不可改寫已結算資料。
+
+驗證：8 項 math／contract tests、29 項 Plinko store／view tests、10 項專用 PostgreSQL integration tests，以及 Chromium／WebKit 共 18 項 mocked E2E 通過。數學測試逐一驗算 27 組表、100–5,000 所有合法投注額的逐槽派彩與 RTP；integration 包含 v1 重播、v2 新下注、WS、並發、rollback、ledger 與跨遊戲曝險。

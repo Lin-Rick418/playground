@@ -36,8 +36,8 @@ export default defineConfig(({ mode }) => {
             appSelector: "#app",
             viewportWidth: 375,
             maxDisplayWidth: 430,
-            // Plinko is responsive; shared control sizes stay in CSS pixels on every page.
-            exclude: /PlinkoView\.vue|styles\/ui\.css/,
+            // Plinko and Hi-Lo are responsive; shared control sizes stay in CSS pixels on every page.
+            exclude: /(?:Plinko|Hilo)View\.vue|WinCelebration\.vue|styles\/ui\.css/,
           }),
         ],
       },

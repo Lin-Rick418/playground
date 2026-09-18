@@ -7,6 +7,7 @@ import { parseRuntimeContract } from "../lib/contracts";
 import { useAuthStore } from "../stores/auth";
 import { createPlinkoRpc } from "../lib/plinko-rpc";
 import { createMinesRpc } from "../lib/mines-rpc";
+import { createHiloRpc } from "../lib/hilo-rpc";
 
 type ChannelMessage = Exclude<
   LiveMessage,
@@ -30,6 +31,7 @@ export function useLiveChannel(options: UseLiveChannelOptions) {
   let disposed = false;
   let generation = 0;
   const connected = ref(false);
+  const hiloRpc = createHiloRpc(() => socket);
   const minesRpc = createMinesRpc(() => socket);
   const plinkoRpc = createPlinkoRpc(() => socket);
 
@@ -44,6 +46,7 @@ export function useLiveChannel(options: UseLiveChannelOptions) {
     generation++;
     connected.value = false;
     minesRpc.disconnect();
+    hiloRpc.disconnect();
     plinkoRpc.disconnect();
     clearReconnectTimer();
     socket?.close();
@@ -58,8 +61,13 @@ export function useLiveChannel(options: UseLiveChannelOptions) {
   }
 
   function handleMessage(message: LiveMessage) {
-    if (message.type === "mines_result" || message.type === "plinko_result") {
+    if (
+      message.type === "mines_result" ||
+      message.type === "plinko_result" ||
+      message.type === "hilo_result"
+    ) {
       if (message.type === "mines_result") minesRpc.receive(message);
+      else if (message.type === "hilo_result") hiloRpc.receive(message);
       else plinkoRpc.receive(message);
       if (!message.result.ok && message.result.status === 401) revokeSession();
       return;
@@ -137,6 +145,7 @@ export function useLiveChannel(options: UseLiveChannelOptions) {
         socket = null;
         connected.value = false;
         minesRpc.disconnect();
+        hiloRpc.disconnect();
         plinkoRpc.disconnect();
         if (disposed) {
           return;
@@ -174,6 +183,7 @@ export function useLiveChannel(options: UseLiveChannelOptions) {
 
   return {
     connected,
+    requestHilo: hiloRpc.request,
     requestMines: minesRpc.request,
     requestPlinko: plinkoRpc.request,
     reconnect: connect,

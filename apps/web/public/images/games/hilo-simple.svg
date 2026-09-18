@@ -1,0 +1,24 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 800 1200">
+  <defs>
+    <radialGradient id="background" cx="50%" cy="40%" r="65%">
+      <stop stop-color="#487767"/>
+      <stop offset="1" stop-color="#23483e"/>
+    </radialGradient>
+  </defs>
+  <rect width="800" height="1200" fill="url(#background)"/>
+  <ellipse cx="400" cy="706" rx="225" ry="30" fill="#163e34" opacity=".3"/>
+  <g transform="translate(160 266) rotate(-12 140 200)">
+    <rect x="5" y="10" width="280" height="400" rx="26" fill="#163e34" opacity=".3"/>
+    <rect width="280" height="400" rx="26" fill="#e7dfc7"/>
+    <rect x="10" y="10" width="260" height="380" rx="19" fill="none" stroke="#fcf5df" stroke-width="3" opacity=".6"/>
+    <text x="28" y="76" font-size="60" font-weight="700" fill="#244d40" font-family="Georgia,serif">A</text>
+    <text x="140" y="268" text-anchor="middle" font-size="162" fill="#244d40" font-family="Arial,sans-serif">♠</text>
+  </g>
+  <g transform="translate(370 302) rotate(12 140 200)">
+    <rect x="5" y="10" width="280" height="400" rx="26" fill="#163e34" opacity=".3"/>
+    <rect width="280" height="400" rx="26" fill="#fff4db"/>
+    <rect x="10" y="10" width="260" height="380" rx="19" fill="none" stroke="#dfd5bb" stroke-width="3" opacity=".6"/>
+    <text x="28" y="76" font-size="60" font-weight="700" fill="#b54a4e" font-family="Georgia,serif">K</text>
+    <text x="140" y="268" text-anchor="middle" font-size="162" fill="#b54a4e" font-family="Arial,sans-serif">♥</text>
+  </g>
+</svg>

@@ -1,4 +1,6 @@
 import { z } from "zod";
+export * from "./hilo.js";
+import { hiloCommandSchema, hiloMutationResponseSchema } from "./hilo.js";
 export * from "./plinko.js";
 import { plinkoStartRequestSchema, plinkoMutationResponseSchema } from "./plinko.js";
 import { isMoney } from "./money.js";
@@ -404,9 +406,19 @@ export const plinkoCommandResultSchema = z
 export type PlinkoCommand = z.infer<typeof plinkoCommandSchema>;
 export type PlinkoCommandResult = z.infer<typeof plinkoCommandResultSchema>;
 
+export const hiloCommandResultSchema = z.object({
+  type: z.literal("hilo_result"), requestId: z.string().uuid(),
+  result: z.discriminatedUnion("ok", [
+    z.object({ ok: z.literal(true), data: hiloMutationResponseSchema }).strict(),
+    z.object({ ok: z.literal(false), status: z.number().int().min(400).max(599), error: apiErrorResponseSchema }).strict(),
+  ]),
+}).strict();
+export type HiloCommandResult = z.infer<typeof hiloCommandResultSchema>;
+
 export const liveClientMessageSchema = z.discriminatedUnion("type", [
   minesCommandSchema,
   plinkoCommandSchema,
+  hiloCommandSchema,
   z.object({ type: z.literal("subscribe_user") }).strict(),
   z.object({ type: z.literal("subscribe_lobby") }).strict(),
   z.object({ type: z.literal("subscribe_table"), tableId: idSchema }).strict(),
@@ -415,6 +427,7 @@ export const liveClientMessageSchema = z.discriminatedUnion("type", [
 export const liveServerMessageSchema = z.discriminatedUnion("type", [
   minesCommandResultSchema,
   plinkoCommandResultSchema,
+  hiloCommandResultSchema,
   z.object({ type: z.literal("connected"), serverTime: isoDateTimeSchema }).strict(),
   z.object({ type: z.literal("error"), message: z.string().min(1) }).strict(),
   z

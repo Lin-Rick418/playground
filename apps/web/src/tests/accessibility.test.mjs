@@ -153,10 +153,8 @@ test("player pages share the same outer layout", () => {
   assert.match(lobbyView, /<main class="player-page game-picker">/);
   assert.match(historyView, /<main class="player-page history-page">/);
   assert.match(gameView, /<main class="player-page page-shell game-page">/);
-  assert.match(
-    gameView,
-    /<AppPageHeader[\s\S]*?class="table-nav"[\s\S]*?<template #subtitle\s*>[\s\S]*?<p class="table-meta-line">/,
-  );
+  assert.match(gameView, /<AppPageHeader[\s\S]*?class="table-nav"/);
+  assert.doesNotMatch(gameView, /<template #subtitle|table-meta-line/);
   assert.match(
     globalStyles,
     /\.player-page\s*\{[\s\S]*?gap: \$space-2;[\s\S]*?padding: 0 12px[^;]*;/,
@@ -188,9 +186,12 @@ test("important async updates expose polite live regions", () => {
   assert.doesNotMatch(lobbyView, /class="wallet panel"/);
 });
 
-test("visible focus and primary touch targets remain accessible", () => {
-  assert.match(globalStyles, /button:focus-visible,[\s\S]*?outline: 3px solid \$color-gold;/);
-  assert.match(globalStyles, /\[tabindex\]:focus-visible/);
+test("input focus, focus-free button styling and primary touch targets follow the UI policy", () => {
+  assert.match(globalStyles, /input:focus-visible,[\s\S]*?outline: 3px solid \$color-gold;/);
+  assert.match(
+    uiStyles,
+    /:is\(button, select, summary, \[role="button"\], \[role="combobox"\]\):focus\s*\{\s*outline: none;/,
+  );
   assert.match(uiStyles, /--ui-control-height: 44px;/);
   assert.match(uiStyles, /--ui-action-height: 52px;/);
   assert.match(pageHeader, /<AppButton[\s\S]*?:aria-label="backLabel"/);

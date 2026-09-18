@@ -7,11 +7,13 @@ export const financialLedgerSources = [
   "BET_DEBIT",
   "PLINKO_BET_DEBIT",
   "PLINKO_SETTLEMENT_CREDIT",
+  "HILO_BET_DEBIT",
+  "HILO_SETTLEMENT_CREDIT",
   "MINES_BET_DEBIT",
   "MINES_SETTLEMENT_CREDIT",
   "SETTLEMENT_CREDIT",
 ] as const;
-export const financialLedgerReferenceTypes = ["USER", "BALANCE_ADJUSTMENT", "BET", "ROUND", "MINES_ROUND", "PLINKO_ROUND"] as const;
+export const financialLedgerReferenceTypes = ["USER", "BALANCE_ADJUSTMENT", "BET", "ROUND", "MINES_ROUND", "PLINKO_ROUND", "HILO_ROUND"] as const;
 
 export type FinancialLedgerActorType = (typeof financialLedgerActorTypes)[number];
 export type FinancialLedgerSource = (typeof financialLedgerSources)[number];
