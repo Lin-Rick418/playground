@@ -1,12 +1,18 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { toMinorUnits } from "@baccarat/contracts";
-import { choose, generateMineCells, minesMultiplier, minesPayout } from "../modules/mines/math.js";
+import {
+  choose,
+  exceedsMinesMultiplierLimit,
+  generateMineCells,
+  minesMultiplier,
+  minesPayout,
+} from "../modules/mines/math.js";
 import { publicMinesRound } from "../modules/mines/service.js";
 import { calculateBalanceTransition, reconcileFinancialLedger } from "./financial-ledger.js";
 import { getSafeBalanceAfterChange, MAX_ACCOUNT_BALANCE } from "./account-policy.js";
 
-test("all Mines payouts have 95% unrounded expectation and at most half-cent settlement error", () => {
+test("the base Mines payout formula has 95% expectation before the v2 forced-loss rule", () => {
   for (let mines = 1; mines <= 24; mines++) {
     let survivalNumerator = 1n,
       survivalDenominator = 1n;
@@ -28,6 +34,25 @@ test("all Mines payouts have 95% unrounded expectation and at most half-cent set
   assert.equal(minesPayout(100, 1, 1), 98.96);
   assert.ok(minesMultiplier(1, 1) < 1);
   assert.equal(minesPayout(100, 24, 1), 2375);
+});
+
+test("v2 caps every reachable safe result using the exact ratio across all mine counts", () => {
+  for (let mines = 3; mines <= 24; mines++) {
+    let capReached = false;
+    for (let safe = 1; safe <= 25 - mines; safe++) {
+      const capped = exceedsMinesMultiplierLimit(mines, safe);
+      assert.equal(capped, minesMultiplier(mines, safe) > 1000);
+      if (capReached) assert.equal(capped, true);
+      capReached ||= capped;
+      if (!capped) {
+        for (let amount = 100; amount <= 5000; amount += 100) {
+          assert.ok(minesPayout(amount, mines, safe) <= amount * 1000);
+        }
+      }
+    }
+  }
+  assert.equal(exceedsMinesMultiplierLimit(24, 1), false);
+  assert.equal(exceedsMinesMultiplierLimit(10, 15), true);
 });
 
 test("random boards have unique bounded cells and public active state never reveals the private board", () => {

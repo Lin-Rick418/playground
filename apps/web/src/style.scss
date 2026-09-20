@@ -2,7 +2,7 @@
   font-family:
     -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang TC", "Microsoft JhengHei", sans-serif;
   color: $color-text-primary;
-  background: $gradient-page-bg;
+  background: var(--ui-outer-background, #{$gradient-page-bg});
   font-synthesis: none;
   text-rendering: optimizeLegibility;
   -webkit-font-smoothing: antialiased;
@@ -25,13 +25,14 @@ body {
   min-width: 320px;
   min-height: 100vh;
   overflow-x: hidden;
+  background: var(--ui-outer-background, transparent);
 }
 
 // 視窗寬度超過 postcss-mobile-forever 的 maxDisplayWidth 時，
-// #app 會置中，兩側留白改為黑色偏透明（疊在頁面底色上）。
-@media screen and (min-width: 430px) {
-  body {
-    background: rgba(0, 0, 0, 0.6);
+// #app 會置中，所有頁面的外側留白使用相同的半透明灰色。
+@media screen and (width > 430px) {
+  :root {
+    --ui-outer-background: rgba(128, 128, 128, 0.35);
   }
 }
 
@@ -49,6 +50,7 @@ button {
 #app {
   min-height: 100vh;
   overflow-x: hidden;
+  background: $gradient-page-bg;
 }
 
 // Keep the login shell within the visible viewport; short screens scroll inside the form page.
@@ -59,6 +61,20 @@ body:has(.login-layout),
   height: 100dvh;
   min-height: 0;
   overflow: hidden;
+  overscroll-behavior: none;
+}
+
+html:has(.login-layout),
+body:has(.login-layout) {
+  background: var(--ui-outer-background, #{$color-felt-light});
+}
+
+body:has(.login-layout) {
+  position: fixed;
+  inset: 0;
+  // The document shell must span the viewport, not the mobile app's 430px cap.
+  /* mobile-ignore-next */
+  width: 100%;
 }
 
 #app:has(.login-layout) {
@@ -66,16 +82,27 @@ body:has(.login-layout),
   flex-direction: column;
 }
 
-// Lock playable game screens; dialogs and local lists keep their own scrolling.
-html:has(.game-page, .mines-page, .plinko-page, .hilo-page),
-body:has(.game-page, .mines-page, .plinko-page, .hilo-page),
-#app:has(.game-page, .mines-page, .plinko-page, .hilo-page),
-.player-page:is(.game-page, .mines-page, .plinko-page, .hilo-page) {
+// Lock the game picker and playable screens; local carousels, dialogs and lists can scroll.
+html:has(.game-picker, .game-page, .mines-page, .plinko-page, .hilo-page),
+body:has(.game-picker, .game-page, .mines-page, .plinko-page, .hilo-page),
+#app:has(.game-picker, .game-page, .mines-page, .plinko-page, .hilo-page),
+.player-page:is(.game-picker, .game-page, .mines-page, .plinko-page, .hilo-page) {
   height: 100vh;
   height: 100dvh;
   min-height: 0;
   overflow: hidden;
   overscroll-behavior: none;
+}
+
+// Safari samples the document background for its bars; gradients alone leave a transparent color.
+html:has(.game-picker, .hilo-page),
+body:has(.game-picker, .hilo-page) {
+  background: var(--ui-outer-background, #091612);
+}
+
+html:has(.baccarat-lobby, .game-page),
+body:has(.baccarat-lobby, .game-page) {
+  background: var(--ui-outer-background, #{$color-felt-light});
 }
 
 a {

@@ -337,7 +337,9 @@ export const minesRevealRequestSchema = z.object({ cellIndex: z.number().int().m
 export const minesConfigResponseSchema = z.object({
   boardSize: z.literal(25), minMines: z.literal(3), maxMines: z.literal(24),
   minBet: z.literal(100), maxBet: z.literal(5000), betStep: z.literal(100),
-  rtp: z.literal(0.95), enabled: z.boolean(),
+  rtp: z.literal(0.95).nullable(), enabled: z.boolean(),
+  ruleVersion: z.union([z.literal(1), z.literal(2)]).optional(),
+  maxMultiplier: z.literal(1000).optional(),
 }).strict();
 export const minesRoundSchema = z.object({
   id: z.string().uuid(), amount: moneySchema, mineCount: z.number().int().min(1).max(24),
@@ -347,7 +349,8 @@ export const minesRoundSchema = z.object({
   nextMultiplier: z.number().nonnegative().nullable(),
   mineCells: z.array(z.number().int().min(0).max(24)).nullable(),
   createdAt: isoDateTimeSchema, settledAt: isoDateTimeSchema.nullable(),
-  version: z.number().int().positive(), ruleVersion: z.literal(1),
+  version: z.number().int().positive(), ruleVersion: z.union([z.literal(1), z.literal(2)]),
+  settlementReason: z.enum(["MULTIPLIER_LIMIT", "ACCOUNT_LIMIT"]).nullable().optional(),
 }).strict();
 export const minesActiveResponseSchema = z.object({ round: minesRoundSchema.nullable() }).strict();
 export const minesRoundResponseSchema = z.object({ round: minesRoundSchema }).strict();

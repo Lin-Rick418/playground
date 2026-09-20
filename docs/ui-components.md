@@ -29,6 +29,9 @@
 
 - `/lobby`、`/baccarat`、`/game/:tableId`、`/hilo`、`/mines`、`/plinko` 均使用 `AppPageHeader`。共用元件本身不能保證外層留白相同：header 左右留白必須使用 `var(--ui-page-gutter)`（16 個 CSS px）。
 - 百家樂選桌與牌桌在頁面設定 `padding-inline: var(--ui-page-gutter)`；大廳為了保留滿寬輪播，只在 header 設定左右 margin。每頁只套一層留白。
+- 大廳使用 `100dvh`（`100vh` fallback），包含 safe-area 留白，整頁不捲動；輪播卡片依剩餘高度等比例縮放，保留橫向捲動、鍵盤切換與下方控制列。
+- 視窗寬度不超過 430px 時，大廳、Hi-Lo、百家樂、Mines、Plinko 的 `html` 與 `body` 使用對應的不透明底色，供手機瀏覽器頂端與狀態列取色。超過 mobile-forever 的 `maxDisplayWidth`（430px）時，所有頁面透過 `--ui-outer-background` 統一使用 `rgba(128, 128, 128, 0.35)` 作為容器外背景；頁面內部維持原本配色。`#app` 保留預設漸層供沒有獨立背景的頁面使用。
+- 登入頁固定定位的 `body` 必須維持整個視窗寬度，`width: 100%` 以 `mobile-ignore-next` 排除轉換；只限制內層 `#app` 與登入表單寬度。寬螢幕需同時檢查 body 寬度、容器置中及左右外側留白，不能只驗證背景色。
 - 曾發生百家樂仍繼承 `.player-page` 的 `12px`，經 mobile-forever 轉換後，在 320px 寬度時箭頭按鈕 x 約為 10.23px，而其他頁面為 16px。修正外層留白即可，不應改箭頭 SVG、加 translate／負 margin 或複製另一份 header。
 - 共用 grid 讓標題水平置中，右側按鈕放 actions slot。百家樂牌桌保留廳名與「遊戲規則」，不顯示「桌號｜秒數｜限紅」整行 subtitle；移除 slot 呼叫及專屬樣式，避免空白列。實際投注限制仍由原有邏輯驗證。
 - Hi-Lo 的兩個選項是固定 slot，跨 A／K 更新內容與 accessible label，不以每次選項值作為 key 重建。一般動態清單仍使用穩定的資料 ID／sequence。
@@ -36,6 +39,8 @@
 - 不要用整頁 opacity／重新掛載製造等待效果。Hi-Lo 的牌面動畫僅在 server 結果確定後播放；滑出與翻牌不影響容器布局，並支援 reduced motion。
 
 ## 驗證
+
+登入頁以 `visualViewport.height`／`offsetTop` 配合手機鍵盤調整可見表單區域；不支援時使用 `innerHeight`。外層固定，只允許登入頁內部捲動，聚焦欄位保持可見。離開登入頁時清理 viewport／focus 監聽與待執行的動畫 frame，固定定位不延伸至其他頁面。桌面 WebKit 的 viewport 模擬不能取代 iPhone 真機鍵盤驗證。
 
 共用元件測試涵蓋原生屬性、click/disabled、數字模型、投注限額、警示重觸發與清理。既有遊戲 E2E 覆蓋下注、自動投球、復原、Safari 排版；viewport E2E 檢查共用頁首對齊與彈窗焦點返回。
 

@@ -29,7 +29,13 @@ import {
 import { fingerprintIdempotencyRequest } from "../../lib/idempotency.js";
 import { encodeHistoryCursor, type HistoryCursor } from "../../lib/history-pagination.js";
 import { publishLiveEvent } from "../../lib/live-events.js";
-import { generateMineCells, minesMultiplier, minesPayout } from "./math.js";
+import {
+  exceedsMinesMultiplierLimit,
+  generateMineCells,
+  minesMultiplier,
+  minesPayout,
+  MINES_RULE_VERSION,
+} from "./math.js";
 
 export function publicMinesRound(row: DbRow): MinesRound {
   const mineCount = Number(row.mine_count);
@@ -56,7 +62,8 @@ export function publicMinesRound(row: DbRow): MinesRound {
     createdAt: toIsoString(row.created_at),
     settledAt: row.settled_at ? toIsoString(row.settled_at) : null,
     version: Number(row.version),
-    ruleVersion: 1,
+    ruleVersion: Number(row.rule_version ?? 1) as MinesRound["ruleVersion"],
+    settlementReason: (row.settlement_reason ?? null) as MinesRound["settlementReason"],
   };
 }
 
@@ -153,22 +160,13 @@ export async function mutateMines(actorId: string, key: string, action: Action):
       if (active) return fail(409, "CONFLICT", "請先完成目前的 Mines。");
       const balanceAfter = toMinorUnits(user.balance) - toMinorUnits(action.amount);
       if (balanceAfter < 0n) return fail(400, "VALIDATION_ERROR", "餘額不足。");
-      const maximumPayout = minesPayout(action.amount, action.mineCount, 25 - action.mineCount);
-      const exposure = await getUserUnsettledMaximumPayout(actorId, client);
-      if (
-        balanceAfter + toMinorUnits(exposure) + toMinorUnits(maximumPayout) >
-        toMinorUnits(MAX_ACCOUNT_BALANCE)
-      ) {
-        return fail(
-          400,
-          "VALIDATION_ERROR",
-          "本次投注的最大派彩可能超過帳戶上限，請降低投注額或調整雷數。",
-        );
-      }
+      // V2 reserves only the refundable stake, then the earned cashout after each safe reveal.
+      // Each reveal reserves the next payout under the same user lock before accepting the risk.
+      const maximumPayout = action.amount;
       row = await queryRow(
         client,
-        `INSERT INTO mines_rounds (id, user_id, amount, mine_count, mine_cells, maximum_payout)
-        VALUES ($1,$2,$3,$4,$5,$6) RETURNING *`,
+        `INSERT INTO mines_rounds (id, user_id, amount, mine_count, mine_cells, maximum_payout, rule_version)
+        VALUES ($1,$2,$3,$4,$5,$6,$7) RETURNING *`,
         [
           randomUUID(),
           actorId,
@@ -176,6 +174,7 @@ export async function mutateMines(actorId: string, key: string, action: Action):
           action.mineCount,
           generateMineCells(action.mineCount),
           minorUnitsToDecimal(toMinorUnits(maximumPayout)),
+          MINES_RULE_VERSION,
         ],
       );
       if (!row) throw new Error("Mines round insert returned no row");
@@ -188,7 +187,7 @@ export async function mutateMines(actorId: string, key: string, action: Action):
           source: "MINES_BET_DEBIT",
           referenceType: "MINES_ROUND",
           referenceId: String(row.id),
-          metadata: { mineCount: action.mineCount },
+          metadata: { mineCount: action.mineCount, ruleVersion: MINES_RULE_VERSION },
         },
         client,
       );
@@ -202,21 +201,54 @@ export async function mutateMines(actorId: string, key: string, action: Action):
       );
       if (!row) return fail(404, "NOT_FOUND", "Mines round not found");
       if (row.status !== "ACTIVE") return fail(409, "CONFLICT", "此局已結束。");
-      const mines = row.mine_cells as number[];
+      const mines = [...(row.mine_cells as number[])];
       const revealed = [...(row.revealed_cells as number[])];
+      const ruleVersion = Number(row.rule_version);
+      const stake = fromMinorUnits(toMinorUnits(String(row.amount)));
+      const mineCount = Number(row.mine_count);
+      let reservedPayout = fromMinorUnits(toMinorUnits(String(row.maximum_payout)));
+      let settlementReason: MinesRound["settlementReason"] = null;
       let status = "ACTIVE";
       let payout = 0;
       if (action.kind === "reveal") {
         if (revealed.includes(action.cellIndex)) return fail(409, "CONFLICT", "此格已翻開。");
-        revealed.push(action.cellIndex);
-        if (mines.includes(action.cellIndex)) status = "LOST";
-        else if (revealed.length === 25 - Number(row.mine_count)) status = "CASHED_OUT";
+        if (ruleVersion === 2 && exceedsMinesMultiplierLimit(mineCount, revealed.length + 1)) {
+          // The disclosed v2 rule forces a mine on this selection before any >1000x win.
+          // All existing mines are still unrevealed in an ACTIVE round; preserve their count.
+          if (!mines.includes(action.cellIndex)) {
+            mines[0] = action.cellIndex;
+            mines.sort((a, b) => a - b);
+          }
+          revealed.push(action.cellIndex);
+          settlementReason = "MULTIPLIER_LIMIT";
+          status = "LOST";
+        } else {
+          const nextPayout = minesPayout(stake, mineCount, revealed.length + 1);
+          if (ruleVersion === 2) {
+            const exposure = await getUserUnsettledMaximumPayout(actorId, client);
+            const nextExposure =
+              toMinorUnits(exposure) - toMinorUnits(reservedPayout) + toMinorUnits(nextPayout);
+            if (toMinorUnits(balance) + nextExposure > toMinorUnits(MAX_ACCOUNT_BALANCE)) {
+              // Do not expose the cell or accept a risk whose successful payout cannot be paid.
+              // The existing reservation covers earned winnings, or the stake before reveal #1.
+              status = "CASHED_OUT";
+              settlementReason = "ACCOUNT_LIMIT";
+            } else {
+              reservedPayout = Math.max(stake, nextPayout);
+            }
+          }
+          if (status === "ACTIVE") {
+            revealed.push(action.cellIndex);
+            if (mines.includes(action.cellIndex)) status = "LOST";
+            else if (revealed.length === 25 - mineCount) status = "CASHED_OUT";
+          }
+        }
       } else {
         if (!revealed.length) return fail(409, "CONFLICT", "至少翻開一個安全格才能收款。");
         status = "CASHED_OUT";
       }
       if (status === "CASHED_OUT") {
-        payout = minesPayout(Number(row.amount), Number(row.mine_count), revealed.length);
+        payout = revealed.length ? minesPayout(stake, mineCount, revealed.length) : stake;
         const mutation = await applyBalanceMutation(
           {
             userId: actorId,
@@ -225,7 +257,7 @@ export async function mutateMines(actorId: string, key: string, action: Action):
             source: "MINES_SETTLEMENT_CREDIT",
             referenceType: "MINES_ROUND",
             referenceId: action.roundId,
-            metadata: { safeCount: revealed.length, ruleVersion: 1 },
+            metadata: { safeCount: revealed.length, ruleVersion, settlementReason },
           },
           client,
         );
@@ -235,8 +267,18 @@ export async function mutateMines(actorId: string, key: string, action: Action):
       row = await queryRow(
         client,
         `UPDATE mines_rounds SET revealed_cells = $2, status = $3, payout = $4,
-        settled_at = CASE WHEN $3 = 'ACTIVE' THEN NULL ELSE clock_timestamp() END, version = version + 1 WHERE id = $1 RETURNING *`,
-        [action.roundId, revealed, status, minorUnitsToDecimal(toMinorUnits(payout))],
+        settled_at = CASE WHEN $3 = 'ACTIVE' THEN NULL ELSE clock_timestamp() END,
+        version = version + 1, maximum_payout = $5, settlement_reason = $6, mine_cells = $7
+        WHERE id = $1 RETURNING *`,
+        [
+          action.roundId,
+          revealed,
+          status,
+          minorUnitsToDecimal(toMinorUnits(payout)),
+          minorUnitsToDecimal(toMinorUnits(reservedPayout)),
+          settlementReason,
+          mines,
+        ],
       );
       if (!row) throw new Error("Mines round update returned no row");
     }

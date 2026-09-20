@@ -805,9 +805,10 @@ onUnmounted(() => {
 </template>
 
 <style scoped lang="scss">
+:global(html:has(.plinko-page)),
 :global(body:has(.plinko-page)) {
   min-height: 100dvh;
-  background: #1b283d;
+  background: var(--ui-outer-background, #1b283d);
 }
 .plinko-page {
   height: 100vh;

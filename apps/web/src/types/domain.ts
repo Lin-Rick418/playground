@@ -27,7 +27,8 @@ export type {
 export type { PlinkoRisk } from "@baccarat/contracts";
 export type MinesConfig = {
   boardSize: 25; minMines: 3; maxMines: 24; minBet: 100; maxBet: 5000;
-  betStep: 100; rtp: 0.95; enabled: boolean;
+  betStep: 100; rtp: 0.95 | null; enabled: boolean;
+  ruleVersion?: 1 | 2; maxMultiplier?: 1000;
 };
 export type { PlinkoConfig } from "@baccarat/contracts";
 export type BaccaratPairType = "PLAYER_PAIR" | "BANKER_PAIR" | "BOTH_PAIR" | "NO_PAIR";

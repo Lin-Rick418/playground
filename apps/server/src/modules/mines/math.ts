@@ -1,6 +1,14 @@
 import { randomInt } from "node:crypto";
 import { fromMinorUnits, roundHalfUp, toMinorUnits } from "@baccarat/contracts";
 
+export const MINES_RULE_VERSION = 2;
+export const MINES_MAX_MULTIPLIER = 1000;
+
+export function exceedsMinesMultiplierLimit(mineCount: number, safeCount: number) {
+  const ratio = payoutRatio(mineCount, safeCount);
+  return ratio.numerator > BigInt(MINES_MAX_MULTIPLIER) * ratio.denominator;
+}
+
 export function choose(n: number, k: number): bigint {
   if (!Number.isInteger(n) || !Number.isInteger(k) || k < 0 || k > n)
     throw new RangeError("Invalid combination");

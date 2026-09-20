@@ -1,4 +1,5 @@
 import { hiloMigration } from "./012-hilo.js";
+import { minesMultiplierLimitMigration } from "./013-mines-multiplier-limit.js";
 import { initialTablesMigration } from "./001-initial-tables.js";
 import { roundPhaseOffsetMigration } from "./002-round-phase-offset.js";
 import { roundScheduleVersionMigration } from "./003-round-schedule-version.js";
@@ -26,6 +27,7 @@ export const migrationDefinitions = [
   minesAndDecimalMoneyMigration,
   plinkoMigration,
   hiloMigration,
+  minesMultiplierLimitMigration,
 ] as const;
 
 export type { MigrationDefinition } from "./types.js";

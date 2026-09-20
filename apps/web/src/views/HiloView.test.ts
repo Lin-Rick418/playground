@@ -220,7 +220,7 @@ describe("Hi-Lo win celebration", () => {
     await flushPromises();
     expect(view.find(".hilo-win").exists()).toBe(false);
     expect(view.get(".card-flipper").classes()).toContain("is-revealing");
-    await vi.advanceTimersByTimeAsync(999);
+    await vi.advanceTimersByTimeAsync(419);
     expect(view.find(".hilo-win").exists()).toBe(false);
     expect(view.get(".card-flipper").classes()).toContain("is-revealing");
     expect(view.get(".next-round").attributes("disabled")).toBeDefined();

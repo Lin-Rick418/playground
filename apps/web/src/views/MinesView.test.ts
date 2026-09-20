@@ -50,7 +50,7 @@ describe("MinesView", () => {
     sessionStorage.clear();
     mock = new MockAdapter(api);
     vi.mocked(useLiveChannel).mockReturnValue({
-    requestHilo: vi.fn(),
+      requestHilo: vi.fn(),
       requestPlinko: vi.fn(),
       connected: ref(true),
       reconnect: vi.fn(),
@@ -165,6 +165,73 @@ describe("MinesView", () => {
     expect(wrapper.get('[aria-label="地雷"]').classes()).toContain("mine");
     expect(wrapper.text()).toContain("本局派彩");
     expect(wrapper.findAll(".game-summary strong").at(-1)?.text()).toBe("0");
+  });
+
+  it("uses a plain Mines heading and renders a server-forced mine as a normal loss", async () => {
+    mock
+      .onGet("/mines/config")
+      .reply(200, { ...config, rtp: null, ruleVersion: 2, maxMultiplier: 1000 });
+    mock.onGet("/mines/active").reply(200, {
+      round: {
+        ...activeRound,
+        ruleVersion: 2,
+        revealedCells: [0],
+        multiplier: 900,
+        cashoutAmount: 90000,
+        nextMultiplier: 1100,
+      },
+    });
+    mock.onPost(`/mines/rounds/${activeRound.id}/reveal`).reply(200, {
+      round: {
+        ...activeRound,
+        ruleVersion: 2,
+        version: 2,
+        revealedCells: [0, 1],
+        multiplier: 900,
+        status: "LOST",
+        payout: 0,
+        nextMultiplier: null,
+        settledAt: now,
+        mineCells: [1, 2, 3],
+        settlementReason: "MULTIPLIER_LIMIT",
+      },
+      balance: 900,
+    });
+    const wrapper = mount(MinesView, { global: { plugins: [pinia] } });
+    await flushPromises();
+    expect(wrapper.get("h1").text()).toBe("Mines");
+    expect(wrapper.find(".brand-spark").exists()).toBe(false);
+    expect(wrapper.text()).not.toContain("倍率上限");
+    await wrapper.get('[aria-label="翻開第 2 格"]').trigger("click");
+    await flushPromises();
+    expect(wrapper.findAll(".mine-cell")[1]!.classes()).toContain("mine");
+    expect(wrapper.get(".mines-board").attributes("aria-label")).toBe("Mines 棋盤，踩到地雷");
+    expect(wrapper.text()).not.toContain("必定踩雷");
+    expect(wrapper.findAll(".game-summary strong").at(-1)?.text()).toBe("0");
+    expect(wrapper.findAll(".mine-cell:not([disabled])")).toHaveLength(0);
+  });
+
+  it.each([
+    { revealedCells: [], payout: 100, message: "帳戶額度不足，已退回本金" },
+    { revealedCells: [0], payout: 107.95, message: "已達帳戶額度限制，已按目前倍率收款" },
+  ])("explains account-limit settlement: $message", async ({ revealedCells, payout, message }) => {
+    mock.onGet("/mines/active").reply(200, {
+      round: {
+        ...activeRound,
+        ruleVersion: 2,
+        revealedCells,
+        payout,
+        status: "CASHED_OUT",
+        nextMultiplier: null,
+        settledAt: now,
+        mineCells: [1, 2, 3],
+        settlementReason: "ACCOUNT_LIMIT",
+      },
+    });
+    const wrapper = mount(MinesView, { global: { plugins: [pinia] } });
+    await flushPromises();
+    expect(wrapper.text()).toContain(message);
+    expect(wrapper.findAll(".mine-cell:not([disabled])")).toHaveLength(0);
   });
   it("offers an explicit original-key retry and blocks other controls after an uncertain start", async () => {
     let accepted = false;

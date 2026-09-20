@@ -51,11 +51,15 @@ const canCashout = computed(
   () => round.value?.status === "ACTIVE" && round.value.revealedCells.length > 0,
 );
 const statusLabel = computed(() =>
-  round.value?.status === "LOST"
-    ? "踩到地雷"
-    : round.value?.status === "CASHED_OUT"
-      ? "已收款"
-      : "進行中",
+  round.value?.settlementReason === "ACCOUNT_LIMIT"
+    ? round.value.revealedCells.length
+      ? "已達帳戶額度限制，已按目前倍率收款"
+      : "帳戶額度不足，已退回本金"
+    : round.value?.status === "LOST"
+      ? "踩到地雷"
+      : round.value?.status === "CASHED_OUT"
+        ? "已收款"
+        : "進行中",
 );
 const isActive = computed(() => round.value?.status === "ACTIVE");
 const selectedAmount = computed({
@@ -216,18 +220,18 @@ onUnmounted(() => {
 <template>
   <main class="player-page mines-page">
     <AppPageHeader class="mines-header" back-label="返回遊戲選擇" @back="router.push('/lobby')"
-      ><span class="brand-spark" aria-hidden="true">✦</span> Mines</AppPageHeader
+      >Mines</AppPageHeader
     >
     <p v-if="loading" class="mines-status" role="status">載入遊戲中…</p>
     <template v-else>
       <section class="game-summary" aria-label="本局倍率與派彩" aria-live="polite">
         <div>
           <span>目前倍率</span
-          ><strong>{{ round ? round.multiplier.toFixed(4) + "×" : "—" }}</strong>
+          ><strong>{{ round ? round.multiplier.toFixed(2) + "×" : "—" }}</strong>
         </div>
         <div class="next-multiplier">
           <span>下一格</span
-          ><strong>{{ nextMultiplier !== null ? nextMultiplier.toFixed(4) + "×" : "—" }}</strong>
+          ><strong>{{ nextMultiplier !== null ? nextMultiplier.toFixed(2) + "×" : "—" }}</strong>
         </div>
         <div>
           <span>{{ round && !isActive ? "本局派彩" : "可收款" }}</span
@@ -236,6 +240,9 @@ onUnmounted(() => {
           }}</strong>
         </div>
       </section>
+      <p v-if="round?.settlementReason === 'ACCOUNT_LIMIT'" class="mines-status" role="status">
+        {{ statusLabel }}
+      </p>
       <section class="board-panel">
         <div
           class="mines-board"
@@ -398,8 +405,9 @@ onUnmounted(() => {
 </template>
 
 <style scoped lang="scss">
+:global(html:has(.mines-page)),
 :global(body:has(.mines-page)) {
-  background: #171b23;
+  background: var(--ui-outer-background, #171b23);
 }
 
 .mines-page {
@@ -424,9 +432,6 @@ onUnmounted(() => {
   min-height: 46px;
 }
 
-.brand-spark {
-  color: #f5ac69;
-}
 .coin-tag {
   margin-left: 4px;
   font-size: 10px;

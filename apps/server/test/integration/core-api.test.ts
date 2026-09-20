@@ -17,7 +17,7 @@ import { plinkoRateLimitKey } from "../../src/modules/plinko/service.js";
 import { migrationDefinitions } from "../../src/migrations/index.js";
 import { type MinesRound, sumMoney } from "@baccarat/contracts";
 import { env } from "../../src/config/env.js";
-import { minesPayout } from "../../src/modules/mines/math.js";
+import { exceedsMinesMultiplierLimit, minesPayout } from "../../src/modules/mines/math.js";
 import { reconcileUserBalance } from "../../src/lib/db.js";
 import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
@@ -869,14 +869,14 @@ test("shared wallet serializes simultaneous baccarat/Mines bets and cashout/reve
   assert.equal((await reconcileUserBalance(rich.id))?.isReconciled, true);
 });
 
-test("cross-game payout exposure rejects before debit and fractions survive baccarat refunds", async () => {
+test("Mines v2 accepts near-limit starts and fractions survive baccarat refunds", async () => {
   const user = await insertUser({ username: `mines_limit_${runId}`, balance: 1999999000.75 });
   const token = await login(user);
-  const fail = await minesPost(token, "/rounds", { amount: 100, mineCount: 12 });
-  assert.equal(fail.status, 400);
+  const started = await minesPost(token, "/rounds", { amount: 100, mineCount: 12 });
+  assert.equal(started.status, 200);
   assert.equal(
     (await request<{ balance: number }>("/auth/me", { token })).body.balance,
-    1999999000.75,
+    1999998900.75,
   );
   const small = await insertUser({ username: `mines_frac_${runId}`, balance: 1000.75 });
   const smallToken = await login(small);
@@ -896,6 +896,120 @@ test("cross-game payout exposure rejects before debit and fractions survive bacc
     1000.75,
   );
   assert.equal((await reconcileUserBalance(small.id))?.isReconciled, true);
+});
+
+test("Mines v2 accepts all 1100 supported stake/mine combinations without theoretical payout rejection", async () => {
+  const user = await insertUser({ username: `mines_all_${runId}`, balance: 10000000 });
+  for (let mineCount = 3; mineCount <= 24; mineCount++) {
+    for (let amount = 100; amount <= 5000; amount += 100) {
+      const result = await mutateMines(user.id, randomUUID(), { kind: "start", amount, mineCount });
+      assert.equal(result.statusCode, 200, `start ${amount}/${mineCount}`);
+      const round = (result.body as unknown as MinesMutation).round;
+      assert.equal(round.ruleVersion, 2);
+      assert.equal(await getUserUnsettledMaximumPayout(user.id), amount);
+      const board = await minesBoard(round.id);
+      const lost = await mutateMines(user.id, randomUUID(), { kind: "reveal", roundId: round.id, cellIndex: board[0]! });
+      assert.equal(lost.statusCode, 200);
+      assert.equal((lost.body as unknown as MinesMutation).round.status, "LOST");
+    }
+  }
+  assert.equal(await getUserUnsettledMaximumPayout(user.id), 0);
+  assert.equal((await reconcileUserBalance(user.id))?.isReconciled, true);
+});
+
+test("Mines v2 forces the chosen safe cell to a mine before a >1000x win and replays the same loss", async () => {
+  for (const mineCount of [3, 10, 12, 15, 22]) {
+    const user = await insertUser({ username: `mines_cap_${mineCount}_${runId}`, balance: 10000 });
+    const start = await mutateMines(user.id, randomUUID(), { kind: "start", amount: 2000, mineCount });
+    assert.equal(start.statusCode, 200);
+    let round = (start.body as unknown as MinesMutation).round;
+    const originalBoard = await minesBoard(round.id);
+    const safeCells = Array.from({ length: 25 }, (_, i) => i).filter((i) => !originalBoard.includes(i));
+    let wasForced = false;
+    for (const cellIndex of safeCells) {
+      const forced = exceedsMinesMultiplierLimit(mineCount, round.revealedCells.length + 1);
+      const previous = round;
+      const action = { kind: "reveal" as const, roundId: round.id, cellIndex };
+      const key = randomUUID();
+      const result = await mutateMines(user.id, key, action);
+      assert.equal(result.statusCode, 200);
+      round = (result.body as unknown as MinesMutation).round;
+      assert.ok(round.multiplier <= 1000);
+      if (forced) {
+        wasForced = true;
+        assert.equal(round.status, "LOST");
+        assert.equal(round.settlementReason, "MULTIPLIER_LIMIT");
+        assert.equal(round.payout, 0);
+        assert.equal(round.cashoutAmount, 0);
+        assert.equal(round.multiplier, previous.multiplier);
+        assert.equal(round.mineCells!.length, mineCount);
+        assert.equal(new Set(round.mineCells!).size, mineCount);
+        assert.ok(round.mineCells!.includes(cellIndex));
+        assert.ok(previous.revealedCells.every((cell) => !round.mineCells!.includes(cell)));
+        assert.equal(await getUserUnsettledMaximumPayout(user.id), 0);
+        assert.deepEqual(await mutateMines(user.id, key, action), result);
+        assert.equal((await mutateMines(user.id, randomUUID(), { kind: "cashout", roundId: round.id })).statusCode, 409);
+        assert.equal((result.body as unknown as MinesMutation).balance, 8000);
+        break;
+      }
+      assert.equal(round.status, "ACTIVE");
+      assert.equal(round.cashoutAmount, minesPayout(2000, mineCount, round.revealedCells.length));
+      assert.equal(await getUserUnsettledMaximumPayout(user.id), round.cashoutAmount);
+    }
+    assert.equal(wasForced, true);
+    assert.equal((await reconcileUserBalance(user.id))?.isReconciled, true);
+  }
+});
+
+test("legacy Mines rounds keep the fixed board and can settle above 1000x", async () => {
+  const user = await insertUser({ username: `mines_v1_${runId}`, balance: 1000 });
+  const start = await mutateMines(user.id, randomUUID(), { kind: "start", amount: 100, mineCount: 3 });
+  let round = (start.body as unknown as MinesMutation).round;
+  await pool.query("UPDATE mines_rounds SET rule_version=1,maximum_payout=$2 WHERE id=$1", [round.id, minesPayout(100, 3, 22)]);
+  const board = await minesBoard(round.id);
+  for (const cellIndex of Array.from({ length: 25 }, (_, i) => i).filter((i) => !board.includes(i))) {
+    const result = await mutateMines(user.id, randomUUID(), { kind: "reveal", roundId: round.id, cellIndex });
+    assert.equal(result.statusCode, 200);
+    round = (result.body as unknown as MinesMutation).round;
+  }
+  assert.equal(round.ruleVersion, 1);
+  assert.equal(round.status, "CASHED_OUT");
+  assert.equal(round.multiplier, 2185);
+  assert.equal(round.payout, 218500);
+  assert.equal(round.settlementReason, null);
+  assert.deepEqual(round.mineCells, board);
+  assert.equal((await reconcileUserBalance(user.id))?.isReconciled, true);
+});
+
+test("Mines v2 protects earned payouts and refunds an unrevealed round at the account limit", async () => {
+  for (const initialBalance of [2000000000, 1999999000.75]) {
+    const user = await insertUser({ username: `mh_${initialBalance === 2000000000 ? "full" : "near"}_${runId}`, balance: initialBalance });
+    const start = await mutateMines(user.id, randomUUID(), { kind: "start", amount: 100, mineCount: 12 });
+    assert.equal(start.statusCode, 200);
+    let round = (start.body as unknown as MinesMutation).round;
+    const board = await minesBoard(round.id);
+    for (const cellIndex of Array.from({ length: 25 }, (_, i) => i).filter((i) => !board.includes(i))) {
+      const previous = round;
+      const action = { kind: "reveal" as const, roundId: round.id, cellIndex };
+      const key = randomUUID();
+      const result = await mutateMines(user.id, key, action);
+      assert.equal(result.statusCode, 200);
+      round = (result.body as unknown as MinesMutation).round;
+      if (round.status === "CASHED_OUT") {
+        assert.equal(round.settlementReason, "ACCOUNT_LIMIT");
+        assert.deepEqual(round.revealedCells, previous.revealedCells);
+        assert.deepEqual(round.mineCells, board);
+        assert.equal(round.payout, previous.revealedCells.length ? previous.cashoutAmount : 100);
+        assert.ok((result.body as unknown as MinesMutation).balance <= 2000000000);
+        assert.deepEqual(await mutateMines(user.id, key, action), result);
+        break;
+      }
+      assert.equal(round.status, "ACTIVE");
+    }
+    assert.equal(round.settlementReason, "ACCOUNT_LIMIT");
+    assert.equal(await getUserUnsettledMaximumPayout(user.id), 0);
+    assert.equal((await reconcileUserBalance(user.id))?.isReconciled, true);
+  }
 });
 
 test("Mines transaction rolls back ledger, wallet, round and key when persistence fails", async () => {
@@ -962,7 +1076,7 @@ test("decimal migration preserves old balances, ledger history and guarded cent 
   assert.equal(decimals.rows[0]?.numeric_scale, 2);
 });
 
-test("both games reserve the other's maximum payout before accepting a bet", async () => {
+test("Mines accepts a start beside baccarat but reserves each safe step against other bets", async () => {
   const tableId = await insertTable();
   await insertRound({ tableId, status: "OPEN" });
   for (const first of ["mines", "baccarat"]) {
@@ -976,8 +1090,16 @@ test("both games reserve the other's maximum payout before accepting a bet", asy
         headers: { "idempotency-key": randomUUID() },
       });
     const mines = () => minesPost(token, "/rounds", { amount: 100, mineCount: 24 });
-    assert.equal((await (first === "mines" ? mines() : baccarat())).status, 200);
-    assert.equal((await (first === "mines" ? baccarat() : mines())).status, 400);
+    const started = first === "mines" ? await mines() : (await baccarat(), await mines());
+    assert.equal(started.status, 200);
+    if (first === "mines") assert.equal((await baccarat()).status, 200);
+    const board = await minesBoard(started.body.round.id);
+    const safe = Array.from({ length: 25 }, (_, i) => i).find((i) => !board.includes(i))!;
+    const settled = await minesPost(token, `/rounds/${started.body.round.id}/reveal`, { cellIndex: safe });
+    assert.equal(settled.status, 200);
+    assert.equal(settled.body.round.settlementReason, "ACCOUNT_LIMIT");
+    assert.equal(settled.body.round.payout, 100);
+    assert.deepEqual(settled.body.round.revealedCells, []);
     assert.equal(
       (await request<{ balance: number }>("/auth/me", { token })).body.balance,
       1999997400.75,
@@ -1511,7 +1633,11 @@ test("Hi-Lo reserves exposure across games and stops only new rounds when disabl
   const round = (await hiloStart(user.id, preview)).data.round!;
   assert.equal(await getUserUnsettledMaximumPayout(user.id), 1000000);
   const mines = await mutateMines(user.id, randomUUID(), { kind: "start", amount: 100, mineCount: 24 });
-  assert.equal(mines.statusCode, 400);
+  assert.equal(mines.statusCode, 200);
+  const minesRound = (mines.body as unknown as MinesMutation).round;
+  const mineResult = await mutateMines(user.id, randomUUID(), { kind: "reveal", roundId: minesRound.id, cellIndex: 0 });
+  assert.equal(mineResult.statusCode, 200);
+  assert.equal((mineResult.body as unknown as MinesMutation).round.settlementReason, "ACCOUNT_LIMIT");
   const plinko = await placePlinkoBet(user.id, randomUUID(), { amount: 100, rows: 16, risk: "high", ruleVersion: PLINKO_RULE_VERSION });
   assert.equal(plinko.statusCode, 400);
   env.hiloEnabled = false;

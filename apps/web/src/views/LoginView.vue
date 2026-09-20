@@ -2,12 +2,15 @@
 import AppInput from "../components/ui/AppInput.vue";
 import AppButton from "../components/ui/AppButton.vue";
 import PwaInstall from "../components/PwaInstall.vue";
-import { reactive } from "vue";
+import { reactive, ref } from "vue";
 import { useRouter } from "vue-router";
 import { useAuthStore } from "../stores/auth";
+import { useLoginViewport } from "../composables/useLoginViewport";
 
 const router = useRouter();
 const authStore = useAuthStore();
+const loginLayout = ref<HTMLElement | null>(null);
+useLoginViewport(loginLayout);
 
 const form = reactive({
   username: "",
@@ -21,7 +24,7 @@ async function onSubmit() {
 </script>
 
 <template>
-  <main class="page-shell login-layout">
+  <main ref="loginLayout" class="page-shell login-layout">
     <section class="login-stage">
       <div class="login-copy">
         <p class="eyebrow">Live Table</p>
@@ -83,7 +86,10 @@ async function onSubmit() {
 
 <style scoped lang="scss">
 .login-layout {
-  position: relative;
+  position: fixed;
+  top: 0;
+  inset-inline: 0;
+  margin-inline: auto;
   display: flex;
   flex-direction: column;
   align-items: center;
@@ -93,10 +99,11 @@ async function onSubmit() {
   height: 100vh;
   height: 100dvh;
   min-height: 0;
-  max-width: 100vw;
+  // Inherit #app's unscaled desktop width cap from mobile-forever.
+  max-width: inherit;
   overflow-y: auto;
   overflow-x: hidden;
-  overscroll-behavior-x: none;
+  overscroll-behavior: none;
   padding-top: max(16px, env(safe-area-inset-top));
   padding-bottom: max(16px, env(safe-area-inset-bottom));
   background: $gradient-felt;

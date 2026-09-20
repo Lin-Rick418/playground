@@ -50,7 +50,9 @@ test.beforeEach(async ({ page }) => {
           minBet: 100,
           maxBet: 5000,
           betStep: 100,
-          rtp: 0.95,
+          rtp: null,
+          ruleVersion: 2,
+          maxMultiplier: 1000,
           enabled: true,
         },
       });
@@ -108,6 +110,7 @@ test.beforeEach(async ({ page }) => {
 });
 
 for (const [path, heading, controls] of [
+  ["/lobby", "遊戲大廳", ".game-poster.active, .carousel-controls"],
   ["/game/table-1", "極速廳 A01", ".bet-zone, .chip-rack, .wallet-bar"],
   ["/mines", "Mines", ".mines-controls, .mines-wallet"],
   ["/plinko", "PLINKO", ".plinko-play, .plinko-wallet"],
@@ -122,6 +125,7 @@ for (const [path, heading, controls] of [
     for (const viewport of [
       { width: 320, height: 568 },
       { width: 375, height: 667 },
+      { width: 390, height: 844 },
       { width: 393, height: 600 },
       { width: 393, height: 780 },
       { width: 483, height: 771 },
@@ -136,6 +140,13 @@ for (const [path, heading, controls] of [
         const box = await control.boundingBox();
         expect(box!.y).toBeGreaterThanOrEqual(0);
         expect(box!.y + box!.height).toBeLessThanOrEqual(viewport.height + 1);
+      }
+      if (path === "/lobby") {
+        const poster = await page.locator(".game-poster.active").boundingBox();
+        expect(Math.abs(poster!.height - poster!.width * 1.5)).toBeLessThan(1);
+        await page.screenshot({
+          path: test.info().outputPath(`lobby-${viewport.width}x${viewport.height}.png`),
+        });
       }
       // Playwright's mobile WebKit has no mouse-wheel input support.
       if (browserName !== "webkit" || !isMobile) {
@@ -158,6 +169,38 @@ for (const [path, heading, controls] of [
     ).not.toBe("hidden");
   });
 }
+
+test("game backgrounds match on mobile and outer gutters stay translucent gray on wide screens", async ({
+  page,
+}) => {
+  const pages = [
+    ["/lobby", "rgb(9, 22, 18)"],
+    ["/hilo", "rgb(9, 22, 18)"],
+    ["/baccarat", "rgb(55, 153, 106)"],
+    ["/game/table-1", "rgb(55, 153, 106)"],
+    ["/mines", "rgb(23, 27, 35)"],
+    ["/plinko", "rgb(27, 40, 61)"],
+  ];
+  await page.goto("/lobby");
+  for (const width of [390, 430, 483, 1360, 390]) {
+    await page.setViewportSize({ width, height: 844 });
+    for (const [path, background] of pages) {
+      // Follow SPA navigation so stale colors from the previous game are also detected.
+      await page.evaluate((nextPath) => {
+        history.pushState({}, "", nextPath);
+        dispatchEvent(new PopStateEvent("popstate"));
+      }, path!);
+      await expect(page.locator(".ui-page-header")).toBeVisible();
+      for (const selector of ["html", "body"]) {
+        await expect(page.locator(selector)).toHaveCSS(
+          "background-color",
+          width > 430 ? "rgba(128, 128, 128, 0.35)" : background!,
+        );
+        await expect(page.locator(selector)).toHaveCSS("background-image", "none");
+      }
+    }
+  }
+});
 
 test("zoom is locked globally while normal keyboard and scrolling events remain available", async ({
   page,
@@ -191,6 +234,111 @@ test("zoom is locked globally while normal keyboard and scrolling events remain 
     "content",
     /user-scalable=no/,
   );
+});
+
+test("login stays inside the visual viewport through keyboard resize, pan and dismissal", async ({
+  page,
+}) => {
+  await page.route("**/api/auth/refresh", (route) => route.fulfill({ status: 401, json: {} }));
+  await page.route("**/api/auth/login", (route) =>
+    route.fulfill({ json: { token: "token", accessTokenExpiresAt: expiresAt, user } }),
+  );
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.goto("/login");
+  const login = page.locator(".login-layout");
+  const username = page.getByRole("textbox", { name: "帳號", exact: true });
+  const password = page.getByLabel("密碼", { exact: true });
+  await expect(login).toHaveCSS("height", "844px");
+  for (const viewport of [
+    { width: 320, height: 568 },
+    { width: 483, height: 771 },
+    { width: 844, height: 390 },
+    { width: 1466, height: 736 },
+    { width: 390, height: 844 },
+  ]) {
+    await page.setViewportSize(viewport);
+    await expect(login).toHaveCSS("height", `${viewport.height}px`);
+    const bounds = await login.boundingBox();
+    expect(bounds!.width).toBeLessThanOrEqual(Math.min(430, viewport.width));
+    const bodyBounds = await page.locator("body").boundingBox();
+    const appBounds = await page.locator("#app").boundingBox();
+    expect(Math.abs(bodyBounds!.width - viewport.width)).toBeLessThan(1);
+    expect(Math.abs(bodyBounds!.x)).toBeLessThan(1);
+    expect(Math.abs(appBounds!.x - (viewport.width - appBounds!.width) / 2)).toBeLessThan(1);
+    expect(Math.abs(bounds!.x - appBounds!.x)).toBeLessThan(1);
+    if (viewport.width > 430) {
+      const outsideApp = await page.evaluate(() => {
+        const app = document.querySelector("#app")!.getBoundingClientRect();
+        return [app.left / 2, (app.right + innerWidth) / 2].map(
+          (x) => document.elementFromPoint(x, innerHeight / 2)?.closest("#app") === null,
+        );
+      });
+      expect(outsideApp).toEqual([true, true]);
+    }
+    for (const selector of ["html", "body"]) {
+      await expect(page.locator(selector)).toHaveCSS(
+        "background-color",
+        viewport.width > 430 ? "rgba(128, 128, 128, 0.35)" : "rgb(55, 153, 106)",
+      );
+    }
+    await expect(login).not.toHaveCSS("background-image", "none");
+    await page.getByRole("button", { name: "登入", exact: true }).scrollIntoViewIfNeeded();
+    await expect(page.getByRole("button", { name: "登入", exact: true })).toBeInViewport();
+    if (viewport.width === 1466) {
+      await page.screenshot({ path: test.info().outputPath("login-wide-background.png") });
+    }
+  }
+  await username.fill("player");
+
+  // Desktop WebKit has no OS keyboard. Keep layout viewport at 844px while
+  // simulating the visual viewport changes reported by iOS keyboard/panning.
+  for (const [height, offsetTop] of [
+    [360, 0],
+    [300, 90],
+    [280, 50],
+    [844, 0],
+  ]) {
+    await page.evaluate(
+      ({ height, offsetTop }) => {
+        const viewport = window.visualViewport!;
+        Object.defineProperties(viewport, {
+          height: { configurable: true, value: height },
+          offsetTop: { configurable: true, value: offsetTop },
+        });
+        viewport.dispatchEvent(new Event("resize"));
+        viewport.dispatchEvent(new Event("scroll"));
+      },
+      { height: height!, offsetTop: offsetTop! },
+    );
+    await expect(login).toHaveCSS("height", `${height}px`);
+    await expect(login).toHaveCSS("top", `${offsetTop}px`);
+    for (const input of [password, username]) {
+      await input.focus();
+      await expect
+        .poll(async () => {
+          const field = await input.boundingBox();
+          const bounds = await login.boundingBox();
+          return field!.y >= bounds!.y && field!.y + field!.height <= bounds!.y + bounds!.height;
+        })
+        .toBe(true);
+    }
+    await page.evaluate(() => window.scrollTo(0, 500));
+    expect(await page.evaluate(() => scrollY)).toBe(0);
+    await expect(page.locator("body")).toHaveCSS("background-color", "rgb(55, 153, 106)");
+    if (height === 360) {
+      await login.screenshot({ path: test.info().outputPath("login-keyboard-open.png") });
+    }
+  }
+  await password.fill("test-password");
+  const submit = page.getByRole("button", { name: "登入", exact: true });
+  await submit.scrollIntoViewIfNeeded();
+  await expect(submit).toBeInViewport();
+  await page.unroute("**/api/auth/refresh");
+  await submit.click();
+  await expect(page).toHaveURL(/\/lobby$/);
+  await expect(page.locator("body")).toHaveCSS("position", "static");
+  const lobby = await page.locator("main").boundingBox();
+  expect(Math.abs(lobby!.height - 844)).toBeLessThan(1);
 });
 
 test("lobby to Plinko keeps the back button stationary during loading and after navigation", async ({

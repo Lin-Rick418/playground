@@ -82,7 +82,7 @@ function revealNextCard() {
   outgoingCard.value = null;
   cardMotion.value = "revealing";
   // Also release the controls if the browser cancels the animation without an end event.
-  revealTimer = setTimeout(finishReveal, 1080);
+  revealTimer = setTimeout(finishReveal, 500);
 }
 function finishCardExit() {
   if (cardMotion.value === "leaving") revealNextCard();
@@ -618,7 +618,7 @@ onUnmounted(() => {
   transform-style: preserve-3d;
 }
 .card-flipper.is-revealing {
-  animation: hilo-reveal 1000ms cubic-bezier(0.22, 0.61, 0.36, 1) both;
+  animation: hilo-reveal 420ms cubic-bezier(0.22, 0.61, 0.36, 1) both;
 }
 .hilo-card.back .card-flipper {
   transform: rotateY(180deg);

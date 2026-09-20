@@ -17,6 +17,7 @@ import { sendApiError } from "../../lib/api-errors.js";
 import { parseIdempotencyKey } from "../../lib/idempotency.js";
 import { parseHistoryPageQuery } from "../../lib/history-pagination.js";
 import { findMinesRound, minesHistory, mutateMines } from "./service.js";
+import { MINES_MAX_MULTIPLIER, MINES_RULE_VERSION } from "./math.js";
 
 export const minesRouter = Router();
 minesRouter.use((_req, res, next) => {
@@ -32,7 +33,9 @@ minesRouter.get("/config", (_req, res) =>
     minBet: 100,
     maxBet: 5000,
     betStep: 100,
-    rtp: 0.95,
+    rtp: null,
+    ruleVersion: MINES_RULE_VERSION,
+    maxMultiplier: MINES_MAX_MULTIPLIER,
     enabled: env.minesEnabled,
   }),
 );

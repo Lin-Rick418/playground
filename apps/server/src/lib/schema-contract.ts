@@ -28,7 +28,7 @@ const columns = {
     id: ["text", "NO"], user_id: ["text", "NO"], amount: ["numeric", "NO"],
     mine_count: ["integer", "NO"], mine_cells: ["ARRAY", "NO"], revealed_cells: ["ARRAY", "NO"],
     status: ["text", "NO"], payout: ["numeric", "NO"], maximum_payout: ["numeric", "NO"],
-    rule_version: ["integer", "NO"], version: ["integer", "NO"],
+    rule_version: ["integer", "NO"], version: ["integer", "NO"], settlement_reason: ["text", "YES"],
     created_at: ["timestamp with time zone", "NO"], settled_at: ["timestamp with time zone", "YES"],
   },
   game_tables: {
@@ -104,6 +104,7 @@ const requiredConstraints = [
   "hilo_rounds_ratio", "hilo_rounds_lifecycle", "hilo_steps_action",
   "plinko_rounds_path", "plinko_rounds_payout", "plinko_rounds_settled",
   "mines_rounds_lifecycle", "mines_rounds_board",
+  "mines_rounds_rule_version_check", "mines_rounds_settlement_reason", "mines_rounds_v2_payout_limit",
   ...coreIntegrityConstraints.map(({ name }) => name),
   "users_balance_policy", "game_tables_bet_policy", "bets_amount_policy", "balance_adjustments_amount_policy",
   "game_rounds_cancellation_reason_ck", "financial_ledger_user_fk", "financial_ledger_balance_transition",

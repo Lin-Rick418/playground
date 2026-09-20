@@ -32,7 +32,11 @@ describe("versioned PostgreSQL migrations", { skip: !shouldRun }, () => {
        WHERE relnamespace = (SELECT oid FROM pg_namespace WHERE nspname = current_schema())
          AND relkind = 'r'`,
     );
-    assert.equal(existingTables.rows[0]?.count, "0", "Migration integration database must start empty");
+    assert.equal(
+      existingTables.rows[0]?.count,
+      "0",
+      "Migration integration database must start empty",
+    );
   });
 
   after(async () => {
@@ -50,16 +54,50 @@ describe("versioned PostgreSQL migrations", { skip: !shouldRun }, () => {
     await pool.query("CREATE TABLE users (id TEXT PRIMARY KEY)");
     await assert.rejects(runMigrations(pool), /Refusing to adopt unmanaged database schema/);
     assert.equal(
-      (await pool.query<{ migration_table: string | null }>(
-        "SELECT to_regclass('schema_migrations')::text AS migration_table",
-      )).rows[0]?.migration_table,
+      (
+        await pool.query<{ migration_table: string | null }>(
+          "SELECT to_regclass('schema_migrations')::text AS migration_table",
+        )
+      ).rows[0]?.migration_table,
       null,
     );
     await pool.query("DROP TABLE users");
   });
 
   it("upgrades an empty database in order and is idempotent on rerun", async () => {
-    const firstRun = await runMigrations(pool);
+    const beforeMinesV2 = await runMigrations(
+      pool,
+      migrationCatalog.filter(({ version }) => version < 13),
+    );
+    await pool.query(`
+      INSERT INTO users(id,username,password_hash,role,is_active,balance,created_at,updated_at)
+        VALUES ('migration-mines','migration_mines','unused','PLAYER',true,0,NOW(),NOW());
+      INSERT INTO mines_rounds(id,user_id,amount,mine_count,mine_cells,maximum_payout)
+        VALUES ('migration-mines-round','migration-mines',100,3,ARRAY[22,23,24],218500);
+    `);
+    const afterMinesV2 = await runMigrations(pool);
+    const firstRun = { applied: [...beforeMinesV2.applied, ...afterMinesV2.applied] };
+    const legacyRound = (
+      await pool.query(
+        "SELECT rule_version,maximum_payout,mine_cells,settlement_reason FROM mines_rounds WHERE id='migration-mines-round'",
+      )
+    ).rows[0];
+    assert.equal(legacyRound.rule_version, 1);
+    assert.equal(legacyRound.maximum_payout, "218500.00");
+    assert.deepEqual(legacyRound.mine_cells, [22, 23, 24]);
+    assert.equal(legacyRound.settlement_reason, null);
+    await assert.rejects(
+      pool.query(
+        "UPDATE mines_rounds SET rule_version=2,maximum_payout=100001 WHERE id='migration-mines-round'",
+      ),
+      /mines_rounds_v2_payout_limit/,
+    );
+    await assert.rejects(
+      pool.query(
+        "UPDATE mines_rounds SET settlement_reason='MULTIPLIER_LIMIT' WHERE id='migration-mines-round'",
+      ),
+      /mines_rounds_settlement_reason/,
+    );
     assert.deepEqual(
       firstRun.applied.map(({ version }) => version),
       migrationCatalog.map(({ version }) => version),

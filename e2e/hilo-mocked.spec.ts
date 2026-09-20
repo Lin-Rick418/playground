@@ -606,7 +606,7 @@ test("Hi-Lo guesses reveal the Baccarat card back in place, including a lost gue
       ),
     ).toEqual(["rotateY(180deg)", "rotateY(0deg)"]);
     expect(await animation.evaluate((animation) => animation.effect!.getTiming().duration)).toBe(
-      1000,
+      420,
     );
     const backBox = await card.boundingBox();
     await expect(page.locator(".hilo-controls button:enabled")).toHaveCount(0);
@@ -669,7 +669,7 @@ for (const kind of ["skip", "refresh_preview"] as const) {
         return animation;
       });
       expect(await reveal.evaluate((animation) => animation.effect!.getTiming().duration)).toBe(
-        1000,
+        420,
       );
       await expect(card).not.toHaveClass(/is-leaving/);
       await expect(card).toHaveAttribute("aria-label", "黑桃 7");

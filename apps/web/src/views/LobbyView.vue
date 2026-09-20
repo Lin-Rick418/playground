@@ -171,7 +171,7 @@ function syncSlide() {
 
 <style scoped lang="scss">
 .game-picker {
-  padding: 0 0 20px;
+  padding: env(safe-area-inset-top, 0px) 0 max(20px, env(safe-area-inset-bottom, 0px));
   gap: 0;
   background: radial-gradient(ellipse at 50% 38%, #204137, #10221e 55%, #091612);
 }
@@ -182,18 +182,20 @@ function syncSlide() {
   margin: 0 var(--ui-page-gutter);
 }
 .game-gallery {
-  display: flex;
+  display: grid;
   flex: 1;
-  flex-direction: column;
-  justify-content: center;
+  grid-template-rows: minmax(0, 1fr) auto;
   min-height: 0;
   padding: 16px 0 24px;
   gap: 20px;
 }
 .game-carousel {
+  container-type: size;
   display: flex;
   align-items: center;
   width: 100%;
+  height: 100%;
+  min-height: 0;
   gap: 16px;
   padding: 12px 9% 18px;
   overflow-x: auto;
@@ -205,6 +207,8 @@ function syncSlide() {
   display: none;
 }
 .game-slide {
+  display: flex;
+  justify-content: center;
   flex: 0 0 100%;
   min-width: 0;
   scroll-snap-align: center;
@@ -213,7 +217,7 @@ function syncSlide() {
 .game-poster {
   position: relative;
   display: block;
-  width: 100%;
+  width: min(100%, calc(100cqh * 2 / 3));
   padding: 0;
   overflow: hidden;
   aspect-ratio: 2 / 3;
