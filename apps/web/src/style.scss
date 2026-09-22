@@ -83,10 +83,10 @@ body:has(.login-layout) {
 }
 
 // Lock the game picker and playable screens; local carousels, dialogs and lists can scroll.
-html:has(.game-picker, .game-page, .mines-page, .plinko-page, .hilo-page),
-body:has(.game-picker, .game-page, .mines-page, .plinko-page, .hilo-page),
-#app:has(.game-picker, .game-page, .mines-page, .plinko-page, .hilo-page),
-.player-page:is(.game-picker, .game-page, .mines-page, .plinko-page, .hilo-page) {
+html:has(.game-picker, .game-page, .mines-page, .plinko-page, .hilo-page, .blackjack-page),
+body:has(.game-picker, .game-page, .mines-page, .plinko-page, .hilo-page, .blackjack-page),
+#app:has(.game-picker, .game-page, .mines-page, .plinko-page, .hilo-page, .blackjack-page),
+.player-page:is(.game-picker, .game-page, .mines-page, .plinko-page, .hilo-page, .blackjack-page) {
   height: 100vh;
   height: 100dvh;
   min-height: 0;
@@ -98,6 +98,11 @@ body:has(.game-picker, .game-page, .mines-page, .plinko-page, .hilo-page),
 html:has(.game-picker, .hilo-page),
 body:has(.game-picker, .hilo-page) {
   background: var(--ui-outer-background, #091612);
+}
+
+html:has(.blackjack-page),
+body:has(.blackjack-page) {
+  background: var(--ui-outer-background, #091b15);
 }
 
 html:has(.baccarat-lobby, .game-page),

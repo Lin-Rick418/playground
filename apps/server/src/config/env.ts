@@ -20,21 +20,38 @@ assertValidTimeZone(businessTimeZone);
 
 const jwtSecret = isProduction
   ? requireStrongJwtSecret(process.env.JWT_SECRET)
-  : process.env.JWT_SECRET ?? "change-me";
+  : (process.env.JWT_SECRET ?? "change-me");
 
-if (process.env.MINES_ENABLED !== undefined && !["true", "false"].includes(process.env.MINES_ENABLED)) {
+if (
+  process.env.MINES_ENABLED !== undefined &&
+  !["true", "false"].includes(process.env.MINES_ENABLED)
+) {
   throw new Error("MINES_ENABLED must be true or false");
 }
 
-if (process.env.PLINKO_ENABLED !== undefined && !["true", "false"].includes(process.env.PLINKO_ENABLED)) {
+if (
+  process.env.PLINKO_ENABLED !== undefined &&
+  !["true", "false"].includes(process.env.PLINKO_ENABLED)
+) {
   throw new Error("PLINKO_ENABLED must be true or false");
 }
 
-if (process.env.HILO_ENABLED !== undefined && !["true", "false"].includes(process.env.HILO_ENABLED)) {
+if (
+  process.env.HILO_ENABLED !== undefined &&
+  !["true", "false"].includes(process.env.HILO_ENABLED)
+) {
   throw new Error("HILO_ENABLED must be true or false");
 }
 
+if (
+  process.env.BLACKJACK_ENABLED !== undefined &&
+  !["true", "false"].includes(process.env.BLACKJACK_ENABLED)
+) {
+  throw new Error("BLACKJACK_ENABLED must be true or false");
+}
+
 export const env = {
+  blackjackEnabled: process.env.BLACKJACK_ENABLED === "true",
   plinkoEnabled: process.env.PLINKO_ENABLED !== "false",
   hiloEnabled: process.env.HILO_ENABLED === "true",
   minesEnabled: process.env.MINES_ENABLED !== "false",
@@ -48,7 +65,10 @@ export const env = {
   databaseUrl: process.env.DATABASE_URL ?? "postgres://postgres:postgres@127.0.0.1:5432/baccarat",
   databaseSsl: parseDatabaseSsl(process.env.DATABASE_SSL),
   businessTimeZone,
-  databasePoolMax: parseBoundedInteger("DATABASE_POOL_MAX", process.env.DATABASE_POOL_MAX, 20, { min: 1, max: 100 }),
+  databasePoolMax: parseBoundedInteger("DATABASE_POOL_MAX", process.env.DATABASE_POOL_MAX, 20, {
+    min: 1,
+    max: 100,
+  }),
   databaseConnectionTimeoutMs: parseBoundedInteger(
     "DATABASE_CONNECTION_TIMEOUT_MS",
     process.env.DATABASE_CONNECTION_TIMEOUT_MS,

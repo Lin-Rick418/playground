@@ -1,3 +1,5 @@
+import { blackjackMutationResponseSchema, blackjackCommandResultSchema, type BlackjackRound, type BlackjackAction, type BlackjackCommandResult } from "@baccarat/contracts";
+import { mutateBlackjack, findBlackjackRound, blackjackHistory } from "../../src/modules/blackjack/service.js";
 import { fingerprintIdempotencyRequest } from "../../src/lib/idempotency.js";
 import { claimIdempotencyKey, completeIdempotencyKey } from "../../src/lib/repositories/idempotency-store.js";
 import { hiloMutationResponseSchema, hiloCommandResultSchema, type HiloPreview, type HiloAction, type HiloRound, type HiloCommandResult } from "@baccarat/contracts";
@@ -1776,4 +1778,378 @@ test("Plinko v2 replays a settled v1 wager without recalculating or crediting it
   assert.equal((await request<{ balance: number }>("/auth/me", { token })).body.balance, saved.balance);
   assert.equal((await reconcileUserBalance(user.id))?.isReconciled, true);
   assert.equal((await plinkoPost(token)).status, 200);
+});
+
+function blackjackShoe(ranks: number[]) {
+  const remaining = Array.from({ length: 312 }, (_, i) => i);
+  return [
+    ...ranks.map(
+      (rank) =>
+        remaining.splice(
+          remaining.findIndex((card) => Math.floor((card % 52) / 4) + 1 === rank),
+          1,
+        )[0],
+    ),
+    ...remaining,
+  ];
+}
+async function blackjackSetup(name: string, balance = 10000) {
+  env.blackjackEnabled = true;
+  return insertUser({ username: `bj_${name}_${runId}`, balance });
+}
+async function blackjackStart(
+  userId: string,
+  ranks = [8, 6, 8, 10, 3, 2, 10, 10, 5],
+  amount = 100,
+) {
+  const result = await mutateBlackjack(userId, randomUUID(), { kind: "start", amount }, () =>
+    blackjackShoe(ranks),
+  );
+  assert.equal(result.statusCode, 200);
+  return blackjackMutationResponseSchema.parse(result.body);
+}
+async function blackjackHandAction(
+  userId: string,
+  round: BlackjackRound,
+  kind: "hit" | "stand" | "double" | "split",
+) {
+  const result = await mutateBlackjack(
+    userId,
+    randomUUID(),
+    { kind, roundId: round.id, expectedVersion: round.version, handId: round.activeHandId! },
+    noDraw,
+  );
+  assert.equal(result.statusCode, 200);
+  return blackjackMutationResponseSchema.parse(result.body);
+}
+test("Blackjack parallel starts, version checks and permanent replay debit exactly once", async () => {
+  const user = await blackjackSetup("retry"),
+    key = randomUUID(),
+    action = { kind: "start" as const, amount: 100 };
+  const results = await Promise.all([
+    mutateBlackjack(user.id, key, action, () => blackjackShoe([8, 6, 8, 10])),
+    mutateBlackjack(user.id, key, action, noDraw),
+  ]);
+  assert.equal(results[0].statusCode, 200);
+  assert.deepEqual(results[0], results[1]);
+  const initial = blackjackMutationResponseSchema.parse(results[0].body);
+  assert.equal(initial.balance, 9900);
+  assert.equal((await mutateBlackjack(user.id, randomUUID(), action, noDraw)).statusCode, 409);
+  assert.equal(
+    (await mutateBlackjack(user.id, key, { kind: "start", amount: 200 }, noDraw)).statusCode,
+    409,
+  );
+  const next = await blackjackHandAction(user.id, initial.round, "stand");
+  assert.equal(
+    (
+      await mutateBlackjack(
+        user.id,
+        randomUUID(),
+        {
+          kind: "hit",
+          roundId: initial.round.id,
+          expectedVersion: 1,
+          handId: initial.round.activeHandId!,
+        },
+        noDraw,
+      )
+    ).statusCode,
+    409,
+  );
+  await runRetentionCleanup({
+    idempotencyRetentionDays: 1,
+    authSessionRetentionDays: 30,
+    now: new Date(Date.now() + 3 * 86400000),
+  });
+  assert.deepEqual(await mutateBlackjack(user.id, key, action, noDraw), results[0]);
+  const entries = (
+    await pool.query(
+      "SELECT source FROM financial_ledger_entries WHERE user_id=$1 AND source LIKE 'BLACKJACK%'",
+      [user.id],
+    )
+  ).rows;
+  assert.equal(entries.filter((x) => x.source === "BLACKJACK_BET_DEBIT").length, 1);
+  assert.equal(entries.filter((x) => x.source === "BLACKJACK_SETTLEMENT_CREDIT").length, 1);
+  assert.equal((await findBlackjackRound(user.id, next.round.id))?.version, next.round.version);
+  assert.equal((await reconcileUserBalance(user.id))?.isReconciled, true);
+});
+test("Blackjack splits, doubles, insurance and daily profit reconcile all actual stakes", async () => {
+  const user = await blackjackSetup("ledger");
+  let data = await blackjackStart(user.id);
+  data = await blackjackHandAction(user.id, data.round, "split");
+  data = await blackjackHandAction(user.id, data.round, "double");
+  data = await blackjackHandAction(user.id, data.round, "double");
+  assert.equal(data.round.totalBet, 400);
+  assert.equal(data.round.status, "SETTLED");
+  assert.equal(data.balance, 10000 - 400 + data.round.payout);
+  const firstPayout = data.round.payout;
+  data = await blackjackStart(user.id, [10, 1, 9, 10]);
+  const insured = await mutateBlackjack(user.id, randomUUID(), {
+    kind: "insurance",
+    roundId: data.round.id,
+    expectedVersion: 1,
+    accept: true,
+  });
+  data = blackjackMutationResponseSchema.parse(insured.body);
+  assert.equal(data.round.totalBet, 150);
+  assert.equal(data.round.payout, 150);
+  const profit = await getUserDailyProfit(user.id, {
+    start: new Date(Date.now() - 60000),
+    end: new Date(Date.now() + 60000),
+  });
+  assert.equal(profit.totalBet, 550);
+  assert.equal(profit.totalPayout, firstPayout + 150);
+  assert.equal(profit.netProfit, firstPayout - 400);
+  const history = await blackjackHistory(user.id, { limit: 1, cursor: null });
+  assert.equal(history.items.length, 1);
+  assert.ok(history.nextCursor);
+  assert.equal((await reconcileUserBalance(user.id))?.isReconciled, true);
+});
+test("Blackjack denies insufficient stakes and caps cross-game exposure before drawing", async () => {
+  const poor = await blackjackSetup("poor", 100);
+  let data = await blackjackStart(poor.id);
+  const result = await mutateBlackjack(
+    poor.id,
+    randomUUID(),
+    { kind: "split", roundId: data.round.id, expectedVersion: 1, handId: data.round.activeHandId! },
+    noDraw,
+  );
+  assert.equal(result.statusCode, 400);
+  assert.equal((await findBlackjackRound(poor.id))?.version, 1);
+  const high = await blackjackSetup("cap", 1999999850);
+  data = await blackjackStart(high.id, [8, 6, 8, 10]);
+  assert.equal(await getUserUnsettledMaximumPayout(high.id), 200);
+  const blocked = await mutateBlackjack(high.id, randomUUID(), {
+    kind: "double",
+    roundId: data.round.id,
+    expectedVersion: 1,
+    handId: data.round.activeHandId!,
+  });
+  assert.equal(blocked.statusCode, 400);
+  env.hiloEnabled = true;
+  const prepared = hiloMutationResponseSchema.parse(
+    (await mutateHilo(high.id, randomUUID(), { kind: "prepare" }, () => 0)).body,
+  ).preview!;
+  assert.equal(
+    (
+      await mutateHilo(
+        high.id,
+        randomUUID(),
+        { kind: "start", amount: 100, previewId: prepared.id, expectedVersion: prepared.version },
+        noDraw,
+      )
+    ).statusCode,
+    400,
+  );
+  const limit = await blackjackSetup("precheck", 1999999900);
+  assert.equal(
+    (await mutateBlackjack(limit.id, randomUUID(), { kind: "start", amount: 100 }, noDraw))
+      .statusCode,
+    400,
+  );
+});
+test("Blackjack hides private state, isolates owners, disables only new rounds", async () => {
+  const user = await blackjackSetup("owner"),
+    other = await blackjackSetup("other");
+  const data = await blackjackStart(user.id, [10, 1, 9, 10]);
+  const token = await login(user),
+    otherToken = await login(other);
+  const state = await request<{ round: BlackjackRound }>("/blackjack/state", { token });
+  assert.equal(state.status, 200);
+  assert.equal(state.body.round.dealerTotal, null);
+  assert.equal(state.body.round.dealerCards.length, 1);
+  assert.ok(!JSON.stringify(state.body).includes('"shoe"'));
+  assert.ok(!JSON.stringify(state.body).includes('"position"'));
+  assert.equal(
+    (await request(`/blackjack/rounds/${data.round.id}`, { token: otherToken })).status,
+    404,
+  );
+  assert.equal((await request("/blackjack/config")).status, 401);
+  assert.equal(
+    (
+      await mutateBlackjack(other.id, randomUUID(), {
+        kind: "insurance",
+        roundId: data.round.id,
+        expectedVersion: 1,
+        accept: false,
+      })
+    ).statusCode,
+    404,
+  );
+  env.blackjackEnabled = false;
+  try {
+    assert.equal(
+      (await mutateBlackjack(other.id, randomUUID(), { kind: "start", amount: 100 }, noDraw))
+        .statusCode,
+      503,
+    );
+    const ended = await mutateBlackjack(user.id, randomUUID(), {
+      kind: "insurance",
+      roundId: data.round.id,
+      expectedVersion: 1,
+      accept: false,
+    });
+    assert.equal(ended.statusCode, 200);
+    assert.equal(blackjackMutationResponseSchema.parse(ended.body).round.status, "SETTLED");
+  } finally {
+    env.blackjackEnabled = true;
+  }
+});
+test("Blackjack failed ledger write rolls back cards, operation, idempotency and balance", async () => {
+  const user = await blackjackSetup("rollback");
+  const data = await blackjackStart(user.id, [5, 10, 6, 7, 10]);
+  const action: BlackjackAction = {
+      kind: "double",
+      roundId: data.round.id,
+      expectedVersion: 1,
+      handId: data.round.activeHandId!,
+    },
+    key = randomUUID();
+  const before = (
+    await pool.query("SELECT state FROM blackjack_rounds WHERE id=$1", [data.round.id])
+  ).rows[0].state;
+  await pool.query(`CREATE FUNCTION blackjack_test_reject_credit() RETURNS trigger LANGUAGE plpgsql AS $$
+    BEGIN IF NEW.source='BLACKJACK_SETTLEMENT_CREDIT' THEN RAISE EXCEPTION 'reject'; END IF; RETURN NEW; END $$;
+    CREATE TRIGGER blackjack_test_reject_credit BEFORE INSERT ON financial_ledger_entries FOR EACH ROW EXECUTE FUNCTION blackjack_test_reject_credit();`);
+  try {
+    await assert.rejects(mutateBlackjack(user.id, key, action), /Blackjack transaction failed/);
+  } finally {
+    await pool.query(
+      "DROP TRIGGER blackjack_test_reject_credit ON financial_ledger_entries; DROP FUNCTION blackjack_test_reject_credit();",
+    );
+  }
+  assert.deepEqual(
+    (await pool.query("SELECT state FROM blackjack_rounds WHERE id=$1", [data.round.id])).rows[0]
+      .state,
+    before,
+  );
+  assert.equal(
+    (
+      await pool.query("SELECT count(*) FROM blackjack_round_actions WHERE round_id=$1", [
+        data.round.id,
+      ])
+    ).rows[0].count,
+    "1",
+  );
+  assert.equal(
+    (await pool.query("SELECT balance FROM users WHERE id=$1", [user.id])).rows[0].balance,
+    "9900.00",
+  );
+  const retried = await mutateBlackjack(user.id, key, action);
+  assert.equal(retried.statusCode, 200);
+  assert.equal((await reconcileUserBalance(user.id))?.isReconciled, true);
+});
+test("Blackjack real WebSocket reconnect replays a lost result without another debit", async () => {
+  const user = await blackjackSetup("ws"),
+    token = await login(user),
+    sockets: WebSocket[] = [];
+  async function connect() {
+    const ws = new WebSocket(`${baseUrl.replace("http:", "ws:")}/ws`, ["bearer", token]);
+    sockets.push(ws);
+    await once(ws, "open");
+    return ws;
+  }
+  function command(ws: WebSocket, key: string) {
+    const requestId = randomUUID();
+    return new Promise<BlackjackCommandResult["result"]>((resolve, reject) => {
+      const timer = setTimeout(() => {
+        ws.off("message", receive);
+        reject(new Error("Blackjack WS timeout"));
+      }, 5000);
+      function receive(raw: Buffer) {
+        const msg = JSON.parse(raw.toString());
+        if (msg.type !== "blackjack_result" || msg.requestId !== requestId) return;
+        clearTimeout(timer);
+        ws.off("message", receive);
+        resolve(blackjackCommandResultSchema.parse(msg).result);
+      }
+      ws.on("message", receive);
+      ws.send(
+        JSON.stringify({
+          type: "blackjack_command",
+          requestId,
+          idempotencyKey: key,
+          action: { kind: "start", amount: 100 },
+        }),
+      );
+    });
+  }
+  try {
+    let ws = await connect();
+    const key = randomUUID(),
+      first = await command(ws, key);
+    assert.equal(first.ok, true);
+    const closed = once(ws, "close");
+    ws.terminate();
+    await closed;
+    ws = await connect();
+    assert.deepEqual(await command(ws, key), first);
+    assert.equal(
+      (
+        await pool.query(
+          "SELECT count(*) FROM financial_ledger_entries WHERE user_id=$1 AND source='BLACKJACK_BET_DEBIT'",
+          [user.id],
+        )
+      ).rows[0].count,
+      "1",
+    );
+  } finally {
+    for (const ws of sockets) ws.terminate();
+  }
+});
+
+test("Blackjack concurrent hand actions, rejected insurance and database guards preserve state", async () => {
+  const user = await blackjackSetup("hand_race");
+  const initial = await blackjackStart(user.id, [5, 10, 6, 7, 10]);
+  const action: BlackjackAction = {
+    kind: "double",
+    roundId: initial.round.id,
+    expectedVersion: 1,
+    handId: initial.round.activeHandId!,
+  };
+  const results = await Promise.all([
+    mutateBlackjack(user.id, randomUUID(), action),
+    mutateBlackjack(user.id, randomUUID(), { ...action, kind: "stand" }),
+  ]);
+  assert.deepEqual(results.map((r) => r.statusCode).sort(), [200, 409]);
+  assert.equal(
+    (
+      await pool.query("SELECT count(*) FROM blackjack_round_actions WHERE round_id=$1", [
+        initial.round.id,
+      ])
+    ).rows[0].count,
+    "2",
+  );
+  assert.equal((await reconcileUserBalance(user.id))?.isReconciled, true);
+  const poor = await blackjackSetup("ins_poor", 100);
+  const pending = await blackjackStart(poor.id, [10, 1, 9, 10]);
+  const accept: BlackjackAction = {
+    kind: "insurance",
+    roundId: pending.round.id,
+    expectedVersion: 1,
+    accept: true,
+  };
+  assert.equal((await mutateBlackjack(poor.id, randomUUID(), accept)).statusCode, 400);
+  assert.deepEqual(await findBlackjackRound(poor.id), pending.round);
+  await assert.rejects(
+    pool.query("UPDATE blackjack_rounds SET payout=1 WHERE id=$1", [pending.round.id]),
+    /blackjack_rounds_lifecycle/,
+  );
+  await assert.rejects(
+    pool.query(
+      "INSERT INTO blackjack_rounds(id,user_id,amount,total_bet,state,status,payout,maximum_payout,version) SELECT $2,user_id,amount,total_bet,state,status,payout,maximum_payout,version FROM blackjack_rounds WHERE id=$1",
+      [pending.round.id, randomUUID()],
+    ),
+    /idx_blackjack_one_active_per_user/,
+  );
+  assert.equal(
+    (await mutateBlackjack(poor.id, randomUUID(), { ...accept, accept: false })).statusCode,
+    200,
+  );
+  const admin = await insertUser({ username: `bj_admin_${runId}`, role: "ADMIN", balance: 1000 });
+  assert.equal(
+    (await mutateBlackjack(admin.id, randomUUID(), { kind: "start", amount: 100 }, noDraw))
+      .statusCode,
+    403,
+  );
 });

@@ -1,3 +1,5 @@
+export * from "./blackjack.js";
+import { blackjackCommandSchema, blackjackMutationResponseSchema } from "./blackjack.js";
 import { z } from "zod";
 export * from "./hilo.js";
 import { hiloCommandSchema, hiloMutationResponseSchema } from "./hilo.js";
@@ -418,10 +420,20 @@ export const hiloCommandResultSchema = z.object({
 }).strict();
 export type HiloCommandResult = z.infer<typeof hiloCommandResultSchema>;
 
+export const blackjackCommandResultSchema = z.object({
+  type: z.literal("blackjack_result"), requestId: z.string().uuid(),
+  result: z.discriminatedUnion("ok", [
+    z.object({ ok: z.literal(true), data: blackjackMutationResponseSchema }).strict(),
+    z.object({ ok: z.literal(false), status: z.number().int().min(400).max(599), error: apiErrorResponseSchema }).strict(),
+  ]),
+}).strict();
+export type BlackjackCommandResult = z.infer<typeof blackjackCommandResultSchema>;
+
 export const liveClientMessageSchema = z.discriminatedUnion("type", [
   minesCommandSchema,
   plinkoCommandSchema,
   hiloCommandSchema,
+  blackjackCommandSchema,
   z.object({ type: z.literal("subscribe_user") }).strict(),
   z.object({ type: z.literal("subscribe_lobby") }).strict(),
   z.object({ type: z.literal("subscribe_table"), tableId: idSchema }).strict(),
@@ -431,6 +443,7 @@ export const liveServerMessageSchema = z.discriminatedUnion("type", [
   minesCommandResultSchema,
   plinkoCommandResultSchema,
   hiloCommandResultSchema,
+  blackjackCommandResultSchema,
   z.object({ type: z.literal("connected"), serverTime: isoDateTimeSchema }).strict(),
   z.object({ type: z.literal("error"), message: z.string().min(1) }).strict(),
   z

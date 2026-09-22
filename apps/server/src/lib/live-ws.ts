@@ -1,3 +1,5 @@
+import { mutateBlackjack } from "../modules/blackjack/service.js";
+import { type BlackjackCommand, blackjackCommandResultSchema } from "@baccarat/contracts";
 import { randomUUID } from "node:crypto";
 import { URL } from "node:url";
 import type { IncomingMessage, Server } from "node:http";
@@ -198,16 +200,16 @@ async function pushTableUserSnapshot(connection: LiveSocketConnection, tableId: 
   });
 }
 
-type GameCommand = MinesCommand | PlinkoCommand | HiloCommand;
+type GameCommand = MinesCommand | PlinkoCommand | HiloCommand | BlackjackCommand;
 async function handleGameCommand(connection: LiveSocketConnection, message: GameCommand) {
-  const game = message.type === "hilo_command"
+  const game = message.type === "blackjack_command" ? "Blackjack" : message.type === "hilo_command"
     ? "Hilo"
     : message.type === "mines_command" ? "Mines" : "Plinko";
-  const schema =
+  const schema = message.type === "blackjack_command" ? blackjackCommandResultSchema :
     message.type === "hilo_command"
       ? hiloCommandResultSchema
       : message.type === "mines_command" ? minesCommandResultSchema : plinkoCommandResultSchema;
-  const resultType = message.type === "hilo_command"
+  const resultType = message.type === "blackjack_command" ? "blackjack_result" : message.type === "hilo_command"
     ? "hilo_result"
     : message.type === "mines_command" ? "mines_result" : "plinko_result";
   const operation = message.type === "plinko_command" ? "start" : message.action.kind;
@@ -245,6 +247,7 @@ async function handleGameCommand(connection: LiveSocketConnection, message: Game
     // Match the HTTP action's property order: existing idempotency fingerprints
     // hash its JSON representation, including keys created before this rollout.
     const result = await (async () => {
+      if (message.type === "blackjack_command") return mutateBlackjack(connection.userId,message.idempotencyKey,message.action);
       if (message.type === "hilo_command")
         return mutateHilo(connection.userId, message.idempotencyKey, message.action);
       if (message.type === "plinko_command")
@@ -694,9 +697,9 @@ export async function attachLiveWebSocketServer(server: Server) {
         const message = parseClientMessage(raw.toString(), connection);
         if (
           !consumeRateLimit(
-            (message?.type === "mines_command" || message?.type === "plinko_command" || message?.type === "hilo_command") ? connection.gameWindow : connection.messageWindow,
+            (message?.type === "mines_command" || message?.type === "plinko_command" || message?.type === "hilo_command" || message?.type === "blackjack_command") ? connection.gameWindow : connection.messageWindow,
             Date.now(),
-            (message?.type === "mines_command" || message?.type === "plinko_command" || message?.type === "hilo_command") ? 60 : MAX_WEBSOCKET_MESSAGES_PER_WINDOW,
+            (message?.type === "mines_command" || message?.type === "plinko_command" || message?.type === "hilo_command" || message?.type === "blackjack_command") ? 60 : MAX_WEBSOCKET_MESSAGES_PER_WINDOW,
             WEBSOCKET_MESSAGE_WINDOW_MS,
           )
         ) {
@@ -713,7 +716,7 @@ export async function attachLiveWebSocketServer(server: Server) {
           return;
         }
 
-        const handling = (message.type === "mines_command" || message.type === "plinko_command" || message.type === "hilo_command")
+        const handling = (message.type === "mines_command" || message.type === "plinko_command" || message.type === "hilo_command" || message.type === "blackjack_command")
           ? handleGameCommand(connection, message)
           : handleSubscriptionMessage(connection, message);
         void handling.catch((error: unknown) => {

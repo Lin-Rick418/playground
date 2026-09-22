@@ -1,3 +1,4 @@
+import { blackjackRouter } from "./modules/blackjack/router.js";
 import { hiloRouter } from "./modules/hilo/router.js";
 import cors from "cors";
 import express, { type Express } from "express";
@@ -94,6 +95,7 @@ export function createApp(options: CreateAppOptions = {}) {
   app.use("/mines", minesRouter);
   app.use("/plinko", plinkoRouter);
   app.use("/hilo", hiloRouter);
+  app.use("/blackjack", blackjackRouter);
   options.registerAdditionalRoutes?.(app);
 
   app.use(notFoundHandler);

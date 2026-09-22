@@ -40,6 +40,13 @@ const games = [
     image: "/images/games/hilo-simple.webp",
     path: "/hilo",
   },
+  {
+    name: "Blackjack",
+    english: "BLACKJACK",
+    subtitle: "21 點",
+    image: "/images/games/blackjack-simple.webp",
+    path: "/blackjack",
+  },
 ];
 useLiveChannel({ getSubscribeMessage: () => ({ type: "subscribe_user" }), onMessage: () => {} });
 function logout() {

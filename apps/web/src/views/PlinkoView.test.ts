@@ -71,6 +71,7 @@ describe("PlinkoView", () => {
     mock = new MockAdapter(api);
     vi.mocked(useLiveChannel).mockReturnValue({
     requestHilo: vi.fn(),
+    requestBlackjack: vi.fn(),
       connected: ref(true),
       reconnect: vi.fn(),
       disconnect: vi.fn(),

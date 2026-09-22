@@ -5,6 +5,14 @@ import { coreIntegrityConstraints } from "./database-integrity.js";
 type SchemaExecutor = Pick<Pool | PoolClient, "query">;
 
 const columns = {
+  blackjack_rounds: {
+    id: ["text", "NO"], user_id: ["text", "NO"], amount: ["numeric", "NO"], total_bet: ["numeric", "NO"], payout: ["numeric", "NO"], maximum_payout: ["numeric", "NO"],
+    state: ["jsonb", "NO"], status: ["text", "NO"], version: ["integer", "NO"], rule_version: ["integer", "NO"],
+    created_at: ["timestamp with time zone", "NO"], settled_at: ["timestamp with time zone", "YES"],
+  },
+  blackjack_round_actions: {
+    id: ["text", "NO"], round_id: ["text", "NO"], sequence: ["integer", "NO"], kind: ["text", "NO"], debit: ["numeric", "NO"], action: ["jsonb", "NO"], created_at: ["timestamp with time zone", "NO"],
+  },
   hilo_previews: { user_id: ["text", "NO"], id: ["text", "NO"], card: ["integer", "NO"], version: ["integer", "NO"] },
   hilo_rounds: {
     id: ["text", "NO"], user_id: ["text", "NO"], amount: ["numeric", "NO"],
@@ -101,6 +109,7 @@ const columns = {
 } as const;
 
 const requiredConstraints = [
+  "blackjack_rounds_money", "blackjack_rounds_state", "blackjack_rounds_lifecycle", "blackjack_actions_sequence",
   "hilo_rounds_ratio", "hilo_rounds_lifecycle", "hilo_steps_action",
   "plinko_rounds_path", "plinko_rounds_payout", "plinko_rounds_settled",
   "mines_rounds_lifecycle", "mines_rounds_board",
@@ -113,6 +122,7 @@ const requiredConstraints = [
 ] as const;
 
 const requiredIndexes = [
+  "idx_blackjack_one_active_per_user", "idx_blackjack_history",
   "idx_hilo_one_active_per_user", "idx_hilo_history",
   "idx_plinko_history",
   "idx_mines_one_active_per_user", "idx_mines_history",

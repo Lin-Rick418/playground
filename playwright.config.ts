@@ -28,6 +28,7 @@ export default defineConfig({
       name: "webkit-mobile",
       testMatch: [
         "hilo-mocked.spec.ts",
+        "blackjack-mocked.spec.ts",
         "plinko-mocked.spec.ts",
         "mines-mocked.spec.ts",
         "viewport.spec.ts",

@@ -8,6 +8,7 @@ import { useAuthStore } from "../stores/auth";
 import { createPlinkoRpc } from "../lib/plinko-rpc";
 import { createMinesRpc } from "../lib/mines-rpc";
 import { createHiloRpc } from "../lib/hilo-rpc";
+import { createBlackjackRpc } from "../lib/blackjack-rpc";
 
 type ChannelMessage = Exclude<
   LiveMessage,
@@ -32,6 +33,7 @@ export function useLiveChannel(options: UseLiveChannelOptions) {
   let generation = 0;
   const connected = ref(false);
   const hiloRpc = createHiloRpc(() => socket);
+  const blackjackRpc = createBlackjackRpc(() => socket);
   const minesRpc = createMinesRpc(() => socket);
   const plinkoRpc = createPlinkoRpc(() => socket);
 
@@ -47,6 +49,7 @@ export function useLiveChannel(options: UseLiveChannelOptions) {
     connected.value = false;
     minesRpc.disconnect();
     hiloRpc.disconnect();
+    blackjackRpc.disconnect();
     plinkoRpc.disconnect();
     clearReconnectTimer();
     socket?.close();
@@ -64,10 +67,12 @@ export function useLiveChannel(options: UseLiveChannelOptions) {
     if (
       message.type === "mines_result" ||
       message.type === "plinko_result" ||
-      message.type === "hilo_result"
+      message.type === "hilo_result" ||
+      message.type === "blackjack_result"
     ) {
       if (message.type === "mines_result") minesRpc.receive(message);
       else if (message.type === "hilo_result") hiloRpc.receive(message);
+      else if (message.type === "blackjack_result") blackjackRpc.receive(message);
       else plinkoRpc.receive(message);
       if (!message.result.ok && message.result.status === 401) revokeSession();
       return;
@@ -146,6 +151,7 @@ export function useLiveChannel(options: UseLiveChannelOptions) {
         connected.value = false;
         minesRpc.disconnect();
         hiloRpc.disconnect();
+        blackjackRpc.disconnect();
         plinkoRpc.disconnect();
         if (disposed) {
           return;
@@ -184,6 +190,7 @@ export function useLiveChannel(options: UseLiveChannelOptions) {
   return {
     connected,
     requestHilo: hiloRpc.request,
+    requestBlackjack: blackjackRpc.request,
     requestMines: minesRpc.request,
     requestPlinko: plinkoRpc.request,
     reconnect: connect,

@@ -37,6 +37,7 @@ test("retention cleanup deletes bounded batches until each table is current", as
   });
   assert.ok(calls.every(({ sql }) => sql.includes("LIMIT $2") && sql.includes("FOR UPDATE SKIP LOCKED")));
   assert.ok(calls.every(({ params }) => params[1] === 2));
+  assert.ok(calls.filter(({ sql }) => sql.includes("FROM idempotency_keys")).every(({ sql }) => sql.includes("scope NOT LIKE 'blackjack.%'")));
 });
 
 test("retention cleanup rejects unsafe policy values before issuing SQL", async () => {

@@ -66,3 +66,14 @@ test("environment loading returns typed normalized values", () => {
   assert.equal(loaded.databaseSsl, "true");
   assert.equal(loaded.corsOrigin, "https://app.example.com");
 });
+
+test("Blackjack requires an explicit boolean feature flag", () => {
+  for (const [value, expected] of [["true", true], ["false", false]] as const) {
+    const result = loadEnv({ BLACKJACK_ENABLED: value });
+    assert.equal(result.status, 0);
+    assert.equal(JSON.parse(result.stdout).blackjackEnabled, expected);
+  }
+  const invalid = loadEnv({ BLACKJACK_ENABLED: "yes" });
+  assert.notEqual(invalid.status, 0);
+  assert.match(invalid.stderr, /BLACKJACK_ENABLED must be true or false/);
+});

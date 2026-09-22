@@ -51,6 +51,7 @@ describe("MinesView", () => {
     mock = new MockAdapter(api);
     vi.mocked(useLiveChannel).mockReturnValue({
       requestHilo: vi.fn(),
+      requestBlackjack: vi.fn(),
       requestPlinko: vi.fn(),
       connected: ref(true),
       reconnect: vi.fn(),

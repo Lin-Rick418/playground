@@ -70,6 +70,20 @@ test.beforeEach(async ({ page }) => {
           tables: [{ rows: 16, risk: "medium", multipliers: Array(17).fill(0.95), rtp: 0.95 }],
         },
       });
+    if (path === "/api/blackjack/config")
+      return route.fulfill({
+        json: {
+          minBet: 100,
+          maxBet: 5000,
+          betStep: 100,
+          decks: 6,
+          maxHands: 4,
+          ruleVersion: 1,
+          enabled: true,
+          rtp: null,
+        },
+      });
+    if (path === "/api/blackjack/state") return route.fulfill({ json: { round: null } });
     if (path === "/api/game/tables/table-1/state")
       return route.fulfill({
         json: {
@@ -114,6 +128,7 @@ for (const [path, heading, controls] of [
   ["/game/table-1", "極速廳 A01", ".bet-zone, .chip-rack, .wallet-bar"],
   ["/mines", "Mines", ".mines-controls, .mines-wallet"],
   ["/plinko", "PLINKO", ".plinko-play, .plinko-wallet"],
+  ["/blackjack", "Blackjack", ".blackjack-controls, .ui-balance"],
 ]) {
   test(`${heading} fills the viewport and cannot scroll the document`, async ({
     page,
@@ -180,6 +195,7 @@ test("game backgrounds match on mobile and outer gutters stay translucent gray o
     ["/game/table-1", "rgb(55, 153, 106)"],
     ["/mines", "rgb(23, 27, 35)"],
     ["/plinko", "rgb(27, 40, 61)"],
+    ["/blackjack", "rgb(9, 27, 21)"],
   ];
   await page.goto("/lobby");
   for (const width of [390, 430, 483, 1360, 390]) {
@@ -414,7 +430,7 @@ test("shared headers keep return buttons aligned and shared dialog buttons prese
   await expect(trigger).toBeFocused();
 });
 
-test("Baccarat, Hi-Lo, Plinko and Mines share the lobby return-button position", async ({
+test("Baccarat, Hi-Lo, Plinko, Mines and Blackjack share the lobby return-button position", async ({
   page,
 }) => {
   for (const viewport of [
@@ -424,11 +440,19 @@ test("Baccarat, Hi-Lo, Plinko and Mines share the lobby return-button position",
   ]) {
     await page.setViewportSize(viewport);
     const positions = [];
-    for (const path of ["/lobby", "/baccarat", "/game/table-1", "/hilo", "/plinko", "/mines"]) {
+    for (const path of [
+      "/lobby",
+      "/baccarat",
+      "/game/table-1",
+      "/hilo",
+      "/plinko",
+      "/mines",
+      "/blackjack",
+    ]) {
       await page.goto(path);
       const header = page.locator(".ui-page-header");
       await expect(header.getByRole("heading")).toBeVisible();
-      if (path === "/game/table-1") {
+      if (path === "/game/table-1" || path === "/blackjack") {
         await expect(header.locator(".page-header-subtitle")).toHaveCount(0);
         await expect(header).not.toContainText("限紅");
         await expect(header.getByRole("button", { name: "遊戲規則", exact: true })).toBeVisible();
@@ -438,6 +462,9 @@ test("Baccarat, Hi-Lo, Plinko and Mines share the lobby return-button position",
         button: await header.locator(".page-header-back").boundingBox(),
         arrow: await header.locator(".page-header-back svg").boundingBox(),
         title: await header.locator("h1").boundingBox(),
+        rules: ["/game/table-1", "/blackjack"].includes(path)
+          ? await header.getByRole("button", { name: "遊戲規則", exact: true }).boundingBox()
+          : null,
       });
     }
     for (const position of positions.slice(1)) {
@@ -452,5 +479,8 @@ test("Baccarat, Hi-Lo, Plinko and Mines share the lobby return-button position",
         ),
       ).toBeLessThan(1);
     }
+    expect(positions.find((position) => position.path === "/blackjack")!.rules).toEqual(
+      positions.find((position) => position.path === "/game/table-1")!.rules,
+    );
   }
 });

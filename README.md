@@ -6,7 +6,7 @@ AI 開發指引請先閱讀 [AGENTS.md](AGENTS.md)；Claude 使用相同指引�
 
 ## 功能
 
-- 玩家登入後選擇百家樂、Mines、Plinko 或 Hi-Lo，四款遊戲共用錢包
+- 玩家登入後選擇百家樂、Mines、Plinko、Hi-Lo 或 Blackjack，五款遊戲共用錢包
 - Mines：5×5、新局 3–24 顆雷，投注 100–5,000（每次遞增 100），公式 RTP 95%
 - 後端保留兩位小數，畫面金額隱藏小數且不進位
 - 玩家登入
@@ -164,3 +164,7 @@ npm run test:pwa
 ## Hi-Lo
 
 新增 `/hilo`，支援下注前換牌、連續猜大小／相同、52 次免費跳牌與收款。整局 RTP **94%**，最高 **10,000×**，共用現有測試幣錢包。需執行 migration 12；`HILO_ENABLED` 預設 false，驗收後明確設為 true。完整規則與 API 見 [docs/hilo.md](docs/hilo.md)。
+
+## Blackjack
+
+新增 `/blackjack`，支援要牌、停牌、加倍、最多四手分牌與保險。每局重洗六副牌，採標準派彩，無固定 RTP 承諾。需 migration 14 與 `BLACKJACK_ENABLED=true`；共用測試幣錢包並支援斷線恢復。詳見 [遊戲規則與 API](docs/blackjack.md)。

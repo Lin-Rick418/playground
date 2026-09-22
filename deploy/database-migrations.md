@@ -86,3 +86,12 @@ ORDER BY version;
 5. 觀察 hilo_command_completed／failed、結算 RTP 與 ledger 對帳。RTP 是長期理論值，不以短期數據調整 RNG。
 
 回退優先設定 `HILO_ENABLED=false` 停止新局，保留新版 server、schema 與既有局結算能力。不可刪除牌局、ledger 或永久 idempotency；尤其有 ACTIVE 局時，不得回退至不計 Hi-Lo 曝險的舊 server。免費 preview 的 hilo-preview scope 可依一般 retention 清理，hilo.mutation 必須永久保留。
+
+## Blackjack（migration 14）
+
+1. 備份資料庫、停止 API／worker 寫入，維持 `BLACKJACK_ENABLED=false`。
+2. 使用新版執行 `npm run db:migrate`，新增牌局／操作資料、唯一 ACTIVE 索引及 ledger 來源；既有資料保留。
+3. 執行 `npm run db:migrate:status`，確認 14/14 與 schema fingerprint 正確，再啟動新版服務及 web。
+4. 驗證新局、分牌／加倍／保險追加投注、失聯重播、每日損益、跨遊戲曝險與 `financial_balance_reconciliation`，再明確設定 `BLACKJACK_ENABLED=true`。
+
+停用旗標只拒絕新局；讀取、既有局操作與 idempotency replay 繼續提供。存在 ACTIVE Blackjack 時不得回退到不含 Blackjack 曝險的 server；保留新版 schema、結算能力、ledger 與永久 idempotency，採向前修復。無自動 down migration。

@@ -1,4 +1,5 @@
 import HiloView from "../views/HiloView.vue";
+import BlackjackView from "../views/BlackjackView.vue";
 import { createRouter, createWebHistory } from "vue-router";
 import { useAuthStore } from "../stores/auth";
 import LoginView from "../views/LoginView.vue";
@@ -15,6 +16,7 @@ const router = createRouter({
   history: createWebHistory(),
   routes: [
     { path: "/hilo", component: HiloView, meta: { requiresAuth: true, role: "PLAYER", keepScreenAwake: true } },
+    { path: "/blackjack", component: BlackjackView, meta: { requiresAuth: true, role: "PLAYER", keepScreenAwake: true } },
     { path: "/", redirect: "/login" },
     { path: "/login", component: LoginView },
     {

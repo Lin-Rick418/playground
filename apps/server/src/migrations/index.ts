@@ -1,3 +1,4 @@
+import { blackjackMigration } from "./014-blackjack.js";
 import { hiloMigration } from "./012-hilo.js";
 import { minesMultiplierLimitMigration } from "./013-mines-multiplier-limit.js";
 import { initialTablesMigration } from "./001-initial-tables.js";
@@ -28,6 +29,7 @@ export const migrationDefinitions = [
   plinkoMigration,
   hiloMigration,
   minesMultiplierLimitMigration,
+  blackjackMigration,
 ] as const;
 
 export type { MigrationDefinition } from "./types.js";

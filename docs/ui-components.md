@@ -1,6 +1,6 @@
 # 共用玩家 UI
 
-共用元件放在 `apps/web/src/components/ui/`；尺寸、互動狀態與配色變數集中在 `apps/web/src/styles/ui.css`。此 CSS 排除 mobile-forever 的像素轉換，讓各頁面的同類控制項維持相同實際尺寸。Hi-Lo 與 Plinko 的頁面 CSS 也排除轉換；Mines 仍會縮放，設定共用尺寸時須使用共用 CSS variable。
+共用元件放在 `apps/web/src/components/ui/`；尺寸、互動狀態與配色變數集中在 `apps/web/src/styles/ui.css`。此 CSS 排除 mobile-forever 的像素轉換，讓各頁面的同類控制項維持相同實際尺寸。Hi-Lo、Plinko 與 Blackjack 的頁面 CSS 也排除轉換；Mines 仍會縮放，設定共用尺寸時須使用共用 CSS variable。
 
 | 元件            | 使用範圍                                                                                                                                                                                                           |
 | --------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
@@ -9,7 +9,7 @@
 | `AppInput`      | 登入與密碼表單的原生 input，保留 autocomplete、required、maxlength 與 trim modifier。                                                                                                                              |
 | `AppPageHeader` | 共用返回箭頭與 h1；actions、subtitle slots 分開排版，標題維持水平中心。                                                                                                                                            |
 | `StakeControl`  | 投注額選單及 MIN／−／＋／MAX；共同處理步進、上下限、disabled。stacked 用於設定面板，compactLandscape 用於短橫向遊戲畫面。                                                                                          |
-| `BalanceBar`    | Mines／Plinko／Hi-Lo 餘額、數字滾動標示及餘額不足警示；warn()／clearWarning() 共用動畫與清理，支援 reduced motion。                                                                                                |
+| `BalanceBar`    | Mines／Plinko／Hi-Lo／Blackjack 餘額、數字滾動標示及餘額不足警示；warn()／clearWarning() 共用動畫與清理，支援 reduced motion。                                                                                                |
 
 ## 尺寸
 
@@ -27,7 +27,7 @@
 
 ## Header、通訊與動畫
 
-- `/lobby`、`/baccarat`、`/game/:tableId`、`/hilo`、`/mines`、`/plinko` 均使用 `AppPageHeader`。共用元件本身不能保證外層留白相同：header 左右留白必須使用 `var(--ui-page-gutter)`（16 個 CSS px）。
+- `/lobby`、`/baccarat`、`/game/:tableId`、`/hilo`、`/mines`、`/plinko`、`/blackjack` 均使用 `AppPageHeader`。共用元件本身不能保證外層留白相同：header 左右留白必須使用 `var(--ui-page-gutter)`（16 個 CSS px）。
 - 百家樂選桌與牌桌在頁面設定 `padding-inline: var(--ui-page-gutter)`；大廳為了保留滿寬輪播，只在 header 設定左右 margin。每頁只套一層留白。
 - 大廳使用 `100dvh`（`100vh` fallback），包含 safe-area 留白，整頁不捲動；輪播卡片依剩餘高度等比例縮放，保留橫向捲動、鍵盤切換與下方控制列。
 - 視窗寬度不超過 430px 時，大廳、Hi-Lo、百家樂、Mines、Plinko 的 `html` 與 `body` 使用對應的不透明底色，供手機瀏覽器頂端與狀態列取色。超過 mobile-forever 的 `maxDisplayWidth`（430px）時，所有頁面透過 `--ui-outer-background` 統一使用 `rgba(128, 128, 128, 0.35)` 作為容器外背景；頁面內部維持原本配色。`#app` 保留預設漸層供沒有獨立背景的頁面使用。
