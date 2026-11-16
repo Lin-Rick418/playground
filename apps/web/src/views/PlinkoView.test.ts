@@ -8,6 +8,7 @@ import { api } from "../lib/api";
 import { useAuthStore } from "../stores/auth";
 import { usePlinkoStore } from "../stores/plinko";
 import PlinkoView from "./PlinkoView.vue";
+import { portraitBlockedKey } from "../composables/usePortraitGuard";
 
 vi.mock("../composables/useLiveChannel", () => ({ useLiveChannel: vi.fn() }));
 vi.mock("vue-router", () => ({ useRouter: () => ({ push: vi.fn() }) }));
@@ -59,19 +60,22 @@ function result(sequence = 1) {
 }
 
 describe("PlinkoView", () => {
+  const portraitBlocked = ref(false);
   let mock: MockAdapter;
   let pinia: ReturnType<typeof createPinia>;
   let wrapper: VueWrapper | undefined;
   let callbacks: Map<number, FrameRequestCallback>;
   let clock: number;
   beforeEach(() => {
+    portraitBlocked.value = false;
     pinia = createPinia();
     setActivePinia(pinia);
     sessionStorage.clear();
     mock = new MockAdapter(api);
     vi.mocked(useLiveChannel).mockReturnValue({
-    requestHilo: vi.fn(),
-    requestBlackjack: vi.fn(),
+      requestHilo: vi.fn(),
+      requestBlackjack: vi.fn(),
+      requestStorm: vi.fn(),
       connected: ref(true),
       reconnect: vi.fn(),
       disconnect: vi.fn(),
@@ -106,7 +110,9 @@ describe("PlinkoView", () => {
     vi.useRealTimers();
   });
   async function open() {
-    wrapper = mount(PlinkoView, { global: { plugins: [pinia] } });
+    wrapper = mount(PlinkoView, {
+      global: { plugins: [pinia], provide: { [portraitBlockedKey as symbol]: portraitBlocked } },
+    });
     await flushPromises();
     return wrapper;
   }
@@ -117,6 +123,31 @@ describe("PlinkoView", () => {
     frameCallbacks.forEach((callback) => callback(time));
     await flushPromises();
   }
+  it("stops auto on rotation while the submitted ball still settles, without resuming in portrait", async () => {
+    let release!: (value: [number, ReturnType<typeof result>]) => void;
+    mock.onPost("/plinko/rounds").reply(
+      () =>
+        new Promise((resolve) => {
+          release = resolve;
+        }),
+    );
+    const view = await open();
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    await view.get('select[aria-label="自動投球"]').setValue("30");
+    await view.get(".plinko-play").trigger("click");
+    await flushPromises();
+    expect(mock.history.post).toHaveLength(1);
+    portraitBlocked.value = true;
+    release([200, result()]);
+    await flushPromises();
+    await vi.advanceTimersByTimeAsync(2000);
+    expect(useAuthStore().user?.balance).toBe(11512.36);
+    expect(mock.history.post).toHaveLength(1);
+    portraitBlocked.value = false;
+    await vi.advanceTimersByTimeAsync(2000);
+    expect(mock.history.post).toHaveLength(1);
+    expect(view.get(".plinko-play").text()).not.toContain("停止投球");
+  });
   it.each([
     [9.99, null],
     [10, "NICE WIN"],

@@ -1,4 +1,6 @@
 <script setup lang="ts">
+import CardSuit from "../components/ui/CardSuit.vue";
+import AppIcon from "../components/ui/AppIcon.vue";
 import { computed, nextTick, onUnmounted, ref, watch } from "vue";
 import { useRouter } from "vue-router";
 import axios from "axios";
@@ -218,7 +220,7 @@ const stake = computed({
 });
 
 const suitNames = ["黑桃", "紅心", "方塊", "梅花"];
-const suits = ["♠", "♥", "♦", "♣"];
+const suits = ["S", "H", "D", "C"] as const;
 const rankName = (card: number) =>
   ["A", "2", "3", "4", "5", "6", "7", "8", "9", "10", "J", "Q", "K"][Math.floor((card % 52) / 4)];
 const red = (card: number) => card % 4 === 1 || card % 4 === 2;
@@ -545,7 +547,7 @@ onUnmounted(() => {
             >
               <div class="card-face">
                 <span>{{ rankName(card) }}</span
-                ><b>{{ suits[card % 4] }}</b>
+                ><b><CardSuit :suit="suits[card % 4]!" /></b>
               </div>
               <div class="card-back-face" aria-hidden="true"></div>
             </article>
@@ -609,15 +611,20 @@ onUnmounted(() => {
                 :aria-label="cardLabel(card)"
               >
                 <span>{{ rankName(card) }}</span
-                ><b>{{ suits[card % 4] }}</b>
+                ><b><CardSuit :suit="suits[card % 4]!" /></b>
               </article>
             </div>
             <div v-if="hand.id === celebratingHandId" class="hand-celebration" aria-hidden="true">
-              <i v-for="spark in 4" :key="spark" class="celebration-spark">✦</i>
+              <i v-for="spark in 4" :key="spark" class="celebration-spark"
+                ><AppIcon name="sparkle"
+              /></i>
               <div class="celebration-banner">
                 <span class="celebration-caption">{{ hand.split ? "兩張 21 點" : "21 點" }}</span>
                 <strong class="celebration-title">{{ hand.split ? "21" : "BLACKJACK" }}</strong>
-                <span class="celebration-flourish">◆ ━ ◆ ━ ◆</span>
+                <span class="celebration-flourish"
+                  ><AppIcon name="diamond" /><span class="flourish-line" /><AppIcon
+                    name="diamond" /><span class="flourish-line" /><AppIcon name="diamond"
+                /></span>
               </div>
             </div>
           </article>
@@ -920,7 +927,8 @@ onUnmounted(() => {
 .playing-card:first-child {
   margin-left: 0;
 }
-.playing-card span {
+.playing-card > span,
+.card-face > span {
   font-size: calc(var(--playing-card-width) * 0.28);
   font-weight: 700;
 }
@@ -977,6 +985,17 @@ onUnmounted(() => {
   font-size: 10px;
   line-height: 1.2;
   letter-spacing: 0.18em;
+}
+.celebration-flourish {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+}
+.flourish-line {
+  width: 18px;
+  height: 1px;
+  background: currentColor;
 }
 .celebration-title {
   display: block;

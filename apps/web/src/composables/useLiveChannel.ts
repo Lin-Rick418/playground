@@ -1,3 +1,4 @@
+import { createStormRpc } from "../lib/storm-rpc";
 import { onMounted, onUnmounted, ref } from "vue";
 import { useRouter } from "vue-router";
 import { liveClientMessageSchema, type LiveClientMessage } from "@baccarat/contracts";
@@ -33,6 +34,7 @@ export function useLiveChannel(options: UseLiveChannelOptions) {
   let generation = 0;
   const connected = ref(false);
   const hiloRpc = createHiloRpc(() => socket);
+  const stormRpc = createStormRpc(() => socket);
   const blackjackRpc = createBlackjackRpc(() => socket);
   const minesRpc = createMinesRpc(() => socket);
   const plinkoRpc = createPlinkoRpc(() => socket);
@@ -50,6 +52,7 @@ export function useLiveChannel(options: UseLiveChannelOptions) {
     minesRpc.disconnect();
     hiloRpc.disconnect();
     blackjackRpc.disconnect();
+    stormRpc.disconnect();
     plinkoRpc.disconnect();
     clearReconnectTimer();
     socket?.close();
@@ -68,10 +71,11 @@ export function useLiveChannel(options: UseLiveChannelOptions) {
       message.type === "mines_result" ||
       message.type === "plinko_result" ||
       message.type === "hilo_result" ||
-      message.type === "blackjack_result"
+      message.type === "blackjack_result" || message.type === "storm_result"
     ) {
       if (message.type === "mines_result") minesRpc.receive(message);
       else if (message.type === "hilo_result") hiloRpc.receive(message);
+      else if (message.type === "storm_result") stormRpc.receive(message);
       else if (message.type === "blackjack_result") blackjackRpc.receive(message);
       else plinkoRpc.receive(message);
       if (!message.result.ok && message.result.status === 401) revokeSession();
@@ -152,6 +156,7 @@ export function useLiveChannel(options: UseLiveChannelOptions) {
         minesRpc.disconnect();
         hiloRpc.disconnect();
         blackjackRpc.disconnect();
+    stormRpc.disconnect();
         plinkoRpc.disconnect();
         if (disposed) {
           return;
@@ -191,6 +196,7 @@ export function useLiveChannel(options: UseLiveChannelOptions) {
     connected,
     requestHilo: hiloRpc.request,
     requestBlackjack: blackjackRpc.request,
+    requestStorm: stormRpc.request,
     requestMines: minesRpc.request,
     requestPlinko: plinkoRpc.request,
     reconnect: connect,

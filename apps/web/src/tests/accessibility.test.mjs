@@ -136,7 +136,7 @@ test("balance is non-interactive and history remains the only navigation entry",
   assert.match(historyPanelTag, /@click="openBetHistory"/);
   assert.match(
     gameView,
-    /wallet-panel wallet-history-panel[\s\S]*?\{\{ dailyProfitPeriodLabel \}\}[\s\S]*?daily-profit-number[\s\S]*?<span class="wallet-history-entry" aria-hidden="true">\s*<span class="wallet-history-label">\s*<span>歷史<\/span>\s*<span>紀錄<\/span>\s*<\/span>\s*<span class="wallet-history-arrow">›<\/span>/,
+    /wallet-panel wallet-history-panel[\s\S]*?\{\{ dailyProfitPeriodLabel \}\}[\s\S]*?daily-profit-number[\s\S]*?<span class="wallet-history-entry" aria-hidden="true">\s*<span class="wallet-history-label">\s*<span>歷史<\/span>\s*<span>紀錄<\/span>\s*<\/span>\s*<span class="wallet-history-arrow">\s*<AppIcon name="chevron-right" \/>\s*<\/span>/,
   );
   assert.match(
     gameView,

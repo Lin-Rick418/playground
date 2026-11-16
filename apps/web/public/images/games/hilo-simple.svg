@@ -12,13 +12,13 @@
     <rect width="280" height="400" rx="26" fill="#e7dfc7"/>
     <rect x="10" y="10" width="260" height="380" rx="19" fill="none" stroke="#fcf5df" stroke-width="3" opacity=".6"/>
     <text x="28" y="76" font-size="60" font-weight="700" fill="#244d40" font-family="Georgia,serif">A</text>
-    <text x="140" y="268" text-anchor="middle" font-size="162" fill="#244d40" font-family="Arial,sans-serif">♠</text>
+    <path transform="translate(59 106) scale(6.75)" fill="#244d40" d="M12 1C9 5 1 10 1 15C1 21 8 22 11 17L9 23H15L13 17C16 22 23 21 23 15C23 10 15 5 12 1Z"/>
   </g>
   <g transform="translate(370 302) rotate(12 140 200)">
     <rect x="5" y="10" width="280" height="400" rx="26" fill="#163e34" opacity=".3"/>
     <rect width="280" height="400" rx="26" fill="#fff4db"/>
     <rect x="10" y="10" width="260" height="380" rx="19" fill="none" stroke="#dfd5bb" stroke-width="3" opacity=".6"/>
     <text x="28" y="76" font-size="60" font-weight="700" fill="#b54a4e" font-family="Georgia,serif">K</text>
-    <text x="140" y="268" text-anchor="middle" font-size="162" fill="#b54a4e" font-family="Arial,sans-serif">♥</text>
+    <path transform="translate(59 106) scale(6.75)" fill="#b54a4e" d="M12 22C10 19 1 13 1 7C1 0 10 0 12 5C14 0 23 0 23 7C23 13 14 19 12 22Z"/>
   </g>
 </svg>

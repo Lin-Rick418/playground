@@ -29,9 +29,11 @@ export default defineConfig({
       testMatch: [
         "hilo-mocked.spec.ts",
         "blackjack-mocked.spec.ts",
+        "storm-*-mocked.spec.ts",
         "plinko-mocked.spec.ts",
         "mines-mocked.spec.ts",
         "viewport.spec.ts",
+        "portrait-guard-mocked.spec.ts",
       ],
       use: { ...devices["iPhone 13"] },
     },

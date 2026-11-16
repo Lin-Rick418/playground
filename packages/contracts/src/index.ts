@@ -1,3 +1,5 @@
+export * from "./storm.js";
+import { stormCommandSchema, stormMutationResponseSchema } from "./storm.js";
 export * from "./blackjack.js";
 import { blackjackCommandSchema, blackjackMutationResponseSchema } from "./blackjack.js";
 import { z } from "zod";
@@ -6,7 +8,14 @@ import { hiloCommandSchema, hiloMutationResponseSchema } from "./hilo.js";
 export * from "./plinko.js";
 import { plinkoStartRequestSchema, plinkoMutationResponseSchema } from "./plinko.js";
 import { isMoney } from "./money.js";
-export { toMinorUnits, fromMinorUnits, minorUnitsToDecimal, sumMoney, isMoney, roundHalfUp } from "./money.js";
+export {
+  toMinorUnits,
+  fromMinorUnits,
+  minorUnitsToDecimal,
+  sumMoney,
+  isMoney,
+  roundHalfUp,
+} from "./money.js";
 export const moneySchema = z.number().refine(isMoney, "Money must have at most two decimal places");
 
 const idSchema = z.string().min(1);
@@ -16,7 +25,21 @@ export const userRoleSchema = z.literal("PLAYER");
 export const roundWinnerSchema = z.enum(["PLAYER", "BANKER", "TIE"]);
 export const roundStatusSchema = z.enum(["OPEN", "LOCKED", "SETTLED", "CANCELLED"]);
 export const betTypeSchema = z.enum(["PLAYER", "BANKER", "TIE", "PLAYER_PAIR", "BANKER_PAIR"]);
-export const cardRankSchema = z.enum(["A", "2", "3", "4", "5", "6", "7", "8", "9", "10", "J", "Q", "K"]);
+export const cardRankSchema = z.enum([
+  "A",
+  "2",
+  "3",
+  "4",
+  "5",
+  "6",
+  "7",
+  "8",
+  "9",
+  "10",
+  "J",
+  "Q",
+  "K",
+]);
 export const cardSuitSchema = z.enum(["S", "H", "D", "C"]);
 
 export const cardSchema = z
@@ -170,7 +193,7 @@ export const tableSnapshotSchema = z
 export const tableStateResponseSchema = tableSnapshotSchema.extend({
   myBets: z.array(currentBetSchema),
   balance: moneySchema,
-    walletVersion: z.number().int().nonnegative().safe().optional(),
+  walletVersion: z.number().int().nonnegative().safe().optional(),
   config: roundConfigSchema,
 });
 
@@ -331,55 +354,99 @@ export const userSnapshotSchema = userSchema.extend({
   serverTime: isoDateTimeSchema,
 });
 
-export const minesStartRequestSchema = z.object({
-  amount: z.number().int().min(100).max(5000).refine((value) => value % 100 === 0),
-  mineCount: z.number().int().min(3).max(24),
-}).strict();
-export const minesRevealRequestSchema = z.object({ cellIndex: z.number().int().min(0).max(24) }).strict();
-export const minesConfigResponseSchema = z.object({
-  boardSize: z.literal(25), minMines: z.literal(3), maxMines: z.literal(24),
-  minBet: z.literal(100), maxBet: z.literal(5000), betStep: z.literal(100),
-  rtp: z.literal(0.95).nullable(), enabled: z.boolean(),
-  ruleVersion: z.union([z.literal(1), z.literal(2)]).optional(),
-  maxMultiplier: z.literal(1000).optional(),
-}).strict();
-export const minesRoundSchema = z.object({
-  id: z.string().uuid(), amount: moneySchema, mineCount: z.number().int().min(1).max(24),
-  revealedCells: z.array(z.number().int().min(0).max(24)).max(25),
-  status: z.enum(["ACTIVE", "LOST", "CASHED_OUT"]), payout: moneySchema,
-  cashoutAmount: moneySchema, multiplier: z.number().nonnegative(),
-  nextMultiplier: z.number().nonnegative().nullable(),
-  mineCells: z.array(z.number().int().min(0).max(24)).nullable(),
-  createdAt: isoDateTimeSchema, settledAt: isoDateTimeSchema.nullable(),
-  version: z.number().int().positive(), ruleVersion: z.union([z.literal(1), z.literal(2)]),
-  settlementReason: z.enum(["MULTIPLIER_LIMIT", "ACCOUNT_LIMIT"]).nullable().optional(),
-}).strict();
+export const minesStartRequestSchema = z
+  .object({
+    amount: z
+      .number()
+      .int()
+      .min(100)
+      .max(5000)
+      .refine((value) => value % 100 === 0),
+    mineCount: z.number().int().min(3).max(24),
+  })
+  .strict();
+export const minesRevealRequestSchema = z
+  .object({ cellIndex: z.number().int().min(0).max(24) })
+  .strict();
+export const minesConfigResponseSchema = z
+  .object({
+    boardSize: z.literal(25),
+    minMines: z.literal(3),
+    maxMines: z.literal(24),
+    minBet: z.literal(100),
+    maxBet: z.literal(5000),
+    betStep: z.literal(100),
+    rtp: z.literal(0.95).nullable(),
+    enabled: z.boolean(),
+    ruleVersion: z.union([z.literal(1), z.literal(2)]).optional(),
+    maxMultiplier: z.literal(1000).optional(),
+  })
+  .strict();
+export const minesRoundSchema = z
+  .object({
+    id: z.string().uuid(),
+    amount: moneySchema,
+    mineCount: z.number().int().min(1).max(24),
+    revealedCells: z.array(z.number().int().min(0).max(24)).max(25),
+    status: z.enum(["ACTIVE", "LOST", "CASHED_OUT"]),
+    payout: moneySchema,
+    cashoutAmount: moneySchema,
+    multiplier: z.number().nonnegative(),
+    nextMultiplier: z.number().nonnegative().nullable(),
+    mineCells: z.array(z.number().int().min(0).max(24)).nullable(),
+    createdAt: isoDateTimeSchema,
+    settledAt: isoDateTimeSchema.nullable(),
+    version: z.number().int().positive(),
+    ruleVersion: z.union([z.literal(1), z.literal(2)]),
+    settlementReason: z.enum(["MULTIPLIER_LIMIT", "ACCOUNT_LIMIT"]).nullable().optional(),
+  })
+  .strict();
 export const minesActiveResponseSchema = z.object({ round: minesRoundSchema.nullable() }).strict();
 export const minesRoundResponseSchema = z.object({ round: minesRoundSchema }).strict();
-export const minesMutationResponseSchema = z.object({ round: minesRoundSchema, balance: moneySchema, walletVersion: z.number().int().nonnegative().safe().optional() }).strict();
-export const minesHistoryResponseSchema = z.object({ items: z.array(minesRoundSchema), nextCursor: z.string().nullable() }).strict();
+export const minesMutationResponseSchema = z
+  .object({
+    round: minesRoundSchema,
+    balance: moneySchema,
+    walletVersion: z.number().int().nonnegative().safe().optional(),
+  })
+  .strict();
+export const minesHistoryResponseSchema = z
+  .object({ items: z.array(minesRoundSchema), nextCursor: z.string().nullable() })
+  .strict();
 export type MinesRound = z.infer<typeof minesRoundSchema>;
 
 // Request IDs correlate a single attempt; idempotency keys survive reconnects.
 const gameIdempotencyKeySchema = z.string().regex(/^[A-Za-z0-9._:-]{8,128}$/);
-export const minesCommandSchema = z.object({
-  type: z.literal("mines_command"),
-  requestId: z.string().uuid(),
-  idempotencyKey: gameIdempotencyKeySchema,
-  action: z.discriminatedUnion("kind", [
-    minesStartRequestSchema.extend({ kind: z.literal("start") }).strict(),
-    minesRevealRequestSchema.extend({ kind: z.literal("reveal"), roundId: z.string().uuid() }).strict(),
-    z.object({ kind: z.literal("cashout"), roundId: z.string().uuid() }).strict(),
-  ]),
-}).strict();
-export const minesCommandResultSchema = z.object({
-  type: z.literal("mines_result"),
-  requestId: z.string().uuid(),
-  result: z.discriminatedUnion("ok", [
-    z.object({ ok: z.literal(true), data: minesMutationResponseSchema }).strict(),
-    z.object({ ok: z.literal(false), status: z.number().int().min(400).max(599), error: apiErrorResponseSchema }).strict(),
-  ]),
-}).strict();
+export const minesCommandSchema = z
+  .object({
+    type: z.literal("mines_command"),
+    requestId: z.string().uuid(),
+    idempotencyKey: gameIdempotencyKeySchema,
+    action: z.discriminatedUnion("kind", [
+      minesStartRequestSchema.extend({ kind: z.literal("start") }).strict(),
+      minesRevealRequestSchema
+        .extend({ kind: z.literal("reveal"), roundId: z.string().uuid() })
+        .strict(),
+      z.object({ kind: z.literal("cashout"), roundId: z.string().uuid() }).strict(),
+    ]),
+  })
+  .strict();
+export const minesCommandResultSchema = z
+  .object({
+    type: z.literal("mines_result"),
+    requestId: z.string().uuid(),
+    result: z.discriminatedUnion("ok", [
+      z.object({ ok: z.literal(true), data: minesMutationResponseSchema }).strict(),
+      z
+        .object({
+          ok: z.literal(false),
+          status: z.number().int().min(400).max(599),
+          error: apiErrorResponseSchema,
+        })
+        .strict(),
+    ]),
+  })
+  .strict();
 export type MinesCommand = z.infer<typeof minesCommandSchema>;
 export type MinesCommandResult = z.infer<typeof minesCommandResultSchema>;
 export type MinesMutationResponse = z.infer<typeof minesMutationResponseSchema>;
@@ -411,25 +478,62 @@ export const plinkoCommandResultSchema = z
 export type PlinkoCommand = z.infer<typeof plinkoCommandSchema>;
 export type PlinkoCommandResult = z.infer<typeof plinkoCommandResultSchema>;
 
-export const hiloCommandResultSchema = z.object({
-  type: z.literal("hilo_result"), requestId: z.string().uuid(),
-  result: z.discriminatedUnion("ok", [
-    z.object({ ok: z.literal(true), data: hiloMutationResponseSchema }).strict(),
-    z.object({ ok: z.literal(false), status: z.number().int().min(400).max(599), error: apiErrorResponseSchema }).strict(),
-  ]),
-}).strict();
+export const hiloCommandResultSchema = z
+  .object({
+    type: z.literal("hilo_result"),
+    requestId: z.string().uuid(),
+    result: z.discriminatedUnion("ok", [
+      z.object({ ok: z.literal(true), data: hiloMutationResponseSchema }).strict(),
+      z
+        .object({
+          ok: z.literal(false),
+          status: z.number().int().min(400).max(599),
+          error: apiErrorResponseSchema,
+        })
+        .strict(),
+    ]),
+  })
+  .strict();
 export type HiloCommandResult = z.infer<typeof hiloCommandResultSchema>;
 
-export const blackjackCommandResultSchema = z.object({
-  type: z.literal("blackjack_result"), requestId: z.string().uuid(),
-  result: z.discriminatedUnion("ok", [
-    z.object({ ok: z.literal(true), data: blackjackMutationResponseSchema }).strict(),
-    z.object({ ok: z.literal(false), status: z.number().int().min(400).max(599), error: apiErrorResponseSchema }).strict(),
-  ]),
-}).strict();
+export const blackjackCommandResultSchema = z
+  .object({
+    type: z.literal("blackjack_result"),
+    requestId: z.string().uuid(),
+    result: z.discriminatedUnion("ok", [
+      z.object({ ok: z.literal(true), data: blackjackMutationResponseSchema }).strict(),
+      z
+        .object({
+          ok: z.literal(false),
+          status: z.number().int().min(400).max(599),
+          error: apiErrorResponseSchema,
+        })
+        .strict(),
+    ]),
+  })
+  .strict();
 export type BlackjackCommandResult = z.infer<typeof blackjackCommandResultSchema>;
 
+export const stormCommandResultSchema = z
+  .object({
+    type: z.literal("storm_result"),
+    requestId: z.string().uuid(),
+    result: z.discriminatedUnion("ok", [
+      z.object({ ok: z.literal(true), data: stormMutationResponseSchema }).strict(),
+      z
+        .object({
+          ok: z.literal(false),
+          status: z.number().int().min(400).max(599),
+          error: apiErrorResponseSchema,
+        })
+        .strict(),
+    ]),
+  })
+  .strict();
+export type StormCommandResult = z.infer<typeof stormCommandResultSchema>;
+
 export const liveClientMessageSchema = z.discriminatedUnion("type", [
+  stormCommandSchema,
   minesCommandSchema,
   plinkoCommandSchema,
   hiloCommandSchema,
@@ -440,6 +544,7 @@ export const liveClientMessageSchema = z.discriminatedUnion("type", [
 ]);
 
 export const liveServerMessageSchema = z.discriminatedUnion("type", [
+  stormCommandResultSchema,
   minesCommandResultSchema,
   plinkoCommandResultSchema,
   hiloCommandResultSchema,
@@ -493,3 +598,8 @@ export type TableUserSnapshot = z.infer<typeof tableUserSnapshotSchema>;
 export type UserSnapshot = z.infer<typeof userSnapshotSchema>;
 export type LiveClientMessage = z.infer<typeof liveClientMessageSchema>;
 export type LiveServerMessage = z.infer<typeof liveServerMessageSchema>;
+
+export * from "./storm-settings.js";
+
+export * from "./storm-rtp.js";
+export * from "./storm-presets.js";

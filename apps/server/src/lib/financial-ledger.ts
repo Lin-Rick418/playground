@@ -1,6 +1,7 @@
 import { isMoney, sumMoney, toMinorUnits } from "@baccarat/contracts";
 export const financialLedgerActorTypes = ["SYSTEM", "ADMIN", "PLAYER"] as const;
 export const financialLedgerSources = [
+  "STORM_BET_DEBIT", "STORM_SETTLEMENT_CREDIT",
   "LEGACY_OPENING_BALANCE",
   "INITIAL_FUNDING",
   "ADMIN_ADJUSTMENT",
@@ -15,7 +16,7 @@ export const financialLedgerSources = [
   "MINES_SETTLEMENT_CREDIT",
   "SETTLEMENT_CREDIT",
 ] as const;
-export const financialLedgerReferenceTypes = ["USER", "BALANCE_ADJUSTMENT", "BET", "ROUND", "MINES_ROUND", "PLINKO_ROUND", "HILO_ROUND", "BLACKJACK_ROUND", "BLACKJACK_ACTION"] as const;
+export const financialLedgerReferenceTypes = ["STORM_ROUND", "USER", "BALANCE_ADJUSTMENT", "BET", "ROUND", "MINES_ROUND", "PLINKO_ROUND", "HILO_ROUND", "BLACKJACK_ROUND", "BLACKJACK_ACTION"] as const;
 
 export type FinancialLedgerActorType = (typeof financialLedgerActorTypes)[number];
 export type FinancialLedgerSource = (typeof financialLedgerSources)[number];

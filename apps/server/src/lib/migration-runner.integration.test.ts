@@ -75,7 +75,55 @@ describe("versioned PostgreSQL migrations", { skip: !shouldRun }, () => {
       INSERT INTO mines_rounds(id,user_id,amount,mine_count,mine_cells,maximum_payout)
         VALUES ('migration-mines-round','migration-mines',100,3,ARRAY[22,23,24],218500);
     `);
-    const afterMinesV2 = await runMigrations(pool);
+    const beforeProfiles = await runMigrations(
+      pool,
+      migrationCatalog.filter(({ version }) => version < 16),
+    );
+    await pool.query(`INSERT INTO storm_sessions(user_id,amount,progress,version,maximum_payout)
+      VALUES('migration-mines',20,'{"freeLeft":2,"freeGranted":100,"feature":"normal","multiplier":9,"featureWin":30}',1,1000000)`);
+    const beforeConfigurable = await runMigrations(
+      pool,
+      migrationCatalog.filter(({ version }) => version < 17),
+    );
+    await pool.query(`INSERT INTO storm_math_profiles(id,draft_id,model_revision,target_rtp,max_win_factor,payout_scale,fingerprint,report)
+      VALUES('migration-profile','migration-draft','balanced-2.0',96,1000,206672,repeat('a',64),'{"passed":true}');`);
+    const beforeStakes = await runMigrations(
+      pool,
+      migrationCatalog.filter(({ version }) => version < 19),
+    );
+    await assert.rejects(
+      pool.query(
+        "UPDATE storm_sessions SET amount=5000,maximum_payout=250000000 WHERE user_id='migration-mines'",
+      ),
+      /storm_sessions_amount_check/,
+    );
+    const afterStakes = await runMigrations(pool);
+    const afterConfigurable = { applied: [...beforeStakes.applied, ...afterStakes.applied] };
+    const afterProfiles = {
+      applied: [...beforeConfigurable.applied, ...afterConfigurable.applied],
+    };
+    const oldProfile = (
+      await pool.query(
+        "SELECT settings,cap_scope,free_max FROM storm_math_profiles WHERE id='migration-profile'",
+      )
+    ).rows[0];
+    assert.deepEqual(oldProfile, { settings: null, cap_scope: "cycle", free_max: 30 });
+    const afterMinesV2 = { applied: [...beforeProfiles.applied, ...afterProfiles.applied] };
+    const legacyStorm = (
+      await pool.query(
+        "SELECT amount,rule_version,math_profile_id,maximum_payout,progress FROM storm_sessions WHERE user_id='migration-mines'",
+      )
+    ).rows[0];
+    assert.equal(legacyStorm.rule_version, 1);
+    assert.equal(legacyStorm.amount, "20.00");
+    assert.equal(legacyStorm.math_profile_id, null);
+    assert.equal(legacyStorm.maximum_payout, "1000000.00");
+    assert.equal(legacyStorm.progress.freeLeft, 2);
+    assert.equal(
+      (await pool.query("SELECT active_profile_id FROM storm_math_settings WHERE id=1")).rows[0]
+        .active_profile_id,
+      null,
+    );
     const firstRun = { applied: [...beforeMinesV2.applied, ...afterMinesV2.applied] };
     const legacyRound = (
       await pool.query(
@@ -127,6 +175,114 @@ describe("versioned PostgreSQL migrations", { skip: !shouldRun }, () => {
     assert.deepEqual(secondRun.applied, []);
   });
 
+  it("enforces expanded stakes and the money ceiling without rewriting legacy series", async () => {
+    const client = await pool.connect();
+    try {
+      await client.query("BEGIN");
+      for (const amount of [10, 20, 50, 100, 200, 500, 1000, 2000, 5000]) {
+        await client.query(
+          "UPDATE storm_sessions SET amount=$1::numeric,maximum_payout=$1::numeric*50000 WHERE user_id='migration-mines'",
+          [amount],
+        );
+        const result = {
+          state: {},
+          board: Array.from({ length: 30 }, () => ({})),
+          frames: [{}],
+          payout: 0,
+          cost: amount,
+          wasFree: amount === 0,
+        };
+        await client.query(
+          "INSERT INTO storm_rounds(id,user_id,stake,amount,payout,result,version) VALUES($1,'migration-mines',$2::numeric,$2::numeric,0,$3,$2::numeric::integer)",
+          [`stake-${amount}`, amount, result],
+        );
+      }
+      await client.query(
+        "UPDATE storm_sessions SET progress=jsonb_set(progress,'{featureWin}','2000000000') WHERE user_id='migration-mines'",
+      );
+      for (const amount of [0, 30, 200.5, 5001]) {
+        await client.query("SAVEPOINT invalid_stake");
+        await assert.rejects(
+          client.query(
+            "UPDATE storm_sessions SET amount=$1::numeric,maximum_payout=$1::numeric*50000 WHERE user_id='migration-mines'",
+            [amount],
+          ),
+          /storm_sessions_amount_check/,
+        );
+        await client.query("ROLLBACK TO SAVEPOINT invalid_stake");
+        const result = {
+          state: {},
+          board: Array.from({ length: 30 }, () => ({})),
+          frames: [{}],
+          payout: 0,
+          cost: amount,
+          wasFree: amount === 0,
+        };
+        await assert.rejects(
+          client.query(
+            "INSERT INTO storm_rounds(id,user_id,stake,amount,payout,result,version) VALUES('bad-stake','migration-mines',$1,$1,0,$2,6000)",
+            [amount, result],
+          ),
+          /storm_rounds_stake_check/,
+        );
+        await client.query("ROLLBACK TO SAVEPOINT invalid_stake");
+      }
+      await assert.rejects(
+        client.query(
+          "UPDATE storm_sessions SET progress=jsonb_set(progress,'{featureWin}','2000000000.01') WHERE user_id='migration-mines'",
+        ),
+        /storm_session_progress/,
+      );
+    } finally {
+      await client.query("ROLLBACK");
+      client.release();
+    }
+    assert.equal(
+      (await pool.query("SELECT amount FROM storm_sessions WHERE user_id='migration-mines'"))
+        .rows[0].amount,
+      "20.00",
+    );
+  });
+
+  it("stores very low and high RTP without changing legacy profiles or active settings", async () => {
+    for (const [target, scale] of [
+      [0, 0],
+      [0.01, 1],
+      [10000, 20000000],
+      [1000000, 2147483647],
+    ]) {
+      await pool.query(
+        `INSERT INTO storm_math_profiles(id,draft_id,model_revision,target_rtp,max_win_factor,payout_scale,fingerprint,report,settings,cap_scope,free_max)
+        VALUES($1,$1,'configurable-3.0',$2,1000,$3,repeat('a',64),'{"passed":true}','{"freeMax":30,"capScope":"cycle"}','cycle',30)`,
+        ["wide-" + target, target, scale],
+      );
+      const saved = (
+        await pool.query("SELECT target_rtp,payout_scale FROM storm_math_profiles WHERE id=$1", [
+          "wide-" + target,
+        ])
+      ).rows[0];
+      assert.equal(Number(saved.target_rtp), target);
+      assert.equal(saved.payout_scale, scale);
+    }
+    await assert.rejects(
+      pool.query(`INSERT INTO storm_math_profiles(id,draft_id,model_revision,target_rtp,max_win_factor,payout_scale,fingerprint,report)
+      VALUES('invalid','invalid','balanced-2.0',1000,1000,206672,repeat('a',64),'{"passed":true}')`),
+      /storm_profile_scale_range/,
+    );
+    const old = (
+      await pool.query(
+        "SELECT target_rtp,payout_scale FROM storm_math_profiles WHERE id='migration-profile'",
+      )
+    ).rows[0];
+    assert.equal(Number(old.target_rtp), 96);
+    assert.equal(old.payout_scale, 206672);
+    assert.equal(
+      (await pool.query("SELECT active_profile_id FROM storm_math_settings WHERE id=1")).rows[0]
+        .active_profile_id,
+      null,
+    );
+  });
+
   it("rejects checksum drift in an already-applied migration", async () => {
     await pool.query("UPDATE schema_migrations SET checksum = 'tampered' WHERE version = $1", [
       migrationCatalog[0].version,
@@ -168,8 +324,9 @@ describe("versioned PostgreSQL migrations", { skip: !shouldRun }, () => {
 
   it("serializes concurrent runners so each migration is recorded exactly once", async () => {
     await pool.query(`
-      DROP TABLE IF EXISTS blackjack_round_actions, blackjack_rounds, hilo_round_steps, hilo_rounds, hilo_previews, plinko_rounds, mines_rounds, balance_adjustments, bets, game_rounds, users, game_tables CASCADE;
+      DROP TABLE IF EXISTS storm_math_publications, storm_math_settings, storm_math_profiles, storm_rounds, storm_sessions, blackjack_round_actions, blackjack_rounds, hilo_round_steps, hilo_rounds, hilo_previews, plinko_rounds, mines_rounds, balance_adjustments, bets, game_rounds, users, game_tables CASCADE;
       DROP TABLE IF EXISTS schema_migrations;
+      DROP FUNCTION IF EXISTS reject_storm_profile_mutation();
     `);
     const secondPool = new Pool({ connectionString: databaseUrl });
 

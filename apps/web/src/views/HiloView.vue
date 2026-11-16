@@ -1,4 +1,6 @@
 <script setup lang="ts">
+import CardSuit from "../components/ui/CardSuit.vue";
+import AppIcon from "../components/ui/AppIcon.vue";
 import { computed, onUnmounted, ref, watch } from "vue";
 import { useRouter } from "vue-router";
 import type { HiloAction, HiloChoice } from "@baccarat/contracts";
@@ -200,7 +202,7 @@ watch(
   { flush: "post" },
 );
 const suitNames = ["黑桃", "紅心", "方塊", "梅花"];
-const suits = ["♠", "♥", "♦", "♣"];
+const suits = ["S", "H", "D", "C"] as const;
 const rankName = (n: number) =>
   ["A", "2", "3", "4", "5", "6", "7", "8", "9", "10", "J", "Q", "K"][Math.floor(n / 4)];
 const cardLabel = (n: number) => `${suitNames[n % 4]} ${rankName(n)}`;
@@ -364,12 +366,12 @@ onUnmounted(() => {
             <div class="card-face card-front" aria-hidden="true">
               <template v-if="card !== null">
                 <span class="card-corner"
-                  >{{ rankName(card) }}<small>{{ suits[card % 4] }}</small></span
-                >
-                <span class="card-suit">{{ suits[card % 4] }}</span>
+                  >{{ rankName(card) }}<small><CardSuit :suit="suits[card % 4]!" /></small
+                ></span>
+                <span class="card-suit"><CardSuit :suit="suits[card % 4]!" /></span>
                 <span class="card-corner bottom"
-                  >{{ rankName(card) }}<small>{{ suits[card % 4] }}</small></span
-                >
+                  >{{ rankName(card) }}<small><CardSuit :suit="suits[card % 4]!" /></small
+                ></span>
               </template>
             </div>
             <div class="card-face card-back" aria-hidden="true"></div>
@@ -396,7 +398,9 @@ onUnmounted(() => {
           @scroll.passive="updateTrailArrows"
         >
           <li :class="{ red: red(game.round.initialCard) }">
-            <b>{{ rankName(game.round.initialCard) }}{{ suits[game.round.initialCard % 4] }}</b
+            <b
+              >{{ rankName(game.round.initialCard)
+              }}<CardSuit :suit="suits[game.round.initialCard % 4]!" /></b
             ><small>起始</small>
           </li>
           <li
@@ -405,8 +409,11 @@ onUnmounted(() => {
             :class="{ red: red(step.card), lost: step.won === false }"
             :aria-label="`${cardLabel(step.card)}，${step.kind === 'skip' ? '跳牌' : step.won ? '猜對' : '猜錯'}`"
           >
-            <b>{{ rankName(step.card) }}{{ suits[step.card % 4] }}</b
-            ><small>{{ step.kind === "skip" ? "↷ 跳牌" : step.won ? "✓ 猜對" : "✕ 猜錯" }}</small>
+            <b>{{ rankName(step.card) }}<CardSuit :suit="suits[step.card % 4]!" /></b
+            ><small
+              ><AppIcon :name="step.kind === 'skip' ? 'skip' : step.won ? 'check' : 'close'" />
+              {{ step.kind === "skip" ? "跳牌" : step.won ? "猜對" : "猜錯" }}</small
+            >
           </li>
         </ol>
         <button

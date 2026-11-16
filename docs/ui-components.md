@@ -1,6 +1,10 @@
 # 共用玩家 UI
 
-共用元件放在 `apps/web/src/components/ui/`；尺寸、互動狀態與配色變數集中在 `apps/web/src/styles/ui.css`。此 CSS 排除 mobile-forever 的像素轉換，讓各頁面的同類控制項維持相同實際尺寸。Hi-Lo、Plinko 與 Blackjack 的頁面 CSS 也排除轉換；Mines 仍會縮放，設定共用尺寸時須使用共用 CSS variable。
+所有現有與未來畫面都不得超過 `100vh`（支援時使用 `100dvh` 對齊實際可見高度），包含登入、遊戲選單、帳戶、歷史、規則、所有遊戲、Big Win 與各類彈窗；navbar、safe-area、內容和主要操作都包含在同一高度內。長內容只允許指定區域內部捲動，不得撐高整頁或裁掉必要內容。詳細高度、共用 navbar 與直向遊玩要求依 [全站布局規範](game-layout-standard.md)。
+
+共用 `PortraitGuard` 已在手機橫向時覆蓋遊戲與大廳，轉回直向後恢復原畫面；詳細範圍、自動模式行為與驗證限制見該文件。全站高度要求仍須逐頁、逐彈窗驗收，文件不代表實作全部通過。
+
+共用元件放在 `apps/web/src/components/ui/`；尺寸、互動狀態與配色變數集中在 `apps/web/src/styles/ui.css`。此 CSS 排除 mobile-forever 的像素轉換，讓各頁面的同類控制項維持相同實際尺寸。Hi-Lo、Plinko、Blackjack 與沙海神殿的頁面 CSS 也排除轉換；Mines 仍會縮放，設定共用尺寸時須使用共用 CSS variable。
 
 | 元件            | 使用範圍                                                                                                                                                                                                           |
 | --------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
@@ -9,9 +13,13 @@
 | `AppInput`      | 登入與密碼表單的原生 input，保留 autocomplete、required、maxlength 與 trim modifier。                                                                                                                              |
 | `AppPageHeader` | 共用返回箭頭與 h1；actions、subtitle slots 分開排版，標題維持水平中心。                                                                                                                                            |
 | `StakeControl`  | 投注額選單及 MIN／−／＋／MAX；共同處理步進、上下限、disabled。stacked 用於設定面板，compactLandscape 用於短橫向遊戲畫面。                                                                                          |
-| `BalanceBar`    | Mines／Plinko／Hi-Lo／Blackjack 餘額、數字滾動標示及餘額不足警示；warn()／clearWarning() 共用動畫與清理，支援 reduced motion。                                                                                                |
+| `BalanceBar`    | Mines／Plinko／Hi-Lo／Blackjack 餘額、數字滾動標示及餘額不足警示；warn()／clearWarning() 共用動畫與清理，支援 reduced motion。                                                                                     |
 
-## 尺寸
+## 圖示與圖片
+
+全站不使用 emoji、顏文字或一般字型的裝飾字元代替 icon。文字圖示統一使用 `AppIcon` 與自託管 WOFF2；花色使用 `CardSuit`，保留中文 accessible label。既有 SVG 圖示／遊戲美術可以沿用，生成的海報使用 WebP。完整資產、原始輪廓、重建方式及海報 prompt 見 [圖片與圖示資產](image-assets.md)。
+
+## 控制尺寸
 
 - 一般控制项：44px，主要操作：52px，緊湊操作：36px。
 - 遊戲頁可用高度 ≤650px 時，統一縮為 36／44／32px，保留棋盤與必要操作區。
@@ -27,7 +35,8 @@
 
 ## Header、通訊與動畫
 
-- `/lobby`、`/baccarat`、`/game/:tableId`、`/hilo`、`/mines`、`/plinko`、`/blackjack` 均使用 `AppPageHeader`。共用元件本身不能保證外層留白相同：header 左右留白必須使用 `var(--ui-page-gutter)`（16 個 CSS px）。
+- `/lobby`、`/baccarat`、`/game/:tableId`、`/hilo`、`/mines`、`/plinko`、`/blackjack`、`/storm-demo` 均使用 `AppPageHeader`。共用元件本身不能保證外層留白相同：header 左右留白必須使用 `var(--ui-page-gutter)`（16 個 CSS px）。
+- 沙海神殿沿用共用 header 高度、標題字級與 `.player-page` 短螢幕尺寸；右側 actions slot 只保留規則，音效按鈕與底部音效／錢包說明列已移除。完整規格見 [沙海神殿 Navbar](storm-navbar.md)。
 - 百家樂選桌與牌桌在頁面設定 `padding-inline: var(--ui-page-gutter)`；大廳為了保留滿寬輪播，只在 header 設定左右 margin。每頁只套一層留白。
 - 大廳使用 `100dvh`（`100vh` fallback），包含 safe-area 留白，整頁不捲動；輪播卡片依剩餘高度等比例縮放，保留橫向捲動、鍵盤切換與下方控制列。
 - 視窗寬度不超過 430px 時，大廳、Hi-Lo、百家樂、Mines、Plinko 的 `html` 與 `body` 使用對應的不透明底色，供手機瀏覽器頂端與狀態列取色。超過 mobile-forever 的 `maxDisplayWidth`（430px）時，所有頁面透過 `--ui-outer-background` 統一使用 `rgba(128, 128, 128, 0.35)` 作為容器外背景；頁面內部維持原本配色。`#app` 保留預設漸層供沒有獨立背景的頁面使用。
@@ -44,7 +53,7 @@
 
 共用元件測試涵蓋原生屬性、click/disabled、數字模型、投注限額、警示重觸發與清理。既有遊戲 E2E 覆蓋下注、自動投球、復原、Safari 排版；viewport E2E 檢查共用頁首對齊與彈窗焦點返回。
 
-Header／留白變更須驗證 `e2e/viewport.spec.ts`：跨上述六個頁面比較返回按鈕與 SVG 的實際位置，檢查箭頭與標題垂直中心；手機尺寸至少 320×568、390×844、483×771，同時跑 Chromium 與 WebKit。百家樂牌桌另檢查副標不存在、「遊戲規則」仍可見，以及操作區未超出 viewport。
+Header／留白變更須驗證 `e2e/viewport.spec.ts`：跨上述頁面比較返回按鈕與 SVG 的實際位置，檢查箭頭與標題垂直中心；手機尺寸至少 320×568、390×844、483×771，同時跑 Chromium 與 WebKit。百家樂牌桌另檢查副標不存在、「遊戲規則」仍可見，以及操作區未超出 viewport。
 
 ```sh
 E2E_MOCKED_ONLY=true npm run test:e2e -- e2e/viewport.spec.ts

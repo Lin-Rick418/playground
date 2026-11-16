@@ -11,7 +11,7 @@ test("lobby centers game covers, switches horizontally and opens the selected ga
     balance: 97072,
     walletVersion: 1,
   };
-  await page.routeWebSocket("**/api/ws", (socket) => socket.close());
+  await page.routeWebSocket("**/api/ws", (socket) => socket.onMessage(() => {}));
   await page.route("**/api/**", (route) => {
     const path = new URL(route.request().url()).pathname;
     if (path === "/api/auth/refresh")
@@ -36,6 +36,37 @@ test("lobby centers game covers, switches horizontally and opens the selected ga
           ruleVersion: 2,
           maxMultiplier: 1000,
           enabled: true,
+        },
+      });
+    if (path === "/api/storm/config")
+      return route.fulfill({
+        json: {
+          stakes: [10, 20, 50, 100],
+          enabled: true,
+          ruleVersion: 1,
+          maxWinFactor: 25000,
+          rtp: null,
+        },
+      });
+    if (path === "/api/storm/state")
+      return route.fulfill({
+        json: {
+          session: {
+            progress: {
+              freeLeft: 0,
+              freeGranted: 0,
+              feature: "normal",
+              multiplier: 0,
+              featureWin: 0,
+            },
+            amount: 20,
+            version: 0,
+            ruleVersion: 1,
+          },
+          lastRound: null,
+          recent: [],
+          balance: user.balance,
+          walletVersion: 1,
         },
       });
     if (path === "/api/mines/active") return route.fulfill({ json: { round: null } });
@@ -64,9 +95,9 @@ test("lobby centers game covers, switches horizontally and opens the selected ga
     );
   }
   const images = page.locator(".game-poster img");
-  await expect(images).toHaveCount(5);
+  await expect(images).toHaveCount(6);
   for (const image of await images.all()) {
-    await expect(image).toHaveAttribute("src", /\.(webp|svg)$/);
+    await expect(image).toHaveAttribute("src", /\.webp$/);
     await expect
       .poll(() => image.evaluate((img: HTMLImageElement) => img.complete && img.naturalWidth > 0))
       .toBe(true);
@@ -98,7 +129,7 @@ test("lobby centers game covers, switches horizontally and opens the selected ga
   await page.getByRole("button", { name: "下一個遊戲" }).click();
   const plinko = page.getByRole("button", { name: "進入Plinko", exact: true });
   await expect(plinko).toHaveClass(/active/);
-  await expect(plinko.locator(".poster-copy")).toHaveText("PLINKO落球進入遊戲 ↗");
+  await expect(plinko.locator(".poster-copy")).toHaveText("PLINKO落球進入遊戲");
   for (const selector of [".poster-eyebrow", ".poster-title"]) {
     const reference = await baccarat.locator(selector).evaluate((el) => ({
       fontSize: getComputedStyle(el).fontSize,
@@ -146,4 +177,17 @@ test("lobby centers game covers, switches horizontally and opens the selected ga
   await page.getByRole("button", { name: "返回遊戲選擇" }).click();
   await baccarat.click();
   await expect(page).toHaveURL(/\/baccarat$/);
+  await page.goto("/lobby");
+  await page.getByRole("button", { name: "第 6 張遊戲圖片" }).click();
+  const storm = page.getByRole("button", { name: "進入沙海神殿", exact: true });
+  await expect(storm).toHaveClass(/active/);
+  await expect(storm.locator("img")).toHaveAttribute("src", "/images/games/storm-demo.webp");
+  await waitForCenteredCover(storm);
+  await page.screenshot({ path: test.info().outputPath("storm-lobby.png") });
+  await storm.click();
+  await expect(page).toHaveURL(/\/storm-demo$/);
+  await expect(page.getByTestId("storm-board").locator(".symbol-cell")).toHaveCount(30);
+  await expect(page.getByTestId("demo-balance")).toHaveText("97,072");
+  await expect(page.getByRole("button", { name: "開始探索", exact: true })).toBeEnabled();
+  await page.screenshot({ path: test.info().outputPath("storm-demo-from-lobby.png") });
 });

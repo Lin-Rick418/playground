@@ -1,4 +1,6 @@
 <script setup lang="ts">
+import CardSuit from "../components/ui/CardSuit.vue";
+import AppIcon from "../components/ui/AppIcon.vue";
 import AppPageHeader from "../components/ui/AppPageHeader.vue";
 import { useRoute, useRouter } from "vue-router";
 
@@ -110,14 +112,24 @@ function returnToGame() {
         </p>
         <div class="pair-examples" aria-label="對子判定範例">
           <div class="pair-example" aria-label="兩張 J，構成對子">
-            <span class="sample-card red"><b>J</b><i>♥</i></span>
-            <span class="sample-card"><b>J</b><i>♠</i></span>
-            <strong class="pair-result correct" aria-hidden="true">✓</strong>
+            <span class="sample-card red"
+              ><b>J</b><i><CardSuit suit="H" /></i
+            ></span>
+            <span class="sample-card"
+              ><b>J</b><i><CardSuit suit="S" /></i
+            ></span>
+            <strong class="pair-result correct" aria-hidden="true"><AppIcon name="check" /></strong>
           </div>
           <div class="pair-example" aria-label="J 與 Q，不構成對子">
-            <span class="sample-card red"><b>J</b><i>♥</i></span>
-            <span class="sample-card"><b>Q</b><i>♠</i></span>
-            <strong class="pair-result incorrect" aria-hidden="true">×</strong>
+            <span class="sample-card red"
+              ><b>J</b><i><CardSuit suit="H" /></i
+            ></span>
+            <span class="sample-card"
+              ><b>Q</b><i><CardSuit suit="S" /></i
+            ></span>
+            <strong class="pair-result incorrect" aria-hidden="true"
+              ><AppIcon name="close"
+            /></strong>
           </div>
         </div>
       </article>

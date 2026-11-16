@@ -1,3 +1,4 @@
+import { stormRouter } from "./modules/storm/router.js";
 import { blackjackRouter } from "./modules/blackjack/router.js";
 import { hiloRouter } from "./modules/hilo/router.js";
 import cors from "cors";
@@ -96,6 +97,7 @@ export function createApp(options: CreateAppOptions = {}) {
   app.use("/plinko", plinkoRouter);
   app.use("/hilo", hiloRouter);
   app.use("/blackjack", blackjackRouter);
+  app.use("/storm", stormRouter);
   options.registerAdditionalRoutes?.(app);
 
   app.use(notFoundHandler);

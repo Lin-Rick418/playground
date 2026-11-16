@@ -1,4 +1,5 @@
 import { expect, test } from "@playwright/test";
+import { emulateMobileOrientation } from "./portrait-fixtures";
 
 const now = new Date().toISOString();
 const expiresAt = new Date(Date.now() + 3_600_000).toISOString();
@@ -31,6 +32,7 @@ const table = {
 };
 
 test.beforeEach(async ({ page }) => {
+  const { initialStormProgress } = await import("@baccarat/contracts");
   await page.routeWebSocket("**/api/ws", (socket) => socket.close());
   await page.route("**/api/**", (route) => {
     const path = new URL(route.request().url()).pathname;
@@ -84,6 +86,26 @@ test.beforeEach(async ({ page }) => {
         },
       });
     if (path === "/api/blackjack/state") return route.fulfill({ json: { round: null } });
+    if (path === "/api/storm/config")
+      return route.fulfill({
+        json: {
+          stakes: [10, 20, 50, 100],
+          enabled: true,
+          ruleVersion: 1,
+          maxWinFactor: 25000,
+          rtp: null,
+        },
+      });
+    if (path === "/api/storm/state")
+      return route.fulfill({
+        json: {
+          session: { progress: initialStormProgress(), amount: 20, version: 0, ruleVersion: 1 },
+          lastRound: null,
+          recent: [],
+          balance: user.balance,
+          walletVersion: user.walletVersion,
+        },
+      });
     if (path === "/api/game/tables/table-1/state")
       return route.fulfill({
         json: {
@@ -398,6 +420,7 @@ test("shared headers keep return buttons aligned and shared dialog buttons prese
     "/mines",
     "/plinko",
     "/hilo",
+    "/storm-demo",
     "/game/table-1",
     "/history",
     "/game/table-1/rules",
@@ -430,9 +453,25 @@ test("shared headers keep return buttons aligned and shared dialog buttons prese
   await expect(trigger).toBeFocused();
 });
 
-test("Baccarat, Hi-Lo, Plinko, Mines and Blackjack share the lobby return-button position", async ({
-  page,
-}) => {
+test("all games and lobbies show the mobile landscape reminder", async ({ page }) => {
+  await emulateMobileOrientation(page);
+  await page.setViewportSize({ width: 844, height: 390 });
+  for (const path of [
+    "/lobby",
+    "/baccarat",
+    "/game/table-1",
+    "/mines",
+    "/plinko",
+    "/hilo",
+    "/blackjack",
+    "/storm-demo",
+  ]) {
+    await page.goto(path);
+    await expect(page.getByRole("dialog", { name: "請將裝置轉為直向遊玩" }), path).toBeVisible();
+  }
+});
+
+test("all game headers share the lobby return-button position", async ({ page }) => {
   for (const viewport of [
     { width: 320, height: 568 },
     { width: 390, height: 844 },
@@ -448,6 +487,7 @@ test("Baccarat, Hi-Lo, Plinko, Mines and Blackjack share the lobby return-button
       "/plinko",
       "/mines",
       "/blackjack",
+      "/storm-demo",
     ]) {
       await page.goto(path);
       const header = page.locator(".ui-page-header");

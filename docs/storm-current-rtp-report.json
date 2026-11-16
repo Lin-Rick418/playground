@@ -1,0 +1,182 @@
+{
+  "startedAt": "2026-10-25T13:54:16.623Z",
+  "elapsedSeconds": 99.812516875,
+  "ruleVersion": 1,
+  "mathSha256": "74f4f0f864a5cec0f18bc1663cff1d8ed6b87fcd1146eb0fb335f5970be33b7c",
+  "contractsSha256": "d6603abc5693a337c345b117cf44351160bebfc5a4561a965f652e423af0d014",
+  "moneySha256": "4cb31bec72a2c9aa67d1d6a381f4002f19bf4be51a1e9db9532e644c3b42dd98",
+  "rng": "Production default: node:crypto randomInt; independent reruns differ",
+  "samplingUnit": "One paid spin plus its entire awarded free series; no incomplete series",
+  "stake": 20,
+  "paidCycles": 5000000,
+  "freeSpins": 3263978,
+  "totalSpins": 8263978,
+  "totalStake": 100000000,
+  "totalPayout": 5519036794,
+  "netPlayerProfit": 5419036794,
+  "rtpPercent": 5519.0367940004535,
+  "standardErrorPercentagePoints": 42.324719146747256,
+  "approximate95PercentInterval": [
+    5436.080344472829,
+    5601.993243528078
+  ],
+  "paidWinningSpins": 1871171,
+  "paidWinningSpinPercent": 37.42342,
+  "profitableCycles": 1599017,
+  "profitableCyclePercent": 31.98034,
+  "breakEvenCycles": 63158,
+  "maxCyclePayout": 3133392,
+  "paidCappedSpins": 46,
+  "cascadeLimitedSpins": 21,
+  "bonusCounts": [
+    4966604,
+    28103,
+    4719,
+    528,
+    46
+  ],
+  "contributions": {
+    "paidBase": {
+      "payout": 384259636,
+      "rtpPercentagePoints": 384.259636
+    },
+    "paidSuperBonus": {
+      "payout": 179196000,
+      "rtpPercentagePoints": 179.196
+    },
+    "normalFree": {
+      "payout": 1263113498,
+      "rtpPercentagePoints": 1263.1134980000002
+    },
+    "superFree": {
+      "payout": 3692467660,
+      "rtpPercentagePoints": 3692.46766
+    }
+  },
+  "features": {
+    "normal": {
+      "series": 81908,
+      "triggerPercent": 1.63816,
+      "spins": 2315100,
+      "averageSpins": 28.26463837476193,
+      "winningSpins": 860375,
+      "winningSpinPercent": 37.163621441838366,
+      "retriggers": 217296,
+      "cappedSpins": 0,
+      "zeroPayoutSeries": 34,
+      "profitableSeries": 81827,
+      "profitableSeriesPercent": 99.90110856082434,
+      "breakEvenSeries": 14,
+      "totalPayout": 1263113498,
+      "averageSeriesReturnX": 771.0562448112477,
+      "medianSeriesReturnX": 394.8,
+      "p90SeriesReturnX": 1834.8,
+      "p99SeriesReturnX": 5701.5,
+      "maxSeriesReturnX": 25245.5,
+      "averageFinalMultiplier": 88.44974849831544
+    },
+    "super": {
+      "series": 33350,
+      "triggerPercent": 0.6669999999999999,
+      "spins": 948878,
+      "averageSpins": 28.452113943028486,
+      "winningSpins": 352728,
+      "winningSpinPercent": 37.173166624160324,
+      "retriggers": 89729,
+      "cappedSpins": 3,
+      "zeroPayoutSeries": 14,
+      "profitableSeries": 33317,
+      "profitableSeriesPercent": 99.90104947526237,
+      "breakEvenSeries": 2,
+      "totalPayout": 3692467660,
+      "averageSeriesReturnX": 5535.933523238378,
+      "medianSeriesReturnX": 2009.1,
+      "p90SeriesReturnX": 14461.4,
+      "p99SeriesReturnX": 47978.5,
+      "maxSeriesReturnX": 156166.5,
+      "averageFinalMultiplier": 641.5265667166382
+    }
+  },
+  "batches": [
+    {
+      "cycles": 250000,
+      "rtpPercent": 5573.29852
+    },
+    {
+      "cycles": 250000,
+      "rtpPercent": 5582.36352
+    },
+    {
+      "cycles": 250000,
+      "rtpPercent": 5208.26264
+    },
+    {
+      "cycles": 250000,
+      "rtpPercent": 5681.15236
+    },
+    {
+      "cycles": 250000,
+      "rtpPercent": 5408.6258800000005
+    },
+    {
+      "cycles": 250000,
+      "rtpPercent": 5424.20592
+    },
+    {
+      "cycles": 250000,
+      "rtpPercent": 5653.01656
+    },
+    {
+      "cycles": 250000,
+      "rtpPercent": 5464.3704800000005
+    },
+    {
+      "cycles": 250000,
+      "rtpPercent": 5332.99384
+    },
+    {
+      "cycles": 250000,
+      "rtpPercent": 5765.74888
+    },
+    {
+      "cycles": 250000,
+      "rtpPercent": 5577.9406
+    },
+    {
+      "cycles": 250000,
+      "rtpPercent": 5432.64636
+    },
+    {
+      "cycles": 250000,
+      "rtpPercent": 5638.72908
+    },
+    {
+      "cycles": 250000,
+      "rtpPercent": 5547.5986
+    },
+    {
+      "cycles": 250000,
+      "rtpPercent": 5456.39316
+    },
+    {
+      "cycles": 250000,
+      "rtpPercent": 5408.23712
+    },
+    {
+      "cycles": 250000,
+      "rtpPercent": 5304.88796
+    },
+    {
+      "cycles": 250000,
+      "rtpPercent": 5664.3116
+    },
+    {
+      "cycles": 250000,
+      "rtpPercent": 5569.1352799999995
+    },
+    {
+      "cycles": 250000,
+      "rtpPercent": 5686.8175200000005
+    }
+  ]
+}

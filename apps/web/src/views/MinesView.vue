@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import AppIcon from "../components/ui/AppIcon.vue";
 import AppSelect from "../components/ui/AppSelect.vue";
 import AppButton from "../components/ui/AppButton.vue";
 import StakeControl from "../components/ui/StakeControl.vue";
@@ -297,7 +298,7 @@ onUnmounted(() => {
                 stroke-linecap="round"
               />
             </svg>
-            <span v-else class="cell-mark" aria-hidden="true">✦</span>
+            <AppIcon v-else class="cell-mark" name="sparkle" />
           </button>
         </div>
       </section>

@@ -1,0 +1,131 @@
+{
+  "modelRevision": "balanced-2.0",
+  "fingerprint": "b6493e80de69cb98c3813cb9c0683e47288ea0bd900af26f600461d529eaf18c",
+  "profile": {
+    "payoutScale": 206672,
+    "maxWinFactor": 1000
+  },
+  "targetRtp": 96,
+  "passed": true,
+  "startedAt": "2026-10-25T10:42:11.164Z",
+  "completedAt": "2026-10-25T10:48:55.799Z",
+  "trainingCycles": 2000000,
+  "samples": [
+    {
+      "stake": 10,
+      "cycles": 4000000,
+      "freeSpins": 859422,
+      "totalStake": 40000000,
+      "totalPayout": 38382218.68,
+      "rtpPercent": 95.95554669999817,
+      "interval95": [
+        95.73599168726514,
+        96.17510171273119
+      ],
+      "halfWidth": 0.21955501273302097,
+      "standardDeviationX": 2.2403572727859284,
+      "paidHitPercent": 47.624224999999996,
+      "profitableCyclePercent": 23.04705,
+      "featureTriggerPercent": 1.6712999999999998,
+      "baseRtpPercentagePoints": 82.656356575,
+      "maxReturnX": 56.588,
+      "maxConsecutivePaidMisses": 30,
+      "payoutBands": [
+        2077147,
+        1000971,
+        734974,
+        181024,
+        5884,
+        0
+      ]
+    },
+    {
+      "stake": 20,
+      "cycles": 4000000,
+      "freeSpins": 857143,
+      "totalStake": 80000000,
+      "totalPayout": 76763842.44,
+      "rtpPercent": 95.9548030499994,
+      "interval95": [
+        95.7350872032191,
+        96.1745188967797
+      ],
+      "halfWidth": 0.21971584678030634,
+      "standardDeviationX": 2.241998436533738,
+      "paidHitPercent": 47.6156,
+      "profitableCyclePercent": 23.0105,
+      "featureTriggerPercent": 1.662675,
+      "baseRtpPercentagePoints": 82.65504975,
+      "maxReturnX": 51.434,
+      "maxConsecutivePaidMisses": 21,
+      "payoutBands": [
+        2077596,
+        1001984,
+        733935,
+        180536,
+        5949,
+        0
+      ]
+    },
+    {
+      "stake": 50,
+      "cycles": 4000000,
+      "freeSpins": 857649,
+      "totalStake": 200000000,
+      "totalPayout": 191677050.36,
+      "rtpPercent": 95.83852518000597,
+      "interval95": [
+        95.61949199343218,
+        96.05755836657977
+      ],
+      "halfWidth": 0.2190331865737937,
+      "standardDeviationX": 2.2350325160591193,
+      "paidHitPercent": 47.607325,
+      "profitableCyclePercent": 23.020775,
+      "featureTriggerPercent": 1.66725,
+      "baseRtpPercentagePoints": 82.612212275,
+      "maxReturnX": 54.1482,
+      "maxConsecutivePaidMisses": 26,
+      "payoutBands": [
+        2077707,
+        1001462,
+        734186,
+        180774,
+        5871,
+        0
+      ]
+    },
+    {
+      "stake": 100,
+      "cycles": 4000000,
+      "freeSpins": 862549,
+      "totalStake": 400000000,
+      "totalPayout": 383811929.71,
+      "rtpPercent": 95.95298242749378,
+      "interval95": [
+        95.73337677859391,
+        96.17258807639365
+      ],
+      "halfWidth": 0.21960564889987322,
+      "standardDeviationX": 2.2408739683660532,
+      "paidHitPercent": 47.6288,
+      "profitableCyclePercent": 23.03225,
+      "featureTriggerPercent": 1.6761499999999998,
+      "baseRtpPercentagePoints": 82.65775814,
+      "maxReturnX": 53.8516,
+      "maxConsecutivePaidMisses": 25,
+      "payoutBands": [
+        2076909,
+        1001801,
+        734898,
+        180588,
+        5804,
+        0
+      ]
+    }
+  ],
+  "rng": "Training: fixed-seed xorshift32; independent validation: production crypto.randomInt",
+  "samplingUnit": "One paid spin and its entire free series, including retriggers and cycle cap",
+  "stoppingPolicy": "Fresh virtual funds per cycle; no stop-loss, take-profit or unfinished free series; no DB or wallets",
+  "tolerancePercentagePoints": 0.5
+}

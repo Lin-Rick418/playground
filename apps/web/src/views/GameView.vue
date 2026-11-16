@@ -1,4 +1,6 @@
 <script setup lang="ts">
+import CardSuit from "../components/ui/CardSuit.vue";
+import AppIcon from "../components/ui/AppIcon.vue";
 import AppButton from "../components/ui/AppButton.vue";
 import AppPageHeader from "../components/ui/AppPageHeader.vue";
 import { computed, onMounted, onUnmounted, ref, watch } from "vue";
@@ -695,10 +697,6 @@ async function handleRoundSettled(settledRound: ActiveRound, serverTimeIso: stri
   );
 }
 
-function cardSuitSymbol(suit: Card["suit"]) {
-  return suit === "S" ? "♠" : suit === "H" ? "♥" : suit === "D" ? "♦" : "♣";
-}
-
 function cardColor(suit: Card["suit"]) {
   return suit === "H" || suit === "D" ? "red" : "black";
 }
@@ -1384,7 +1382,7 @@ watch(
             aria-label="關閉本局結算"
             @click="dismissSettlementPopup"
           >
-            ✕
+            <AppIcon name="close" />
           </AppButton>
           <p id="settlement-title" class="settlement-eyebrow">本局結算</p>
           <p
@@ -1491,7 +1489,7 @@ watch(
             >
               <template v-if="isFeltCardFaceUp('player', index)">
                 <span>{{ card.rank }}</span>
-                <small>{{ cardSuitSymbol(card.suit) }}</small>
+                <small><CardSuit :suit="card.suit" /></small>
               </template>
             </div>
           </div>
@@ -1507,7 +1505,7 @@ watch(
             >
               <template v-if="isFeltCardFaceUp('banker', index)">
                 <span>{{ card.rank }}</span>
-                <small>{{ cardSuitSymbol(card.suit) }}</small>
+                <small><CardSuit :suit="card.suit" /></small>
               </template>
             </div>
           </div>
@@ -1673,7 +1671,7 @@ watch(
             <span>歷史</span>
             <span>紀錄</span>
           </span>
-          <span class="wallet-history-arrow">›</span>
+          <span class="wallet-history-arrow"><AppIcon name="chevron-right" /></span>
         </span>
       </button>
     </footer>
@@ -1697,7 +1695,7 @@ watch(
           aria-label="關閉路圖"
           @click="closeRoadmap"
         >
-          ✕
+          <AppIcon name="close" />
         </AppButton>
 
         <div class="modal-head">
@@ -2317,7 +2315,7 @@ watch(
   color: #1c1c1c;
 }
 
-.playing-card span {
+.playing-card > span {
   font-size: 22px;
   font-weight: 800;
 }

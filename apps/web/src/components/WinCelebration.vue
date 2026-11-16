@@ -1,13 +1,18 @@
 <script setup lang="ts">
+import AppIcon from "./ui/AppIcon.vue";
 import { computed, onMounted, onUnmounted, ref, watch } from "vue";
 import { formatMoney } from "../lib/money";
 
-const props = defineProps<{
-  multiplier: number;
-  payout: number;
-  count: number;
-  tier: "win" | "big" | "mega" | "super";
-}>();
+const props = withDefaults(
+  defineProps<{
+    multiplier: number;
+    payout: number;
+    count: number;
+    tier: "win" | "big" | "mega" | "super";
+    payoutPrefix?: string;
+  }>(),
+  { payoutPrefix: "$" },
+);
 const title = computed(
   () => ({ win: "NICE WIN", big: "BIG WIN", mega: "MEGA WIN", super: "SUPER WIN" })[props.tier],
 );
@@ -203,13 +208,12 @@ onUnmounted(() => {
       </svg>
       <span class="win-title">{{ title }}</span>
       <strong class="win-multiplier">{{ multiplier.toFixed(2) }}<span>×</span></strong>
-      <div class="win-divider"><i />✦<i /></div>
-      <span class="win-payout">${{ formatMoney(displayedPayout) }}</span>
+      <div class="win-divider"><i /><AppIcon name="sparkle" /><i /></div>
+      <span class="win-payout">{{ payoutPrefix }}{{ formatMoney(displayedPayout) }}</span>
     </div>
     <span class="win-announcement" role="status" aria-live="polite" aria-atomic="true"
-      >{{ title }}，{{ multiplier.toFixed(2) }}×，{{ count > 1 ? `${count} 顆中獎，` : "" }} ${{
-        formatMoney(payout)
-      }}</span
+      >{{ title }}，{{ multiplier.toFixed(2) }}×，{{ count > 1 ? `${count} 顆中獎，` : "" }}
+      {{ payoutPrefix }}{{ formatMoney(payout) }}</span
     >
   </div>
 </template>

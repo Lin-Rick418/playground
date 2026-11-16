@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import AppIcon from "../components/ui/AppIcon.vue";
 import AppButton from "../components/ui/AppButton.vue";
 import AppPageHeader from "../components/ui/AppPageHeader.vue";
 import PwaInstall from "../components/PwaInstall.vue";
@@ -46,6 +47,13 @@ const games = [
     subtitle: "21 點",
     image: "/images/games/blackjack-simple.webp",
     path: "/blackjack",
+  },
+  {
+    name: "沙海神殿",
+    english: "TEMPLE OF THE DUNES",
+    subtitle: "沙海神殿",
+    image: "/images/games/storm-demo.webp",
+    path: "/storm-demo",
   },
 ];
 useLiveChannel({ getSubscribeMessage: () => ({ type: "subscribe_user" }), onMessage: () => {} });
@@ -124,7 +132,7 @@ function syncSlide() {
             <span class="poster-copy">
               <span class="poster-eyebrow">{{ game.english }}</span>
               <span class="poster-title">{{ game.subtitle || game.name }}</span>
-              <span class="poster-enter">進入遊戲 <span aria-hidden="true">↗</span></span>
+              <span class="poster-enter">進入遊戲 <AppIcon name="arrow-up-right" /></span>
             </span>
           </button>
         </div>

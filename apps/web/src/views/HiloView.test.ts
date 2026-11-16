@@ -109,6 +109,7 @@ describe("Hi-Lo win celebration", () => {
         disconnect: vi.fn(),
         requestHilo: request,
         requestBlackjack: vi.fn(),
+      requestStorm: vi.fn(),
         requestMines: vi.fn(),
         requestPlinko: vi.fn(),
       };

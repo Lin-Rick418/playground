@@ -203,6 +203,9 @@ export async function getUserDailyProfit(
        SELECT amount, payout FROM hilo_rounds
        WHERE user_id = $1 AND status <> 'ACTIVE' AND settled_at >= $2 AND settled_at < $3
        UNION ALL
+       SELECT amount, payout FROM storm_rounds
+       WHERE user_id = $1 AND settled_at >= $2 AND settled_at < $3
+       UNION ALL
        SELECT amount, payout FROM plinko_rounds
        WHERE user_id = $1 AND settled_at >= $2 AND settled_at < $3
      ) AS settled_bets`,
@@ -330,8 +333,9 @@ export async function getUserUnsettledMaximumPayout(userId: string, executor: Db
   }
   const mines = await queryRow(executor, "SELECT COALESCE(SUM(maximum_payout), 0) AS exposure FROM mines_rounds WHERE user_id = $1 AND status = 'ACTIVE'", [userId]);
   const hilo = await queryRow(executor, "SELECT COALESCE(SUM(maximum_payout), 0) AS exposure FROM hilo_rounds WHERE user_id = $1 AND status = 'ACTIVE'", [userId]);
+  const storm = await queryRow(executor, "SELECT maximum_payout AS exposure FROM storm_sessions WHERE user_id=$1", [userId]);
   const blackjack = await queryRow(executor, "SELECT COALESCE(SUM(maximum_payout), 0) AS exposure FROM blackjack_rounds WHERE user_id = $1 AND status = 'ACTIVE'", [userId]);
-  return fromMinorUnits(toMinorUnits(String(blackjack?.exposure ?? 0)) + toMinorUnits(maximumPayout) + toMinorUnits(String(mines?.exposure ?? 0)) + toMinorUnits(String(hilo?.exposure ?? 0)));
+  return fromMinorUnits(toMinorUnits(String(storm?.exposure ?? 0)) + toMinorUnits(String(blackjack?.exposure ?? 0)) + toMinorUnits(maximumPayout) + toMinorUnits(String(mines?.exposure ?? 0)) + toMinorUnits(String(hilo?.exposure ?? 0)));
 }
 
 export async function findRoundById(

@@ -1,3 +1,8 @@
+import { stormConfigurableMigration } from "./017-storm-configurable.js";
+import { stormOpenRtpMigration } from "./018-storm-open-rtp.js";
+import { stormStakesMigration } from "./019-storm-stakes.js";
+import { stormMigration } from "./015-storm-wallet.js";
+import { stormRtpProfilesMigration } from "./016-storm-rtp-profiles.js";
 import { blackjackMigration } from "./014-blackjack.js";
 import { hiloMigration } from "./012-hilo.js";
 import { minesMultiplierLimitMigration } from "./013-mines-multiplier-limit.js";
@@ -30,6 +35,11 @@ export const migrationDefinitions = [
   hiloMigration,
   minesMultiplierLimitMigration,
   blackjackMigration,
+  stormMigration,
+  stormRtpProfilesMigration,
+  stormConfigurableMigration,
+  stormOpenRtpMigration,
+  stormStakesMigration,
 ] as const;
 
 export type { MigrationDefinition } from "./types.js";

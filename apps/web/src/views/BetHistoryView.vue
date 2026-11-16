@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import CardSuit from "../components/ui/CardSuit.vue";
 import AppButton from "../components/ui/AppButton.vue";
 import AppPageHeader from "../components/ui/AppPageHeader.vue";
 import { computed, onMounted, ref } from "vue";
@@ -94,10 +95,6 @@ function roundNetAmount(item: RoundHistoryItem) {
   return sumMoney([item.totalPayout, -item.totalAmount]);
 }
 
-function cardSuitSymbol(suit: Card["suit"]) {
-  return suit === "S" ? "♠" : suit === "H" ? "♥" : suit === "D" ? "♦" : "♣";
-}
-
 function cardColor(suit: Card["suit"]) {
   return suit === "H" || suit === "D" ? "red" : "black";
 }
@@ -186,7 +183,7 @@ onMounted(() => {
                   :class="[cardColor(card.suit), { bonus: index === 2 }]"
                 >
                   <b>{{ card.rank }}</b>
-                  <small>{{ cardSuitSymbol(card.suit) }}</small>
+                  <small><CardSuit :suit="card.suit" /></small>
                 </span>
               </div>
             </div>
@@ -209,7 +206,7 @@ onMounted(() => {
                   :class="[cardColor(card.suit), { bonus: index === 2 }]"
                 >
                   <b>{{ card.rank }}</b>
-                  <small>{{ cardSuitSymbol(card.suit) }}</small>
+                  <small><CardSuit :suit="card.suit" /></small>
                 </span>
               </div>
             </div>

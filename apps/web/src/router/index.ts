@@ -15,34 +15,47 @@ import BetHistoryView from "../views/BetHistoryView.vue";
 const router = createRouter({
   history: createWebHistory(),
   routes: [
-    { path: "/hilo", component: HiloView, meta: { requiresAuth: true, role: "PLAYER", keepScreenAwake: true } },
-    { path: "/blackjack", component: BlackjackView, meta: { requiresAuth: true, role: "PLAYER", keepScreenAwake: true } },
+    {
+      path: "/storm-demo",
+      component: () => import("../views/StormDemoView.vue"),
+      meta: { requiresAuth: true, role: "PLAYER", keepScreenAwake: true, portraitOnly: true },
+    },
+    {
+      path: "/hilo",
+      component: HiloView,
+      meta: { requiresAuth: true, role: "PLAYER", keepScreenAwake: true, portraitOnly: true },
+    },
+    {
+      path: "/blackjack",
+      component: BlackjackView,
+      meta: { requiresAuth: true, role: "PLAYER", keepScreenAwake: true, portraitOnly: true },
+    },
     { path: "/", redirect: "/login" },
     { path: "/login", component: LoginView },
     {
       path: "/lobby",
       component: LobbyView,
-      meta: { requiresAuth: true, role: "PLAYER", keepScreenAwake: true },
+      meta: { requiresAuth: true, role: "PLAYER", keepScreenAwake: true, portraitOnly: true },
     },
     {
       path: "/baccarat",
       component: BaccaratLobbyView,
-      meta: { requiresAuth: true, role: "PLAYER", keepScreenAwake: true },
+      meta: { requiresAuth: true, role: "PLAYER", keepScreenAwake: true, portraitOnly: true },
     },
     {
       path: "/mines",
       component: MinesView,
-      meta: { requiresAuth: true, role: "PLAYER", keepScreenAwake: true },
+      meta: { requiresAuth: true, role: "PLAYER", keepScreenAwake: true, portraitOnly: true },
     },
     {
       path: "/plinko",
       component: PlinkoView,
-      meta: { requiresAuth: true, role: "PLAYER", keepScreenAwake: true },
+      meta: { requiresAuth: true, role: "PLAYER", keepScreenAwake: true, portraitOnly: true },
     },
     {
       path: "/game/:tableId",
       component: GameView,
-      meta: { requiresAuth: true, role: "PLAYER", keepScreenAwake: true },
+      meta: { requiresAuth: true, role: "PLAYER", keepScreenAwake: true, portraitOnly: true },
     },
     {
       path: "/game/:tableId/rules",

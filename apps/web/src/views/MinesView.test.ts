@@ -52,6 +52,7 @@ describe("MinesView", () => {
     vi.mocked(useLiveChannel).mockReturnValue({
       requestHilo: vi.fn(),
       requestBlackjack: vi.fn(),
+      requestStorm: vi.fn(),
       requestPlinko: vi.fn(),
       connected: ref(true),
       reconnect: vi.fn(),

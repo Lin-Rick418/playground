@@ -1,20 +1,69 @@
-import { blackjackMutationResponseSchema, blackjackCommandResultSchema, type BlackjackRound, type BlackjackAction, type BlackjackCommandResult } from "@baccarat/contracts";
-import { mutateBlackjack, findBlackjackRound, blackjackHistory } from "../../src/modules/blackjack/service.js";
+import { STORM_LEGACY_SETTINGS } from "@baccarat/contracts";
+import {
+  initialStormProgress,
+  STORM_STAKES,
+  stormActionSchema,
+  stormConfigResponseSchema,
+  stormStateResponseSchema,
+  stormMutationResponseSchema,
+  stormCommandResultSchema,
+} from "@baccarat/contracts";
+import { mutateStorm, stormState, stormExposure } from "../../src/modules/storm/service.js";
+import {
+  blackjackMutationResponseSchema,
+  blackjackCommandResultSchema,
+  type BlackjackRound,
+  type BlackjackAction,
+  type BlackjackCommandResult,
+} from "@baccarat/contracts";
+import {
+  mutateBlackjack,
+  findBlackjackRound,
+  blackjackHistory,
+} from "../../src/modules/blackjack/service.js";
 import { fingerprintIdempotencyRequest } from "../../src/lib/idempotency.js";
-import { claimIdempotencyKey, completeIdempotencyKey } from "../../src/lib/repositories/idempotency-store.js";
-import { hiloMutationResponseSchema, hiloCommandResultSchema, type HiloPreview, type HiloAction, type HiloRound, type HiloCommandResult } from "@baccarat/contracts";
+import {
+  claimIdempotencyKey,
+  completeIdempotencyKey,
+} from "../../src/lib/repositories/idempotency-store.js";
+import {
+  hiloMutationResponseSchema,
+  hiloCommandResultSchema,
+  type HiloPreview,
+  type HiloAction,
+  type HiloRound,
+  type HiloCommandResult,
+} from "@baccarat/contracts";
 import { mutateHilo, findHiloRound, hiloHistory } from "../../src/modules/hilo/service.js";
 import { rank, payout as hiloPayout } from "../../src/modules/hilo/math.js";
 import { mutateMines } from "../../src/modules/mines/service.js";
 import { placePlinkoBet, publicPlinkoRound } from "../../src/modules/plinko/service.js";
 import { getUserDailyProfit, getUserUnsettledMaximumPayout } from "../../src/lib/db.js";
-import { plinkoCommandResultSchema, type PlinkoCommand, type PlinkoCommandResult } from "@baccarat/contracts";
+import {
+  plinkoCommandResultSchema,
+  type PlinkoCommand,
+  type PlinkoCommandResult,
+} from "@baccarat/contracts";
 import { WebSocket } from "ws";
 import { once } from "node:events";
 import { attachLiveWebSocketServer } from "../../src/lib/live-ws.js";
-import { minesCommandResultSchema, type MinesCommand, type MinesCommandResult } from "@baccarat/contracts";
-import { type PlinkoMutationResponse, type PlinkoConfig, type PlinkoRound, plinkoMutationResponseSchema } from "@baccarat/contracts";
-import { getPlinkoTable, plinkoPayout, plinkoV1Tables, PLINKO_RULE_VERSION } from "../../src/modules/plinko/math.js";
+import {
+  minesCommandResultSchema,
+  type MinesCommand,
+  type MinesCommandResult,
+} from "@baccarat/contracts";
+import {
+  type PlinkoMutationResponse,
+  type PlinkoConfig,
+  type PlinkoRound,
+  plinkoMutationResponseSchema,
+} from "@baccarat/contracts";
+import {
+  getPlinkoTable,
+  plinkoPayout,
+  plinkoV1Tables,
+  PLINKO_RULE_VERSION,
+} from "../../src/modules/plinko/math.js";
 import { plinkoRateLimitKey } from "../../src/modules/plinko/service.js";
 import { migrationDefinitions } from "../../src/migrations/index.js";
 import { type MinesRound, sumMoney } from "@baccarat/contracts";
@@ -609,27 +658,38 @@ test("settlement credits the calculated payout once and only once", async () => 
 });
 
 test("change-password accepts six-character alphanumeric passwords and revokes the previous session", async () => {
-  const player = await insertUser({ username: `pwpolicy_${runId}`, password: "Previous!Secure2026" });
+  const player = await insertUser({
+    username: `pwpolicy_${runId}`,
+    password: "Previous!Secure2026",
+  });
   const token = await login(player);
   for (const newPassword of ["ab123", "abcdef", "123456"]) {
     const rejected = await request<{ code: string }>("/auth/change-password", {
-      method: "POST", token, body: { currentPassword: player.password, newPassword },
+      method: "POST",
+      token,
+      body: { currentPassword: player.password, newPassword },
     });
     assert.equal(rejected.status, 400);
     assert.equal(rejected.body.code, "VALIDATION_ERROR");
   }
   const changed = await request<{ token: string }>("/auth/change-password", {
-    method: "POST", token, body: { currentPassword: player.password, newPassword: "abc123" },
+    method: "POST",
+    token,
+    body: { currentPassword: player.password, newPassword: "abc123" },
   });
   assert.equal(changed.status, 200);
   assert.equal((await request("/auth/me", { token: changed.body.token })).status, 200);
   assert.equal((await request("/auth/me", { token })).status, 401);
   const oldLogin = await request("/auth/login", {
-    method: "POST", body: { username: player.username, password: player.password },
+    method: "POST",
+    body: { username: player.username, password: player.password },
   });
   assert.equal(oldLogin.status, 401);
   await login({ ...player, password: "abc123" });
-  const stored = await pool.query<{ password_hash: string }>("SELECT password_hash FROM users WHERE id=$1", [player.id]);
+  const stored = await pool.query<{ password_hash: string }>(
+    "SELECT password_hash FROM users WHERE id=$1",
+    [player.id],
+  );
   assert.equal(bcrypt.getRounds(stored.rows[0]!.password_hash), 12);
   assert.equal(await bcrypt.compare("abc123", stored.rows[0]!.password_hash), true);
 });
@@ -910,7 +970,11 @@ test("Mines v2 accepts all 1100 supported stake/mine combinations without theore
       assert.equal(round.ruleVersion, 2);
       assert.equal(await getUserUnsettledMaximumPayout(user.id), amount);
       const board = await minesBoard(round.id);
-      const lost = await mutateMines(user.id, randomUUID(), { kind: "reveal", roundId: round.id, cellIndex: board[0]! });
+      const lost = await mutateMines(user.id, randomUUID(), {
+        kind: "reveal",
+        roundId: round.id,
+        cellIndex: board[0]!,
+      });
       assert.equal(lost.statusCode, 200);
       assert.equal((lost.body as unknown as MinesMutation).round.status, "LOST");
     }
@@ -922,11 +986,17 @@ test("Mines v2 accepts all 1100 supported stake/mine combinations without theore
 test("Mines v2 forces the chosen safe cell to a mine before a >1000x win and replays the same loss", async () => {
   for (const mineCount of [3, 10, 12, 15, 22]) {
     const user = await insertUser({ username: `mines_cap_${mineCount}_${runId}`, balance: 10000 });
-    const start = await mutateMines(user.id, randomUUID(), { kind: "start", amount: 2000, mineCount });
+    const start = await mutateMines(user.id, randomUUID(), {
+      kind: "start",
+      amount: 2000,
+      mineCount,
+    });
     assert.equal(start.statusCode, 200);
     let round = (start.body as unknown as MinesMutation).round;
     const originalBoard = await minesBoard(round.id);
-    const safeCells = Array.from({ length: 25 }, (_, i) => i).filter((i) => !originalBoard.includes(i));
+    const safeCells = Array.from({ length: 25 }, (_, i) => i).filter(
+      (i) => !originalBoard.includes(i),
+    );
     let wasForced = false;
     for (const cellIndex of safeCells) {
       const forced = exceedsMinesMultiplierLimit(mineCount, round.revealedCells.length + 1);
@@ -950,7 +1020,11 @@ test("Mines v2 forces the chosen safe cell to a mine before a >1000x win and rep
         assert.ok(previous.revealedCells.every((cell) => !round.mineCells!.includes(cell)));
         assert.equal(await getUserUnsettledMaximumPayout(user.id), 0);
         assert.deepEqual(await mutateMines(user.id, key, action), result);
-        assert.equal((await mutateMines(user.id, randomUUID(), { kind: "cashout", roundId: round.id })).statusCode, 409);
+        assert.equal(
+          (await mutateMines(user.id, randomUUID(), { kind: "cashout", roundId: round.id }))
+            .statusCode,
+          409,
+        );
         assert.equal((result.body as unknown as MinesMutation).balance, 8000);
         break;
       }
@@ -965,12 +1039,25 @@ test("Mines v2 forces the chosen safe cell to a mine before a >1000x win and rep
 
 test("legacy Mines rounds keep the fixed board and can settle above 1000x", async () => {
   const user = await insertUser({ username: `mines_v1_${runId}`, balance: 1000 });
-  const start = await mutateMines(user.id, randomUUID(), { kind: "start", amount: 100, mineCount: 3 });
+  const start = await mutateMines(user.id, randomUUID(), {
+    kind: "start",
+    amount: 100,
+    mineCount: 3,
+  });
   let round = (start.body as unknown as MinesMutation).round;
-  await pool.query("UPDATE mines_rounds SET rule_version=1,maximum_payout=$2 WHERE id=$1", [round.id, minesPayout(100, 3, 22)]);
+  await pool.query("UPDATE mines_rounds SET rule_version=1,maximum_payout=$2 WHERE id=$1", [
+    round.id,
+    minesPayout(100, 3, 22),
+  ]);
   const board = await minesBoard(round.id);
-  for (const cellIndex of Array.from({ length: 25 }, (_, i) => i).filter((i) => !board.includes(i))) {
-    const result = await mutateMines(user.id, randomUUID(), { kind: "reveal", roundId: round.id, cellIndex });
+  for (const cellIndex of Array.from({ length: 25 }, (_, i) => i).filter(
+    (i) => !board.includes(i),
+  )) {
+    const result = await mutateMines(user.id, randomUUID(), {
+      kind: "reveal",
+      roundId: round.id,
+      cellIndex,
+    });
     assert.equal(result.statusCode, 200);
     round = (result.body as unknown as MinesMutation).round;
   }
@@ -985,12 +1072,21 @@ test("legacy Mines rounds keep the fixed board and can settle above 1000x", asyn
 
 test("Mines v2 protects earned payouts and refunds an unrevealed round at the account limit", async () => {
   for (const initialBalance of [2000000000, 1999999000.75]) {
-    const user = await insertUser({ username: `mh_${initialBalance === 2000000000 ? "full" : "near"}_${runId}`, balance: initialBalance });
-    const start = await mutateMines(user.id, randomUUID(), { kind: "start", amount: 100, mineCount: 12 });
+    const user = await insertUser({
+      username: `mh_${initialBalance === 2000000000 ? "full" : "near"}_${runId}`,
+      balance: initialBalance,
+    });
+    const start = await mutateMines(user.id, randomUUID(), {
+      kind: "start",
+      amount: 100,
+      mineCount: 12,
+    });
     assert.equal(start.statusCode, 200);
     let round = (start.body as unknown as MinesMutation).round;
     const board = await minesBoard(round.id);
-    for (const cellIndex of Array.from({ length: 25 }, (_, i) => i).filter((i) => !board.includes(i))) {
+    for (const cellIndex of Array.from({ length: 25 }, (_, i) => i).filter(
+      (i) => !board.includes(i),
+    )) {
       const previous = round;
       const action = { kind: "reveal" as const, roundId: round.id, cellIndex };
       const key = randomUUID();
@@ -1097,7 +1193,9 @@ test("Mines accepts a start beside baccarat but reserves each safe step against 
     if (first === "mines") assert.equal((await baccarat()).status, 200);
     const board = await minesBoard(started.body.round.id);
     const safe = Array.from({ length: 25 }, (_, i) => i).find((i) => !board.includes(i))!;
-    const settled = await minesPost(token, `/rounds/${started.body.round.id}/reveal`, { cellIndex: safe });
+    const settled = await minesPost(token, `/rounds/${started.body.round.id}/reveal`, {
+      cellIndex: safe,
+    });
     assert.equal(settled.status, 200);
     assert.equal(settled.body.round.settlementReason, "ACCOUNT_LIMIT");
     assert.equal(settled.body.round.payout, 100);
@@ -1140,7 +1238,10 @@ test("Mines history cursor returns all own terminal rounds once", async () => {
 const plinkoBet = { amount: 100, rows: 16, risk: "medium", ruleVersion: PLINKO_RULE_VERSION };
 function plinkoPost(token: string, body: unknown = plinkoBet, key = randomUUID()) {
   return request<PlinkoMutationResponse>("/plinko/rounds", {
-    method: "POST", token, body, headers: { "idempotency-key": key },
+    method: "POST",
+    token,
+    body,
+    headers: { "idempotency-key": key },
   });
 }
 
@@ -1151,12 +1252,24 @@ test("Plinko config, validation, atomic settlement, history, daily profit and du
   assert.equal(config.status, 200);
   assert.equal(config.body.ruleVersion, 2);
   assert.equal(config.body.tables.length, 27);
-  for (const table of config.body.tables) assert.ok(table.rtp >= .95 && table.rtp <= .96);
+  for (const table of config.body.tables) assert.ok(table.rtp >= 0.95 && table.rtp <= 0.96);
   assert.equal((await request("/plinko/config")).status, 401);
-  for (const change of [{ amount: 101 }, { amount: 0 }, { rows: 7 }, { rows: 17 }, { risk: "expert" },
-    { slotIndex: 0 }, { multiplier: 1000 }, { payout: 1000 }, { userId: user.id }])
+  for (const change of [
+    { amount: 101 },
+    { amount: 0 },
+    { rows: 7 },
+    { rows: 17 },
+    { risk: "expert" },
+    { slotIndex: 0 },
+    { multiplier: 1000 },
+    { payout: 1000 },
+    { userId: user.id },
+  ])
     assert.equal((await plinkoPost(token, { ...plinkoBet, ...change })).status, 400);
-  assert.equal((await request("/plinko/rounds", { token, method: "POST", body: plinkoBet })).status, 400);
+  assert.equal(
+    (await request("/plinko/rounds", { token, method: "POST", body: plinkoBet })).status,
+    400,
+  );
   assert.equal((await plinkoPost(token, { ...plinkoBet, ruleVersion: 1 })).status, 409);
   const key = randomUUID();
   const placed = await plinkoPost(token, plinkoBet, key);
@@ -1166,12 +1279,21 @@ test("Plinko config, validation, atomic settlement, history, daily profit and du
   assert.equal(round.ruleVersion, 2);
   const table = getPlinkoTable(round.rows, round.risk);
   assert.equal(round.path.length, 16);
-  assert.equal(round.slotIndex, round.path.reduce<number>((sum, direction) => sum + direction, 0));
+  assert.equal(
+    round.slotIndex,
+    round.path.reduce<number>((sum, direction) => sum + direction, 0),
+  );
   assert.equal(round.multiplier, table.multipliers[round.slotIndex]);
   assert.equal(round.payout, plinkoPayout(100, table.units[round.slotIndex]!));
   assert.equal(placed.body.balance, sumMoney([user.balance, -100, round.payout]));
-  assert.equal((await request<{ round: PlinkoRound }>(`/plinko/rounds/${round.id}`, { token })).body.round.id, round.id);
-  const daily = await request<{ totalBet: number; totalPayout: number; netProfit: number }>("/game/daily-profit", { token });
+  assert.equal(
+    (await request<{ round: PlinkoRound }>(`/plinko/rounds/${round.id}`, { token })).body.round.id,
+    round.id,
+  );
+  const daily = await request<{ totalBet: number; totalPayout: number; netProfit: number }>(
+    "/game/daily-profit",
+    { token },
+  );
   assert.equal(daily.body.totalBet, 100);
   assert.equal(daily.body.totalPayout, round.payout);
   assert.equal(daily.body.netProfit, sumMoney([round.payout, -100]));
@@ -1179,20 +1301,38 @@ test("Plinko config, validation, atomic settlement, history, daily profit and du
   const later = await plinkoPost(token);
   assert.equal(later.status, 200);
   assert.ok(later.body.walletVersion > placed.body.walletVersion);
-  await pool.query("UPDATE idempotency_keys SET created_at=NOW()-INTERVAL '20 days' WHERE actor_id=$1", [user.id]);
+  await pool.query(
+    "UPDATE idempotency_keys SET created_at=NOW()-INTERVAL '20 days' WHERE actor_id=$1",
+    [user.id],
+  );
   await runRetentionCleanup({ idempotencyRetentionDays: 7, authSessionRetentionDays: 30 });
   const replay = await plinkoPost(token, plinkoBet, key);
   assert.deepEqual(replay.body, placed.body);
-  assert.equal((await request<{ balance: number }>("/auth/me", { token })).body.balance, later.body.balance);
-  const first = await request<{ items: PlinkoRound[]; nextCursor: string }>("/plinko/history?limit=1", { token });
-  const second = await request<{ items: PlinkoRound[]; nextCursor: string | null }>(`/plinko/history?limit=1&cursor=${encodeURIComponent(first.body.nextCursor)}`, { token });
+  assert.equal(
+    (await request<{ balance: number }>("/auth/me", { token })).body.balance,
+    later.body.balance,
+  );
+  const first = await request<{ items: PlinkoRound[]; nextCursor: string }>(
+    "/plinko/history?limit=1",
+    { token },
+  );
+  const second = await request<{ items: PlinkoRound[]; nextCursor: string | null }>(
+    `/plinko/history?limit=1&cursor=${encodeURIComponent(first.body.nextCursor)}`,
+    { token },
+  );
   assert.equal(first.body.items[0]!.id, later.body.round.id);
   assert.equal(second.body.items[0]!.id, round.id);
   assert.equal(second.body.nextCursor, null);
   assert.equal((await request("/plinko/history?limit=51", { token })).status, 400);
   assert.equal((await request("/plinko/history?cursor=invalid", { token })).status, 400);
-  const ledger = await pool.query("SELECT source FROM financial_ledger_entries WHERE reference_id=$1 ORDER BY entry_sequence", [round.id]);
-  assert.deepEqual(ledger.rows.map((row) => row.source), ["PLINKO_BET_DEBIT", "PLINKO_SETTLEMENT_CREDIT"]);
+  const ledger = await pool.query(
+    "SELECT source FROM financial_ledger_entries WHERE reference_id=$1 ORDER BY entry_sequence",
+    [round.id],
+  );
+  assert.deepEqual(
+    ledger.rows.map((row) => row.source),
+    ["PLINKO_BET_DEBIT", "PLINKO_SETTLEMENT_CREDIT"],
+  );
   assert.equal((await reconcileUserBalance(user.id))?.isReconciled, true);
 });
 
@@ -1204,10 +1344,16 @@ test("Plinko authorizes ownership and replays accepted bets after disable or rat
   const key = randomUUID();
   const placed = await plinkoPost(token, plinkoBet, key);
   assert.equal(placed.status, 200);
-  assert.equal((await request(`/plinko/rounds/${placed.body.round.id}`, { token: otherToken })).status, 404);
+  assert.equal(
+    (await request(`/plinko/rounds/${placed.body.round.id}`, { token: otherToken })).status,
+    404,
+  );
   assert.equal((await request("/plinko/rounds/not-a-uuid", { token })).status, 400);
   const rateKey = plinkoRateLimitKey(user.id);
-  await pool.query("UPDATE login_rate_limits SET failures=239, expires_at=NOW()+INTERVAL '1 minute' WHERE scope=$1 AND key_hash=$2", [rateKey.scope, rateKey.keyHash]);
+  await pool.query(
+    "UPDATE login_rate_limits SET failures=239, expires_at=NOW()+INTERVAL '1 minute' WHERE scope=$1 AND key_hash=$2",
+    [rateKey.scope, rateKey.keyHash],
+  );
   assert.equal((await plinkoPost(token)).status, 200); // 240th is allowed.
   assert.equal((await plinkoPost(token)).status, 429);
   assert.deepEqual((await plinkoPost(token, plinkoBet, key)).body, placed.body);
@@ -1219,7 +1365,9 @@ test("Plinko authorizes ownership and replays accepted bets after disable or rat
     assert.equal((await request<PlinkoConfig>("/plinko/config", { token })).body.enabled, false);
     assert.deepEqual((await plinkoPost(token, plinkoBet, key)).body, placed.body);
     assert.equal((await request(`/plinko/rounds/${placed.body.round.id}`, { token })).status, 200);
-  } finally { env.plinkoEnabled = original; }
+  } finally {
+    env.plinkoEnabled = original;
+  }
   assert.equal((await reconcileUserBalance(user.id))?.isReconciled, true);
 });
 
@@ -1227,25 +1375,44 @@ test("Plinko serializes duplicate bets and the wallet with Mines and baccarat", 
   const user = await insertUser({ username: `plinko_race_${runId}`, balance: 10000.75 });
   const token = await login(user);
   const key = randomUUID();
-  const duplicates = await Promise.all(Array.from({ length: 5 }, () => plinkoPost(token, plinkoBet, key)));
-  for (const result of duplicates) { assert.equal(result.status, 200); assert.deepEqual(result.body, duplicates[0]!.body); }
-  const count = await pool.query("SELECT COUNT(*)::int AS count FROM plinko_rounds WHERE user_id=$1", [user.id]);
+  const duplicates = await Promise.all(
+    Array.from({ length: 5 }, () => plinkoPost(token, plinkoBet, key)),
+  );
+  for (const result of duplicates) {
+    assert.equal(result.status, 200);
+    assert.deepEqual(result.body, duplicates[0]!.body);
+  }
+  const count = await pool.query(
+    "SELECT COUNT(*)::int AS count FROM plinko_rounds WHERE user_id=$1",
+    [user.id],
+  );
   assert.equal(count.rows[0].count, 1);
   const tableId = await insertTable();
   await insertRound({ tableId, status: "OPEN" });
   const races = await Promise.all([
-    plinkoPost(token), minesPost(token, "/rounds", { amount: 100, mineCount: 3 }),
-    request(`/game/tables/${tableId}/bet`, { method: "POST", token, body: { bets: [{ betType: "PLAYER", amount: 100 }] }, headers: { "idempotency-key": randomUUID() } }),
+    plinkoPost(token),
+    minesPost(token, "/rounds", { amount: 100, mineCount: 3 }),
+    request(`/game/tables/${tableId}/bet`, {
+      method: "POST",
+      token,
+      body: { bets: [{ betType: "PLAYER", amount: 100 }] },
+      headers: { "idempotency-key": randomUUID() },
+    }),
   ]);
   for (const result of races) assert.equal(result.status, 200);
   const plinkoRound = (races[0]!.body as PlinkoMutationResponse).round;
-  assert.equal((await request<{ balance: number }>("/auth/me", { token })).body.balance,
-    sumMoney([duplicates[0]!.body.balance, -300, plinkoRound.payout]));
+  assert.equal(
+    (await request<{ balance: number }>("/auth/me", { token })).body.balance,
+    sumMoney([duplicates[0]!.body.balance, -300, plinkoRound.payout]),
+  );
   const minesId = (races[1]!.body as MinesMutation).round.id;
   const mineCells = await minesBoard(minesId);
   const safe = Array.from({ length: 25 }, (_, i) => i).find((i) => !mineCells.includes(i))!;
   await minesPost(token, `/rounds/${minesId}/reveal`, { cellIndex: safe });
-  const settlementRace = await Promise.all([plinkoPost(token), minesPost(token, `/rounds/${minesId}/cashout`, {})]);
+  const settlementRace = await Promise.all([
+    plinkoPost(token),
+    minesPost(token, `/rounds/${minesId}/cashout`, {}),
+  ]);
   assert.ok(settlementRace.every((result) => result.status === 200));
   assert.equal((await reconcileUserBalance(user.id))?.isReconciled, true);
 });
@@ -1254,20 +1421,42 @@ test("Plinko validates balance and reserved cross-game exposure before drawing",
   const poor = await insertUser({ username: `plinko_poor_${runId}`, balance: 99.99 });
   const poorToken = await login(poor);
   assert.equal((await plinkoPost(poorToken)).status, 400);
-  assert.equal((await request<{ balance: number }>("/auth/me", { token: poorToken })).body.balance, 99.99);
+  assert.equal(
+    (await request<{ balance: number }>("/auth/me", { token: poorToken })).body.balance,
+    99.99,
+  );
   const rich = await insertUser({ username: `plinko_limit_${runId}`, balance: 1999999000.75 });
   const token = await login(rich);
   assert.equal((await plinkoPost(token, { ...plinkoBet, risk: "high" })).status, 400);
-  assert.equal((await request<{ balance: number }>("/auth/me", { token })).body.balance, rich.balance);
+  assert.equal(
+    (await request<{ balance: number }>("/auth/me", { token })).body.balance,
+    rich.balance,
+  );
   // Leave enough headroom for a low-risk Plinko alone, but not for its combination with an open pair bet.
   const reserved = await insertUser({ username: `plinko_exposure_${runId}`, balance: 1999997000 });
   const reservedToken = await login(reserved);
   const tableId = await insertTable();
   await insertRound({ tableId, status: "OPEN" });
-  assert.equal((await request(`/game/tables/${tableId}/bet`, { method: "POST", token: reservedToken,
-    body: { bets: [{ betType: "PLAYER_PAIR", amount: 200 }] }, headers: { "idempotency-key": randomUUID() } })).status, 200);
+  assert.equal(
+    (
+      await request(`/game/tables/${tableId}/bet`, {
+        method: "POST",
+        token: reservedToken,
+        body: { bets: [{ betType: "PLAYER_PAIR", amount: 200 }] },
+        headers: { "idempotency-key": randomUUID() },
+      })
+    ).status,
+    200,
+  );
   assert.equal((await plinkoPost(reservedToken, { ...plinkoBet, risk: "low" })).status, 400);
-  assert.equal((await pool.query("SELECT COUNT(*)::int AS count FROM plinko_rounds WHERE user_id=$1", [reserved.id])).rows[0].count, 0);
+  assert.equal(
+    (
+      await pool.query("SELECT COUNT(*)::int AS count FROM plinko_rounds WHERE user_id=$1", [
+        reserved.id,
+      ])
+    ).rows[0].count,
+    0,
+  );
   assert.equal((await reconcileUserBalance(reserved.id))?.isReconciled, true);
 });
 
@@ -1280,11 +1469,32 @@ test("Plinko rolls back a post-debit failure and retries the same key safely", a
     CREATE TRIGGER fail_plinko_credit_test BEFORE INSERT ON financial_ledger_entries FOR EACH ROW EXECUTE FUNCTION fail_plinko_credit_test();`);
   try {
     assert.equal((await plinkoPost(token, plinkoBet, key)).status, 500);
-    assert.equal((await request<{ balance: number }>("/auth/me", { token })).body.balance, user.balance);
-    assert.equal((await pool.query("SELECT COUNT(*)::int AS count FROM plinko_rounds WHERE user_id=$1", [user.id])).rows[0].count, 0);
-    assert.equal((await pool.query("SELECT COUNT(*)::int AS count FROM idempotency_keys WHERE actor_id=$1", [user.id])).rows[0].count, 0);
+    assert.equal(
+      (await request<{ balance: number }>("/auth/me", { token })).body.balance,
+      user.balance,
+    );
+    assert.equal(
+      (
+        await pool.query("SELECT COUNT(*)::int AS count FROM plinko_rounds WHERE user_id=$1", [
+          user.id,
+        ])
+      ).rows[0].count,
+      0,
+    );
+    assert.equal(
+      (
+        await pool.query("SELECT COUNT(*)::int AS count FROM idempotency_keys WHERE actor_id=$1", [
+          user.id,
+        ])
+      ).rows[0].count,
+      0,
+    );
     assert.equal((await reconcileUserBalance(user.id))?.isReconciled, true);
-  } finally { await pool.query("DROP TRIGGER fail_plinko_credit_test ON financial_ledger_entries; DROP FUNCTION fail_plinko_credit_test()"); }
+  } finally {
+    await pool.query(
+      "DROP TRIGGER fail_plinko_credit_test ON financial_ledger_entries; DROP FUNCTION fail_plinko_credit_test()",
+    );
+  }
   assert.equal((await plinkoPost(token, plinkoBet, key)).status, 200);
   assert.equal((await reconcileUserBalance(user.id))?.isReconciled, true);
 });
@@ -1294,11 +1504,34 @@ test("Plinko database rejects inconsistent paths, payouts and duplicate ledger c
   const token = await login(user);
   const placed = await plinkoPost(token);
   const id = placed.body.round.id;
-  await assert.rejects(pool.query("UPDATE plinko_rounds SET path=ARRAY[0,1] WHERE id=$1", [id]), /plinko_rounds_path/);
-  await assert.rejects(pool.query("UPDATE plinko_rounds SET slot_index=17 WHERE id=$1", [id]), /plinko_rounds_path/);
-  await assert.rejects(pool.query("UPDATE plinko_rounds SET payout=payout+0.01 WHERE id=$1", [id]), /plinko_rounds_payout/);
-  await assert.rejects(withTransaction((client) => applyBalanceMutation({ userId: user.id, delta: placed.body.round.payout,
-    actorType: "SYSTEM", source: "PLINKO_SETTLEMENT_CREDIT", referenceType: "PLINKO_ROUND", referenceId: id }, client)), /financial_ledger_source_reference_unique/);
+  await assert.rejects(
+    pool.query("UPDATE plinko_rounds SET path=ARRAY[0,1] WHERE id=$1", [id]),
+    /plinko_rounds_path/,
+  );
+  await assert.rejects(
+    pool.query("UPDATE plinko_rounds SET slot_index=17 WHERE id=$1", [id]),
+    /plinko_rounds_path/,
+  );
+  await assert.rejects(
+    pool.query("UPDATE plinko_rounds SET payout=payout+0.01 WHERE id=$1", [id]),
+    /plinko_rounds_payout/,
+  );
+  await assert.rejects(
+    withTransaction((client) =>
+      applyBalanceMutation(
+        {
+          userId: user.id,
+          delta: placed.body.round.payout,
+          actorType: "SYSTEM",
+          source: "PLINKO_SETTLEMENT_CREDIT",
+          referenceType: "PLINKO_ROUND",
+          referenceId: id,
+        },
+        client,
+      ),
+    ),
+    /financial_ledger_source_reference_unique/,
+  );
   assert.equal((await reconcileUserBalance(user.id))?.isReconciled, true);
 });
 
@@ -1311,21 +1544,29 @@ test("Plinko history retains millisecond cursor precision and paginates tied tim
     assert.equal(placed.status, 200);
     ids.push(placed.body.round.id);
   }
-  const precision = await pool.query("SELECT bool_and(created_at=date_trunc('milliseconds',created_at) AND settled_at=date_trunc('milliseconds',settled_at)) AS exact FROM plinko_rounds WHERE user_id=$1", [user.id]);
+  const precision = await pool.query(
+    "SELECT bool_and(created_at=date_trunc('milliseconds',created_at) AND settled_at=date_trunc('milliseconds',settled_at)) AS exact FROM plinko_rounds WHERE user_id=$1",
+    [user.id],
+  );
   assert.equal(precision.rows[0].exact, true);
-  await pool.query("UPDATE plinko_rounds SET created_at=$2,settled_at=$2 WHERE user_id=$1", [user.id, new Date().toISOString()]);
+  await pool.query("UPDATE plinko_rounds SET created_at=$2,settled_at=$2 WHERE user_id=$1", [
+    user.id,
+    new Date().toISOString(),
+  ]);
   let cursor: string | null = null;
   const found: string[] = [];
   do {
     const page: { status: number; body: { items: PlinkoRound[]; nextCursor: string | null } } =
-      await request(`/plinko/history?limit=1${cursor ? `&cursor=${encodeURIComponent(cursor)}` : ""}`, { token });
+      await request(
+        `/plinko/history?limit=1${cursor ? `&cursor=${encodeURIComponent(cursor)}` : ""}`,
+        { token },
+      );
     assert.equal(page.status, 200);
     found.push(...page.body.items.map((round) => round.id));
     cursor = page.body.nextCursor;
   } while (cursor);
   assert.deepEqual(found, ids.sort().reverse());
 });
-
 
 test("Mines WebSocket authenticates, settles and replays across reconnect without double debit", async () => {
   const user = await insertUser({ username: `mines_ws_${runId}`, balance: 1000 });
@@ -1444,7 +1685,6 @@ test("Mines WebSocket authenticates, settles and replays across reconnect withou
   }
 });
 
-
 test("Plinko WebSocket replays lost bets, shares HTTP keys and enforces quotas and sessions", async () => {
   const user = await insertUser({ username: `plinko_ws_${runId}`, balance: 10000 });
   const token = await login(user);
@@ -1458,7 +1698,12 @@ test("Plinko WebSocket replays lost bets, shares HTTP keys and enforces quotas a
   function command(
     ws: WebSocket,
     key: string,
-    payload: PlinkoCommand["payload"] = { amount: 100, rows: 16, risk: "medium", ruleVersion: PLINKO_RULE_VERSION },
+    payload: PlinkoCommand["payload"] = {
+      amount: 100,
+      rows: 16,
+      risk: "medium",
+      ruleVersion: PLINKO_RULE_VERSION,
+    },
   ) {
     const requestId = randomUUID();
     return new Promise<PlinkoCommandResult["result"]>((resolve, reject) => {
@@ -1548,36 +1793,89 @@ test("Plinko WebSocket replays lost bets, shares HTTP keys and enforces quotas a
 async function hiloSetup(name: string, balance = 10000) {
   env.hiloEnabled = true;
   const user = await insertUser({ username: `hilo_${name}_${runId}`, balance });
-  const prepared = hiloMutationResponseSchema.parse((await mutateHilo(user.id, randomUUID(), { kind: "prepare" }, () => 0)).body);
+  const prepared = hiloMutationResponseSchema.parse(
+    (await mutateHilo(user.id, randomUUID(), { kind: "prepare" }, () => 0)).body,
+  );
   return { user, preview: prepared.preview! };
 }
 async function hiloStart(userId: string, preview: HiloPreview, amount = 100, key = randomUUID()) {
-  const action = { kind: "start" as const, amount, previewId: preview.id, expectedVersion: preview.version };
+  const action = {
+    kind: "start" as const,
+    amount,
+    previewId: preview.id,
+    expectedVersion: preview.version,
+  };
   const result = await mutateHilo(userId, key, action);
   assert.equal(result.statusCode, 200);
   return { data: hiloMutationResponseSchema.parse(result.body), key, action };
 }
-const noDraw = () => { throw new Error("Rejected/replayed commands must not draw"); };
+const noDraw = () => {
+  throw new Error("Rejected/replayed commands must not draw");
+};
 
 test("Hi-Lo preview versions, parallel starts, replay and stale guesses preserve exactly one debit", async () => {
   const { user, preview } = await hiloSetup("versions");
-  const refreshed = hiloMutationResponseSchema.parse((await mutateHilo(user.id, randomUUID(), { kind: "refresh_preview", previewId: preview.id, expectedVersion: 1 }, () => 24)).body).preview!;
-  assert.equal((await mutateHilo(user.id, randomUUID(), { kind: "start", amount: 100, previewId: preview.id, expectedVersion: 1 }, noDraw)).statusCode, 409);
-  const action = { kind: "start" as const, amount: 100, previewId: refreshed.id, expectedVersion: refreshed.version };
+  const refreshed = hiloMutationResponseSchema.parse(
+    (
+      await mutateHilo(
+        user.id,
+        randomUUID(),
+        { kind: "refresh_preview", previewId: preview.id, expectedVersion: 1 },
+        () => 24,
+      )
+    ).body,
+  ).preview!;
+  assert.equal(
+    (
+      await mutateHilo(
+        user.id,
+        randomUUID(),
+        { kind: "start", amount: 100, previewId: preview.id, expectedVersion: 1 },
+        noDraw,
+      )
+    ).statusCode,
+    409,
+  );
+  const action = {
+    kind: "start" as const,
+    amount: 100,
+    previewId: refreshed.id,
+    expectedVersion: refreshed.version,
+  };
   const key = randomUUID();
-  const starts = await Promise.all([mutateHilo(user.id, key, action, noDraw), mutateHilo(user.id, randomUUID(), action, noDraw)]);
+  const starts = await Promise.all([
+    mutateHilo(user.id, key, action, noDraw),
+    mutateHilo(user.id, randomUUID(), action, noDraw),
+  ]);
   assert.deepEqual(starts.map((x) => x.statusCode).sort(), [200, 409]);
   const successful = starts.find((x) => x.statusCode === 200)!;
   const round = hiloMutationResponseSchema.parse(successful.body).round!;
   assert.equal(round.initialCard, 24);
-  assert.equal((await pool.query("SELECT count(*) FROM financial_ledger_entries WHERE source='HILO_BET_DEBIT' AND user_id=$1", [user.id])).rows[0].count, "1");
-  const choice = { kind: "guess" as const, roundId: round.id, expectedVersion: 1, choice: "higher_or_equal" as const };
+  assert.equal(
+    (
+      await pool.query(
+        "SELECT count(*) FROM financial_ledger_entries WHERE source='HILO_BET_DEBIT' AND user_id=$1",
+        [user.id],
+      )
+    ).rows[0].count,
+    "1",
+  );
+  const choice = {
+    kind: "guess" as const,
+    roundId: round.id,
+    expectedVersion: 1,
+    choice: "higher_or_equal" as const,
+  };
   const guessKey = randomUUID();
   const correct = await mutateHilo(user.id, guessKey, choice, () => 24);
   assert.equal(correct.statusCode, 200);
   assert.deepEqual(await mutateHilo(user.id, guessKey, choice, noDraw), correct);
   assert.equal((await mutateHilo(user.id, randomUUID(), choice, noDraw)).statusCode, 409);
-  assert.equal((await mutateHilo(user.id, guessKey, { ...choice, choice: "lower_or_equal" }, noDraw)).statusCode, 409);
+  assert.equal(
+    (await mutateHilo(user.id, guessKey, { ...choice, choice: "lower_or_equal" }, noDraw))
+      .statusCode,
+    409,
+  );
   assert.equal((await reconcileUserBalance(user.id))?.isReconciled, true);
 });
 
@@ -1585,21 +1883,50 @@ test("Hi-Lo exact payouts, cashout race, daily profit and durable idempotency", 
   const { user, preview } = await hiloSetup("cashout");
   const { data } = await hiloStart(user.id, preview);
   let round = data.round!;
-  assert.equal((await mutateHilo(user.id, randomUUID(), { kind: "cashout", roundId: round.id, expectedVersion: 1 }, noDraw)).statusCode, 409);
+  assert.equal(
+    (
+      await mutateHilo(
+        user.id,
+        randomUUID(),
+        { kind: "cashout", roundId: round.id, expectedVersion: 1 },
+        noDraw,
+      )
+    ).statusCode,
+    409,
+  );
   // A -> K succeeds with 12/13, K -> A succeeds with 12/13, without another 6% deduction.
-  for (const [choice, card] of [["higher", 48], ["lower", 0]] as const) {
-    round = hiloMutationResponseSchema.parse((await mutateHilo(user.id, randomUUID(), { kind: "guess", roundId: round.id, expectedVersion: round.version, choice }, () => card)).body).round!;
+  for (const [choice, card] of [
+    ["higher", 48],
+    ["lower", 0],
+  ] as const) {
+    round = hiloMutationResponseSchema.parse(
+      (
+        await mutateHilo(
+          user.id,
+          randomUUID(),
+          { kind: "guess", roundId: round.id, expectedVersion: round.version, choice },
+          () => card,
+        )
+      ).body,
+    ).round!;
   }
   assert.equal(round.cashoutAmount, 110.32);
-  const key = randomUUID(), action = { kind: "cashout" as const, roundId: round.id, expectedVersion: round.version };
+  const key = randomUUID(),
+    action = { kind: "cashout" as const, roundId: round.id, expectedVersion: round.version };
   const settled = await mutateHilo(user.id, key, action, noDraw);
   assert.equal(hiloMutationResponseSchema.parse(settled.body).balance, 10010.32);
-  await pool.query("UPDATE idempotency_keys SET created_at=NOW()-INTERVAL '30 days' WHERE actor_id=$1", [user.id]);
+  await pool.query(
+    "UPDATE idempotency_keys SET created_at=NOW()-INTERVAL '30 days' WHERE actor_id=$1",
+    [user.id],
+  );
   await runRetentionCleanup({ idempotencyRetentionDays: 7, authSessionRetentionDays: 7 });
   assert.deepEqual(await mutateHilo(user.id, key, action, noDraw), settled);
   assert.equal((await mutateHilo(user.id, randomUUID(), action, noDraw)).statusCode, 409);
   assert.equal((await reconcileUserBalance(user.id))?.isReconciled, true);
-  const profit = await getUserDailyProfit(user.id, { start: new Date(Date.now()-60000), end: new Date(Date.now()+60000) });
+  const profit = await getUserDailyProfit(user.id, {
+    start: new Date(Date.now() - 60000),
+    end: new Date(Date.now() + 60000),
+  });
   assert.deepEqual(profit, { totalBet: 100, totalPayout: 110.32, netProfit: 10.32 });
   const page = await hiloHistory(user.id, { limit: 1, cursor: null });
   assert.equal(page.items[0]?.steps.length, 2);
@@ -1610,19 +1937,77 @@ test("Hi-Lo skip limits, forbidden ownership, loss and transaction rollback", as
   const { user, preview } = await hiloSetup("skip");
   const other = await insertUser({ username: `hilo_other_${runId}` });
   let round = (await hiloStart(user.id, preview)).data.round!;
-  assert.equal((await mutateHilo(other.id, randomUUID(), { kind: "skip", roundId: round.id, expectedVersion: 1 }, noDraw)).statusCode, 404);
-  const key = randomUUID(), action = { kind: "guess" as const, roundId: round.id, expectedVersion: 1, choice: "higher" as const };
-  await assert.rejects(() => mutateHilo(user.id, key, action, () => { throw new Error("simulated RNG failure"); }), /simulated/);
+  assert.equal(
+    (
+      await mutateHilo(
+        other.id,
+        randomUUID(),
+        { kind: "skip", roundId: round.id, expectedVersion: 1 },
+        noDraw,
+      )
+    ).statusCode,
+    404,
+  );
+  const key = randomUUID(),
+    action = {
+      kind: "guess" as const,
+      roundId: round.id,
+      expectedVersion: 1,
+      choice: "higher" as const,
+    };
+  await assert.rejects(
+    () =>
+      mutateHilo(user.id, key, action, () => {
+        throw new Error("simulated RNG failure");
+      }),
+    /simulated/,
+  );
   assert.equal((await findHiloRound(user.id))?.version, 1);
-  assert.equal((await pool.query("SELECT count(*) FROM idempotency_keys WHERE actor_id=$1 AND idempotency_key=$2", [user.id, key])).rows[0].count, "0");
+  assert.equal(
+    (
+      await pool.query(
+        "SELECT count(*) FROM idempotency_keys WHERE actor_id=$1 AND idempotency_key=$2",
+        [user.id, key],
+      )
+    ).rows[0].count,
+    "0",
+  );
   for (let i = 0; i < 52; i++) {
-    round = hiloMutationResponseSchema.parse((await mutateHilo(user.id, randomUUID(), { kind: "skip", roundId: round.id, expectedVersion: round.version }, () => 0)).body).round!;
+    round = hiloMutationResponseSchema.parse(
+      (
+        await mutateHilo(
+          user.id,
+          randomUUID(),
+          { kind: "skip", roundId: round.id, expectedVersion: round.version },
+          () => 0,
+        )
+      ).body,
+    ).round!;
     assert.equal(round.multiplier, 0);
     assert.equal(round.cashoutAmount, 0);
     assert.equal(round.steps.at(-1)?.multiplier, 0);
   }
-  assert.equal((await mutateHilo(user.id, randomUUID(), { kind: "skip", roundId: round.id, expectedVersion: round.version }, noDraw)).statusCode, 409);
-  const lost = hiloMutationResponseSchema.parse((await mutateHilo(user.id, randomUUID(), { ...action, expectedVersion: round.version }, () => 0)).body);
+  assert.equal(
+    (
+      await mutateHilo(
+        user.id,
+        randomUUID(),
+        { kind: "skip", roundId: round.id, expectedVersion: round.version },
+        noDraw,
+      )
+    ).statusCode,
+    409,
+  );
+  const lost = hiloMutationResponseSchema.parse(
+    (
+      await mutateHilo(
+        user.id,
+        randomUUID(),
+        { ...action, expectedVersion: round.version },
+        () => 0,
+      )
+    ).body,
+  );
   assert.equal(lost.round?.status, "LOST");
   assert.equal(lost.round?.payout, 0);
   assert.equal(lost.balance, 9900);
@@ -1634,36 +2019,122 @@ test("Hi-Lo reserves exposure across games and stops only new rounds when disabl
   const { user, preview } = await hiloSetup("exposure", 1998999900);
   const round = (await hiloStart(user.id, preview)).data.round!;
   assert.equal(await getUserUnsettledMaximumPayout(user.id), 1000000);
-  const mines = await mutateMines(user.id, randomUUID(), { kind: "start", amount: 100, mineCount: 24 });
+  const mines = await mutateMines(user.id, randomUUID(), {
+    kind: "start",
+    amount: 100,
+    mineCount: 24,
+  });
   assert.equal(mines.statusCode, 200);
   const minesRound = (mines.body as unknown as MinesMutation).round;
-  const mineResult = await mutateMines(user.id, randomUUID(), { kind: "reveal", roundId: minesRound.id, cellIndex: 0 });
+  const mineResult = await mutateMines(user.id, randomUUID(), {
+    kind: "reveal",
+    roundId: minesRound.id,
+    cellIndex: 0,
+  });
   assert.equal(mineResult.statusCode, 200);
-  assert.equal((mineResult.body as unknown as MinesMutation).round.settlementReason, "ACCOUNT_LIMIT");
-  const plinko = await placePlinkoBet(user.id, randomUUID(), { amount: 100, rows: 16, risk: "high", ruleVersion: PLINKO_RULE_VERSION });
+  assert.equal(
+    (mineResult.body as unknown as MinesMutation).round.settlementReason,
+    "ACCOUNT_LIMIT",
+  );
+  const plinko = await placePlinkoBet(user.id, randomUUID(), {
+    amount: 100,
+    rows: 16,
+    risk: "high",
+    ruleVersion: PLINKO_RULE_VERSION,
+  });
   assert.equal(plinko.statusCode, 400);
   env.hiloEnabled = false;
   try {
-    assert.equal((await mutateHilo(user.id, randomUUID(), { kind: "prepare" }, noDraw)).statusCode, 503);
-    const won = hiloMutationResponseSchema.parse((await mutateHilo(user.id, randomUUID(), { kind: "guess", roundId: round.id, expectedVersion: 1, choice: "higher" }, () => 48)).body).round!;
-    assert.equal((await mutateHilo(user.id, randomUUID(), { kind: "cashout", roundId: won.id, expectedVersion: won.version }, noDraw)).statusCode, 200);
-  } finally { env.hiloEnabled = true; }
+    assert.equal(
+      (await mutateHilo(user.id, randomUUID(), { kind: "prepare" }, noDraw)).statusCode,
+      503,
+    );
+    const won = hiloMutationResponseSchema.parse(
+      (
+        await mutateHilo(
+          user.id,
+          randomUUID(),
+          { kind: "guess", roundId: round.id, expectedVersion: 1, choice: "higher" },
+          () => 48,
+        )
+      ).body,
+    ).round!;
+    assert.equal(
+      (
+        await mutateHilo(
+          user.id,
+          randomUUID(),
+          { kind: "cashout", roundId: won.id, expectedVersion: won.version },
+          noDraw,
+        )
+      ).statusCode,
+      200,
+    );
+  } finally {
+    env.hiloEnabled = true;
+  }
 });
 
 test("Hi-Lo caps before drawing and atomically settles at the global limit", async () => {
   const { user, preview } = await hiloSetup("cap");
   let round = (await hiloStart(user.id, preview)).data.round!;
   // Reach a high multiplier with real service operations, preserving exact fractions and step history.
-  for (let i = 0; i < 3; i++) round = hiloMutationResponseSchema.parse((await mutateHilo(user.id, randomUUID(), { kind: "guess", roundId: round.id, expectedVersion: round.version, choice: "same" }, () => 0)).body).round!;
+  for (let i = 0; i < 3; i++)
+    round = hiloMutationResponseSchema.parse(
+      (
+        await mutateHilo(
+          user.id,
+          randomUUID(),
+          { kind: "guess", roundId: round.id, expectedVersion: round.version, choice: "same" },
+          () => 0,
+        )
+      ).body,
+    ).round!;
   assert.equal(round.options.find((x) => x.choice === "same")?.enabled, false);
-  assert.equal((await mutateHilo(user.id, randomUUID(), { kind: "guess", roundId: round.id, expectedVersion: round.version, choice: "same" }, noDraw)).statusCode, 409);
+  assert.equal(
+    (
+      await mutateHilo(
+        user.id,
+        randomUUID(),
+        { kind: "guess", roundId: round.id, expectedVersion: round.version, choice: "same" },
+        noDraw,
+      )
+    ).statusCode,
+    409,
+  );
   while (round.status === "ACTIVE") {
     const current = rank(round.card);
-    round = hiloMutationResponseSchema.parse((await mutateHilo(user.id, randomUUID(), { kind: "guess", roundId: round.id, expectedVersion: round.version, choice: current === 1 ? "higher" : "lower" }, () => current === 1 ? 48 : 0)).body).round!;
+    round = hiloMutationResponseSchema.parse(
+      (
+        await mutateHilo(
+          user.id,
+          randomUUID(),
+          {
+            kind: "guess",
+            roundId: round.id,
+            expectedVersion: round.version,
+            choice: current === 1 ? "higher" : "lower",
+          },
+          () => (current === 1 ? 48 : 0),
+        )
+      ).body,
+    ).round!;
   }
   assert.equal(round.status, "CASHED_OUT");
-  assert.ok(round.multiplier <= 10000 && round.multiplier > 10000 * 12 / 13);
-  assert.equal(round.payout, hiloPayout(100, { numerator: BigInt((await pool.query("SELECT numerator::text FROM hilo_rounds WHERE id=$1", [round.id])).rows[0].numerator), denominator: BigInt((await pool.query("SELECT denominator::text FROM hilo_rounds WHERE id=$1", [round.id])).rows[0].denominator) }));
+  assert.ok(round.multiplier <= 10000 && round.multiplier > (10000 * 12) / 13);
+  assert.equal(
+    round.payout,
+    hiloPayout(100, {
+      numerator: BigInt(
+        (await pool.query("SELECT numerator::text FROM hilo_rounds WHERE id=$1", [round.id]))
+          .rows[0].numerator,
+      ),
+      denominator: BigInt(
+        (await pool.query("SELECT denominator::text FROM hilo_rounds WHERE id=$1", [round.id]))
+          .rows[0].denominator,
+      ),
+    }),
+  );
   assert.equal((await reconcileUserBalance(user.id))?.isReconciled, true);
 });
 
@@ -1671,39 +2142,75 @@ test("Hi-Lo WebSocket and read APIs authenticate, replay across reconnect, and e
   const { user } = await hiloSetup("ws");
   const token = await login(user);
   const sockets: WebSocket[] = [];
-  async function connect() { const ws = new WebSocket(`${baseUrl.replace("http:", "ws:")}/ws`, ["bearer", token]); sockets.push(ws); await once(ws, "open"); return ws; }
+  async function connect() {
+    const ws = new WebSocket(`${baseUrl.replace("http:", "ws:")}/ws`, ["bearer", token]);
+    sockets.push(ws);
+    await once(ws, "open");
+    return ws;
+  }
   function command(ws: WebSocket, action: HiloAction, key = randomUUID()) {
     const requestId = randomUUID();
     return new Promise<HiloCommandResult["result"]>((resolve, reject) => {
-      const timer = setTimeout(() => { ws.off("message", receive); reject(new Error("Hi-Lo timeout")); }, 5000);
+      const timer = setTimeout(() => {
+        ws.off("message", receive);
+        reject(new Error("Hi-Lo timeout"));
+      }, 5000);
       function receive(raw: Buffer) {
         const value = JSON.parse(raw.toString());
         if (value.type !== "hilo_result" || value.requestId !== requestId) return;
-        clearTimeout(timer); ws.off("message", receive); resolve(hiloCommandResultSchema.parse(value).result);
+        clearTimeout(timer);
+        ws.off("message", receive);
+        resolve(hiloCommandResultSchema.parse(value).result);
       }
-      ws.on("message", receive); ws.send(JSON.stringify({ type: "hilo_command", requestId, idempotencyKey: key, action }));
+      ws.on("message", receive);
+      ws.send(JSON.stringify({ type: "hilo_command", requestId, idempotencyKey: key, action }));
     });
   }
   try {
     let ws = await connect();
-    const prepared = await command(ws, { kind: "prepare" }); assert.ok(prepared.ok);
+    const prepared = await command(ws, { kind: "prepare" });
+    assert.ok(prepared.ok);
     const preview = prepared.data.preview!;
-    const action = { kind: "start" as const, amount: 100, previewId: preview.id, expectedVersion: preview.version }, key = randomUUID();
-    const started = await command(ws, action, key); assert.ok(started.ok);
-    ws.close(); await once(ws, "close"); ws = await connect();
+    const action = {
+        kind: "start" as const,
+        amount: 100,
+        previewId: preview.id,
+        expectedVersion: preview.version,
+      },
+      key = randomUUID();
+    const started = await command(ws, action, key);
+    assert.ok(started.ok);
+    ws.close();
+    await once(ws, "close");
+    ws = await connect();
     assert.deepEqual(await command(ws, action, key), started);
     const state = await request<{ round: HiloRound }>("/hilo/state", { token });
-    assert.equal(state.status, 200); assert.equal(state.body.round.id, started.data.round!.id);
+    assert.equal(state.status, 200);
+    assert.equal(state.body.round.id, started.data.round!.id);
     assert.equal((await request("/hilo/config")).status, 401);
     const other = await insertUser({ username: `hilo_ws_other_${runId}`, balance: 100 });
-    assert.equal((await request(`/hilo/rounds/${state.body.round.id}`, { token: await login(other) })).status, 404);
-  } finally { for (const ws of sockets) ws.terminate(); }
+    assert.equal(
+      (await request(`/hilo/rounds/${state.body.round.id}`, { token: await login(other) })).status,
+      404,
+    );
+  } finally {
+    for (const ws of sockets) ws.terminate();
+  }
 });
 
 test("Hi-Lo concurrent guess/cashout applies one version, and exhausted skips auto-settle", async () => {
   const { user, preview } = await hiloSetup("race");
   let round = (await hiloStart(user.id, preview)).data.round!;
-  round = hiloMutationResponseSchema.parse((await mutateHilo(user.id, randomUUID(), { kind: "guess", roundId: round.id, expectedVersion: 1, choice: "higher" }, () => 48)).body).round!;
+  round = hiloMutationResponseSchema.parse(
+    (
+      await mutateHilo(
+        user.id,
+        randomUUID(),
+        { kind: "guess", roundId: round.id, expectedVersion: 1, choice: "higher" },
+        () => 48,
+      )
+    ).body,
+  ).round!;
   const ref = { roundId: round.id, expectedVersion: round.version };
   const results = await Promise.all([
     mutateHilo(user.id, randomUUID(), { kind: "guess", ...ref, choice: "lower" }, () => 0),
@@ -1711,14 +2218,40 @@ test("Hi-Lo concurrent guess/cashout applies one version, and exhausted skips au
   ]);
   assert.deepEqual(results.map((r) => r.statusCode).sort(), [200, 409]);
   round = (await findHiloRound(user.id, round.id))!;
-  if (round.status === "ACTIVE") await mutateHilo(user.id, randomUUID(), { kind: "cashout", roundId: round.id, expectedVersion: round.version }, noDraw);
-  assert.equal((await pool.query("SELECT count(*) FROM financial_ledger_entries WHERE reference_id=$1 AND source='HILO_SETTLEMENT_CREDIT'", [round.id])).rows[0].count, "1");
+  if (round.status === "ACTIVE")
+    await mutateHilo(
+      user.id,
+      randomUUID(),
+      { kind: "cashout", roundId: round.id, expectedVersion: round.version },
+      noDraw,
+    );
+  assert.equal(
+    (
+      await pool.query(
+        "SELECT count(*) FROM financial_ledger_entries WHERE reference_id=$1 AND source='HILO_SETTLEMENT_CREDIT'",
+        [round.id],
+      )
+    ).rows[0].count,
+    "1",
+  );
   assert.equal((await reconcileUserBalance(user.id))?.isReconciled, true);
   // Boundary fixture: only the 52nd skip is left; middle ranks cannot continue at 9000x.
   const boundary = await hiloSetup("skipcap");
   const next = (await hiloStart(boundary.user.id, boundary.preview)).data.round!;
-  await pool.query("UPDATE hilo_rounds SET numerator=9000,denominator=1,success_count=1,skip_count=51 WHERE id=$1", [next.id]);
-  const settled = hiloMutationResponseSchema.parse((await mutateHilo(boundary.user.id, randomUUID(), { kind: "skip", roundId: next.id, expectedVersion: next.version }, () => 24)).body);
+  await pool.query(
+    "UPDATE hilo_rounds SET numerator=9000,denominator=1,success_count=1,skip_count=51 WHERE id=$1",
+    [next.id],
+  );
+  const settled = hiloMutationResponseSchema.parse(
+    (
+      await mutateHilo(
+        boundary.user.id,
+        randomUUID(),
+        { kind: "skip", roundId: next.id, expectedVersion: next.version },
+        () => 24,
+      )
+    ).body,
+  );
   assert.equal(settled.round?.status, "CASHED_OUT");
   assert.equal(settled.round?.payout, 900000);
   assert.equal((await reconcileUserBalance(boundary.user.id))?.isReconciled, true);
@@ -1727,25 +2260,63 @@ test("Hi-Lo concurrent guess/cashout applies one version, and exhausted skips au
 test("Hi-Lo settlement failure rolls back the wallet, ledger, state and idempotency together", async () => {
   const { user, preview } = await hiloSetup("rollback");
   let round = (await hiloStart(user.id, preview)).data.round!;
-  round = hiloMutationResponseSchema.parse((await mutateHilo(user.id, randomUUID(), { kind: "guess", roundId: round.id, expectedVersion: 1, choice: "higher" }, () => 48)).body).round!;
-  const key = randomUUID(), action = { kind: "cashout" as const, roundId: round.id, expectedVersion: round.version };
+  round = hiloMutationResponseSchema.parse(
+    (
+      await mutateHilo(
+        user.id,
+        randomUUID(),
+        { kind: "guess", roundId: round.id, expectedVersion: 1, choice: "higher" },
+        () => 48,
+      )
+    ).body,
+  ).round!;
+  const key = randomUUID(),
+    action = { kind: "cashout" as const, roundId: round.id, expectedVersion: round.version };
   await pool.query(`CREATE FUNCTION hilo_test_reject_settlement() RETURNS trigger LANGUAGE plpgsql AS $$
     BEGIN IF NEW.status = 'CASHED_OUT' THEN RAISE EXCEPTION 'simulated state write failure'; END IF; RETURN NEW; END $$;
     CREATE TRIGGER hilo_test_reject_settlement BEFORE UPDATE ON hilo_rounds FOR EACH ROW EXECUTE FUNCTION hilo_test_reject_settlement();`);
-  try { await assert.rejects(() => mutateHilo(user.id, key, action, noDraw), /simulated state write failure/); }
-  finally { await pool.query("DROP TRIGGER hilo_test_reject_settlement ON hilo_rounds; DROP FUNCTION hilo_test_reject_settlement();"); }
+  try {
+    await assert.rejects(
+      () => mutateHilo(user.id, key, action, noDraw),
+      /simulated state write failure/,
+    );
+  } finally {
+    await pool.query(
+      "DROP TRIGGER hilo_test_reject_settlement ON hilo_rounds; DROP FUNCTION hilo_test_reject_settlement();",
+    );
+  }
   const current = await findHiloRound(user.id);
   assert.equal(current?.version, round.version);
   assert.equal(current?.status, "ACTIVE");
-  assert.equal((await pool.query("SELECT balance::text FROM users WHERE id=$1", [user.id])).rows[0].balance, "9900.00");
-  assert.equal((await pool.query("SELECT count(*) FROM financial_ledger_entries WHERE reference_id=$1 AND source='HILO_SETTLEMENT_CREDIT'", [round.id])).rows[0].count, "0");
-  assert.equal((await pool.query("SELECT count(*) FROM idempotency_keys WHERE actor_id=$1 AND idempotency_key=$2", [user.id, key])).rows[0].count, "0");
-  const result = hiloMutationResponseSchema.parse((await mutateHilo(user.id, key, action, noDraw)).body);
+  assert.equal(
+    (await pool.query("SELECT balance::text FROM users WHERE id=$1", [user.id])).rows[0].balance,
+    "9900.00",
+  );
+  assert.equal(
+    (
+      await pool.query(
+        "SELECT count(*) FROM financial_ledger_entries WHERE reference_id=$1 AND source='HILO_SETTLEMENT_CREDIT'",
+        [round.id],
+      )
+    ).rows[0].count,
+    "0",
+  );
+  assert.equal(
+    (
+      await pool.query(
+        "SELECT count(*) FROM idempotency_keys WHERE actor_id=$1 AND idempotency_key=$2",
+        [user.id, key],
+      )
+    ).rows[0].count,
+    "0",
+  );
+  const result = hiloMutationResponseSchema.parse(
+    (await mutateHilo(user.id, key, action, noDraw)).body,
+  );
   assert.equal(result.balance, 10001.83);
   assert.equal(result.round?.status, "CASHED_OUT");
   assert.equal((await reconcileUserBalance(user.id))?.isReconciled, true);
 });
-
 
 test("Plinko v2 replays a settled v1 wager without recalculating or crediting it again", async () => {
   const user = await insertUser({ username: `plinko_v1_${runId}`, balance: 10000 });
@@ -1756,26 +2327,63 @@ test("Plinko v2 replays a settled v1 wager without recalculating or crediting it
   const id = randomUUID();
   const payout = plinkoPayout(100, legacy.units[0]!);
   const saved = await withTransaction(async (client) => {
-    const claim = { actorId: user.id, scope: "plinko.start", key, requestHash: fingerprintIdempotencyRequest(input) };
+    const claim = {
+      actorId: user.id,
+      scope: "plinko.start",
+      key,
+      requestHash: fingerprintIdempotencyRequest(input),
+    };
     assert.equal((await claimIdempotencyKey(claim, client)).kind, "claimed");
-    const inserted = await client.query(`INSERT INTO plinko_rounds
+    const inserted = await client.query(
+      `INSERT INTO plinko_rounds
       (id,user_id,amount,rows,risk,path,slot_index,multiplier_units,payout,rule_version)
       VALUES ($1,$2,100,16,'low',$3,0,$4,$5,1) RETURNING *`,
-      [id, user.id, Array(16).fill(0), legacy.units[0], payout]);
-    await applyBalanceMutation({ userId: user.id, delta: -100, actorType: "PLAYER", actorId: user.id,
-      source: "PLINKO_BET_DEBIT", referenceType: "PLINKO_ROUND", referenceId: id }, client);
-    const credit = await applyBalanceMutation({ userId: user.id, delta: payout, actorType: "SYSTEM",
-      source: "PLINKO_SETTLEMENT_CREDIT", referenceType: "PLINKO_ROUND", referenceId: id }, client);
-    const response = { round: publicPlinkoRound(inserted.rows[0]), balance: credit.user.balance, walletVersion: credit.user.walletVersion };
+      [id, user.id, Array(16).fill(0), legacy.units[0], payout],
+    );
+    await applyBalanceMutation(
+      {
+        userId: user.id,
+        delta: -100,
+        actorType: "PLAYER",
+        actorId: user.id,
+        source: "PLINKO_BET_DEBIT",
+        referenceType: "PLINKO_ROUND",
+        referenceId: id,
+      },
+      client,
+    );
+    const credit = await applyBalanceMutation(
+      {
+        userId: user.id,
+        delta: payout,
+        actorType: "SYSTEM",
+        source: "PLINKO_SETTLEMENT_CREDIT",
+        referenceType: "PLINKO_ROUND",
+        referenceId: id,
+      },
+      client,
+    );
+    const response = {
+      round: publicPlinkoRound(inserted.rows[0]),
+      balance: credit.user.balance,
+      walletVersion: credit.user.walletVersion,
+    };
     await completeIdempotencyKey({ ...claim, statusCode: 200, response }, client);
     return response;
   });
   const replay = await plinkoPost(token, input, key);
   assert.equal(replay.status, 200);
   assert.deepEqual(replay.body, saved);
-  assert.equal((await request<{ round: PlinkoRound }>(`/plinko/rounds/${id}`, { token })).body.round.multiplier, 15.4345);
+  assert.equal(
+    (await request<{ round: PlinkoRound }>(`/plinko/rounds/${id}`, { token })).body.round
+      .multiplier,
+    15.4345,
+  );
   assert.equal((await plinkoPost(token, input)).status, 409);
-  assert.equal((await request<{ balance: number }>("/auth/me", { token })).body.balance, saved.balance);
+  assert.equal(
+    (await request<{ balance: number }>("/auth/me", { token })).body.balance,
+    saved.balance,
+  );
   assert.equal((await reconcileUserBalance(user.id))?.isReconciled, true);
   assert.equal((await plinkoPost(token)).status, 200);
 });
@@ -1826,10 +2434,18 @@ test("Blackjack parallel starts, version checks and permanent replay debit exact
   const user = await blackjackSetup("retry"),
     key = randomUUID(),
     action = { kind: "start" as const, amount: 100 };
+  // Either connection can acquire the idempotency claim first. Both use the
+  // same fixture; only the winning claimant may draw the shoe.
+  let draws = 0;
+  const draw = () => {
+    draws++;
+    return blackjackShoe([8, 6, 8, 10]);
+  };
   const results = await Promise.all([
-    mutateBlackjack(user.id, key, action, () => blackjackShoe([8, 6, 8, 10])),
-    mutateBlackjack(user.id, key, action, noDraw),
+    mutateBlackjack(user.id, key, action, draw),
+    mutateBlackjack(user.id, key, action, draw),
   ]);
+  assert.equal(draws, 1);
   assert.equal(results[0].statusCode, 200);
   assert.deepEqual(results[0], results[1]);
   const initial = blackjackMutationResponseSchema.parse(results[0].body);
@@ -2152,4 +2768,528 @@ test("Blackjack concurrent hand actions, rejected insurance and database guards 
       .statusCode,
     403,
   );
+});
+
+async function stormSetup(label: string, balance = 10000.01) {
+  env.stormEnabled = true;
+  return insertUser({ username: `storm_${label}_${runId}`, balance });
+}
+const stormSpinAction = {
+  kind: "spin" as const,
+  amount: 20 as const,
+  expectedVersion: 0,
+  ruleVersion: 1 as const,
+};
+
+test("Storm authenticates reads, rejects forged outcomes, and uses no HTTP mutation fallback", async () => {
+  const user = await stormSetup("auth"),
+    token = await login(user);
+  assert.equal((await request("/storm/state")).status, 401);
+  assert.equal((await request("/storm/config")).status, 401);
+  const config = await request("/storm/config", { token });
+  assert.deepEqual(stormConfigResponseSchema.parse(config.body).stakes, [...STORM_STAKES]);
+  const state = stormStateResponseSchema.parse((await request("/storm/state", { token })).body);
+  assert.equal(state.balance, 10000.01);
+  assert.equal(state.session.version, 0);
+  assert.equal(state.session.amount, 10);
+  assert.equal(state.lastRound, null);
+  assert.equal(
+    (await request("/storm/spin", { token, method: "POST", body: stormSpinAction })).status,
+    404,
+  );
+  assert.equal(stormActionSchema.safeParse({ ...stormSpinAction, payout: 100000 }).success, false);
+  assert.equal(stormActionSchema.safeParse({ ...stormSpinAction, fixture: [] }).success, false);
+  assert.equal(stormActionSchema.safeParse({ ...stormSpinAction, amount: 11 }).success, false);
+  const admin = await insertUser({ username: `storm_admin_${runId}`, role: "ADMIN" });
+  assert.equal((await mutateStorm(admin.id, randomUUID(), stormSpinAction)).statusCode, 403);
+});
+
+test("Storm concurrent duplicate requests settle once, preserve cents, replay across disable, and reconcile", async () => {
+  const user = await stormSetup("replay"),
+    key = randomUUID();
+  const replies = await Promise.all([
+    mutateStorm(user.id, key, stormSpinAction),
+    mutateStorm(user.id, key, stormSpinAction),
+  ]);
+  assert.equal(replies[0]!.statusCode, 200);
+  assert.deepEqual(replies[0], replies[1]);
+  const data = stormMutationResponseSchema.parse(replies[0]!.body);
+  assert.equal(data.balance, sumMoney([10000.01, -20, data.round.result.payout]));
+  const ledger = await pool.query(
+    "SELECT source,delta FROM financial_ledger_entries WHERE reference_type='STORM_ROUND' AND user_id=$1 ORDER BY delta",
+    [user.id],
+  );
+  assert.equal(ledger.rows.length, 2);
+  assert.equal(Number(ledger.rows[0].delta), -20);
+  assert.equal((await reconcileUserBalance(user.id))?.isReconciled, true);
+  assert.equal(
+    (
+      await getUserDailyProfit(user.id, {
+        start: new Date(Date.now() - 60000),
+        end: new Date(Date.now() + 60000),
+      })
+    ).netProfit,
+    sumMoney([data.round.result.payout, -20]),
+  );
+  const state = await stormState(user.id);
+  assert.deepEqual(state?.lastRound, data.round);
+  assert.deepEqual(state?.session, data.session);
+  assert.equal(state?.recent.length, 1);
+  env.stormEnabled = false;
+  assert.deepEqual(await mutateStorm(user.id, key, stormSpinAction), replies[0]);
+  assert.equal(
+    (await mutateStorm(user.id, key, { ...stormSpinAction, amount: 10 })).statusCode,
+    409,
+  );
+  await assert.rejects(
+    pool.query("UPDATE storm_rounds SET payout=payout WHERE user_id=$1", [user.id]),
+    /immutable/,
+  );
+  await pool.query(
+    "UPDATE idempotency_keys SET created_at='2000-01-01' WHERE actor_id=$1 AND scope='storm.spin'",
+    [user.id],
+  );
+  await runRetentionCleanup({ idempotencyRetentionDays: 7, authSessionRetentionDays: 30 });
+  assert.deepEqual(await mutateStorm(user.id, key, stormSpinAction), replies[0]);
+});
+
+test("Storm serializes competing versions and never creates two paid rounds from one state", async () => {
+  const user = await stormSetup("versions");
+  const replies = await Promise.all([
+    mutateStorm(user.id, randomUUID(), stormSpinAction),
+    mutateStorm(user.id, randomUUID(), stormSpinAction),
+  ]);
+  assert.deepEqual(replies.map((r) => r.statusCode).sort(), [200, 409]);
+  assert.equal(
+    (await pool.query("SELECT count(*) FROM storm_rounds WHERE user_id=$1", [user.id])).rows[0]
+      .count,
+    "1",
+  );
+  const other = await stormSetup("isolated");
+  assert.equal((await stormState(other.id))?.lastRound, null);
+  assert.equal((await stormState(other.id))?.session.version, 0);
+});
+
+test("Storm persists free stakes, reserves remaining obligations, and permits completion while disabled", async () => {
+  const user = await stormSetup("free", 0);
+  const progress = {
+    ...initialStormProgress(),
+    freeLeft: 2,
+    freeGranted: 100,
+    multiplier: 9,
+    featureWin: 30,
+  };
+  await pool.query(
+    "INSERT INTO storm_sessions(user_id,amount,progress,version,maximum_payout) VALUES($1,20,$2,1,$3)",
+    [user.id, JSON.stringify(progress), stormExposure(progress, 20)],
+  );
+  assert.equal(await getUserUnsettledMaximumPayout(user.id), 1000000);
+  env.stormEnabled = false;
+  assert.equal(
+    (
+      await mutateStorm(user.id, randomUUID(), {
+        ...stormSpinAction,
+        amount: 10,
+        expectedVersion: 1,
+      })
+    ).statusCode,
+    409,
+  );
+  const reply = await mutateStorm(user.id, randomUUID(), {
+    ...stormSpinAction,
+    expectedVersion: 1,
+  });
+  assert.equal(reply.statusCode, 200);
+  const data = stormMutationResponseSchema.parse(reply.body);
+  assert.equal(data.round.result.cost, 0);
+  assert.equal(data.round.result.wasFree, true);
+  assert.equal(data.balance, data.round.result.payout);
+  assert.ok(data.session.progress.freeLeft <= 1);
+  assert.equal((await stormState(user.id))?.session.amount, 20);
+  assert.equal(
+    await getUserUnsettledMaximumPayout(user.id),
+    stormExposure(data.session.progress, 20),
+  );
+  assert.equal((await reconcileUserBalance(user.id))?.isReconciled, true);
+  const fresh = await insertUser({ username: `storm_disabled_${runId}`, balance: 1000 });
+  assert.equal((await mutateStorm(fresh.id, randomUUID(), stormSpinAction)).statusCode, 503);
+});
+
+test("Storm checks full-series headroom and insufficient balance before drawing or writing a round", async () => {
+  const poor = await stormSetup("poor", 19.99);
+  assert.equal((await mutateStorm(poor.id, randomUUID(), stormSpinAction)).statusCode, 400);
+  const rich = await stormSetup("cap", 1990000000);
+  assert.equal((await mutateStorm(rich.id, randomUUID(), stormSpinAction)).statusCode, 400);
+  for (const id of [poor.id, rich.id]) {
+    assert.equal(
+      (await pool.query("SELECT count(*) FROM storm_rounds WHERE user_id=$1", [id])).rows[0].count,
+      "0",
+    );
+    assert.equal((await reconcileUserBalance(id))?.isReconciled, true);
+  }
+  const large = await stormSetup("large", 100000);
+  for (const amount of [1000, 2000, 5000] as const)
+    assert.equal(
+      (await mutateStorm(large.id, randomUUID(), { ...stormSpinAction, amount })).statusCode,
+      400,
+    );
+  assert.equal((await stormState(large.id))?.balance, 100000);
+  assert.equal(
+    (await pool.query("SELECT count(*) FROM storm_rounds WHERE user_id=$1", [large.id])).rows[0]
+      .count,
+    "0",
+  );
+});
+
+test("Storm rolls back the session, round, debit and idempotency claim when settlement fails", async () => {
+  const user = await stormSetup("rollback"),
+    key = randomUUID();
+  await pool.query(`CREATE FUNCTION reject_test_storm_credit() RETURNS TRIGGER LANGUAGE plpgsql AS $$ BEGIN IF NEW.source='STORM_SETTLEMENT_CREDIT' THEN RAISE EXCEPTION 'test storm settlement failure'; END IF; RETURN NEW; END; $$;
+    CREATE TRIGGER reject_test_storm_credit BEFORE INSERT ON financial_ledger_entries FOR EACH ROW EXECUTE FUNCTION reject_test_storm_credit();`);
+  try {
+    await assert.rejects(
+      mutateStorm(user.id, key, stormSpinAction),
+      /test storm settlement failure/,
+    );
+  } finally {
+    await pool.query(
+      "DROP TRIGGER reject_test_storm_credit ON financial_ledger_entries; DROP FUNCTION reject_test_storm_credit();",
+    );
+  }
+  assert.equal((await stormState(user.id))?.session.version, 0);
+  assert.equal((await stormState(user.id))?.balance, 10000.01);
+  assert.equal(
+    (await pool.query("SELECT count(*) FROM storm_rounds WHERE user_id=$1", [user.id])).rows[0]
+      .count,
+    "0",
+  );
+  assert.equal(
+    (
+      await pool.query(
+        "SELECT count(*) FROM idempotency_keys WHERE actor_id=$1 AND scope='storm.spin'",
+        [user.id],
+      )
+    ).rows[0].count,
+    "0",
+  );
+  assert.equal((await mutateStorm(user.id, key, stormSpinAction)).statusCode, 200);
+  assert.equal((await reconcileUserBalance(user.id))?.isReconciled, true);
+});
+
+test("Storm real WS reconnect recovers the original result and debit", async () => {
+  const user = await stormSetup("ws"),
+    token = await login(user),
+    sockets: WebSocket[] = [];
+  async function connect() {
+    const ws = new WebSocket(`${baseUrl.replace("http:", "ws:")}/ws`, ["bearer", token]);
+    sockets.push(ws);
+    await once(ws, "open");
+    return ws;
+  }
+  function command(ws: WebSocket, key: string) {
+    const requestId = randomUUID();
+    return new Promise<ReturnType<typeof stormCommandResultSchema.parse>["result"]>(
+      (resolve, reject) => {
+        const timer = setTimeout(() => {
+          ws.off("message", receive);
+          reject(new Error("Storm WS timeout"));
+        }, 5000);
+        function receive(raw: Buffer) {
+          const msg = JSON.parse(raw.toString());
+          if (msg.type !== "storm_result" || msg.requestId !== requestId) return;
+          clearTimeout(timer);
+          ws.off("message", receive);
+          resolve(stormCommandResultSchema.parse(msg).result);
+        }
+        ws.on("message", receive);
+        ws.send(
+          JSON.stringify({
+            type: "storm_command",
+            requestId,
+            idempotencyKey: key,
+            action: stormSpinAction,
+          }),
+        );
+      },
+    );
+  }
+  try {
+    let ws = await connect();
+    const key = randomUUID(),
+      first = await command(ws, key);
+    assert.equal(first.ok, true);
+    const closed = once(ws, "close");
+    ws.terminate();
+    await closed;
+    ws = await connect();
+    assert.deepEqual(await command(ws, key), first);
+    assert.equal(
+      (
+        await pool.query(
+          "SELECT count(*) FROM financial_ledger_entries WHERE user_id=$1 AND source='STORM_BET_DEBIT'",
+          [user.id],
+        )
+      ).rows[0].count,
+      "1",
+    );
+    assert.equal((await reconcileUserBalance(user.id))?.isReconciled, true);
+  } finally {
+    for (const ws of sockets) ws.terminate();
+  }
+});
+
+test("Storm profile publication pins free series, rejects stale paid settings, and preserves replay and exposure", async () => {
+  assert.equal(
+    (await pool.query("SELECT active_profile_id FROM storm_math_settings WHERE id=1")).rows[0]
+      .active_profile_id,
+    null,
+  );
+  const old = await stormSetup("oldp", 0);
+  const oldProgress = { ...initialStormProgress(), freeLeft: 1, freeGranted: 100 };
+  await pool.query(
+    "INSERT INTO storm_sessions(user_id,amount,progress,version,maximum_payout) VALUES($1,20,$2,1,$3)",
+    [old.id, JSON.stringify(oldProgress), stormExposure(oldProgress, 20)],
+  );
+  const profile = {
+    id: randomUUID(),
+    modelRevision: "balanced-2.0" as const,
+    targetRtp: 96,
+    maxWinFactor: 1000,
+    payoutScale: 206672,
+  };
+  const newer = { ...profile, id: randomUUID(), targetRtp: 95, payoutScale: 204500 };
+  for (const p of [profile, newer])
+    await pool.query(
+      "INSERT INTO storm_math_profiles(id,draft_id,model_revision,target_rtp,max_win_factor,payout_scale,fingerprint,report) VALUES($1,$2,$3,$4,$5,$6,$7,$8)",
+      [
+        p.id,
+        randomUUID(),
+        p.modelRevision,
+        p.targetRtp,
+        p.maxWinFactor,
+        p.payoutScale,
+        "a".repeat(64),
+        { passed: true },
+      ],
+    );
+  await pool.query("UPDATE storm_math_settings SET active_profile_id=$1,revision=1 WHERE id=1", [
+    profile.id,
+  ]);
+  assert.equal((await stormState(old.id))?.session.ruleVersion, 1);
+  assert.equal((await stormState(old.id))?.session.mathProfile, null);
+  const oldResult = stormMutationResponseSchema.parse(
+    (await mutateStorm(old.id, randomUUID(), { ...stormSpinAction, expectedVersion: 1 })).body,
+  );
+  assert.equal(oldResult.round.ruleVersion, 1);
+  assert.equal(oldResult.session.progress.freeLeft, 0);
+  assert.equal((await stormState(old.id))?.session.mathProfile?.id, profile.id);
+
+  const user = await stormSetup("newp");
+  const stale = await mutateStorm(user.id, randomUUID(), stormSpinAction);
+  assert.equal(stale.statusCode, 409);
+  assert.equal((await stormState(user.id))?.balance, 10000.01);
+  const action = { ...stormSpinAction, ruleVersion: 2 as const, mathProfileId: profile.id };
+  const key = randomUUID(),
+    response = await mutateStorm(user.id, key, action);
+  assert.equal(response.statusCode, 200);
+  const data = stormMutationResponseSchema.parse(response.body);
+  assert.equal(data.round.mathProfileId, profile.id);
+  assert.equal(data.session.ruleVersion, 2);
+  assert.equal(data.session.mathProfile?.id, profile.id);
+  assert.equal(
+    await getUserUnsettledMaximumPayout(user.id),
+    stormExposure(data.session.progress, 20, profile),
+  );
+  assert.equal((await reconcileUserBalance(user.id))?.isReconciled, true);
+  await pool.query("UPDATE storm_math_settings SET active_profile_id=$1,revision=2 WHERE id=1", [
+    newer.id,
+  ]);
+  assert.deepEqual(await mutateStorm(user.id, key, action), response);
+  const fresh = await stormSetup("stalep");
+  assert.equal((await mutateStorm(fresh.id, randomUUID(), action)).statusCode, 409);
+  assert.equal((await stormState(fresh.id))?.session.mathProfile?.id, newer.id);
+
+  const freeUser = await stormSetup("pinp", 0);
+  const progress = {
+    ...initialStormProgress(),
+    freeLeft: 1,
+    freeGranted: 30,
+    multiplier: 5,
+    cycleWin: 19999.99,
+  };
+  await pool.query(
+    "INSERT INTO storm_sessions(user_id,amount,progress,version,maximum_payout,rule_version,math_profile_id,max_win_factor) VALUES($1,20,$2,1,0.01,2,$3,1000)",
+    [freeUser.id, JSON.stringify(progress), profile.id],
+  );
+  assert.equal((await stormState(freeUser.id))?.session.mathProfile?.id, profile.id);
+  assert.equal(await getUserUnsettledMaximumPayout(freeUser.id), 0.01);
+  env.stormEnabled = false;
+  const freeResult = await mutateStorm(freeUser.id, randomUUID(), {
+    ...action,
+    expectedVersion: 1,
+  });
+  assert.equal(freeResult.statusCode, 200);
+  const freeData = stormMutationResponseSchema.parse(freeResult.body);
+  assert.equal(freeData.round.mathProfileId, profile.id);
+  assert.equal(freeData.round.result.cost, 0);
+  assert.ok(freeData.round.result.payout <= 0.01);
+  assert.equal(freeData.session.progress.freeLeft, 0);
+  assert.equal(await getUserUnsettledMaximumPayout(freeUser.id), 0);
+  assert.equal((await stormState(freeUser.id))?.session.mathProfile?.id, newer.id);
+  await assert.rejects(
+    pool.query("UPDATE storm_math_profiles SET payout_scale=1 WHERE id=$1", [profile.id]),
+    /immutable/,
+  );
+  await assert.rejects(
+    pool.query("UPDATE storm_sessions SET math_profile_id=NULL WHERE user_id=$1", [freeUser.id]),
+    /storm_session_profile_version/,
+  );
+  await pool.query("UPDATE storm_math_settings SET active_profile_id=NULL,revision=0 WHERE id=1");
+});
+
+test("Storm expanded stakes settle once with exact ledger debits and retain exposure protection", async () => {
+  const profileId = randomUUID();
+  const previous = (
+    await pool.query("SELECT active_profile_id FROM storm_math_settings WHERE id=1")
+  ).rows[0].active_profile_id;
+  await pool.query(
+    "INSERT INTO storm_math_profiles(id,draft_id,model_revision,target_rtp,max_win_factor,payout_scale,fingerprint,report) VALUES($1,$2,'balanced-2.0',96,1000,200000,$3,$4)",
+    [profileId, randomUUID(), "a".repeat(64), { passed: true }],
+  );
+  try {
+    await pool.query("UPDATE storm_math_settings SET active_profile_id=$1 WHERE id=1", [profileId]);
+    for (const amount of STORM_STAKES) {
+      const user = await stormSetup(`s${amount}`, 100000.01);
+      const action = {
+        kind: "spin" as const,
+        amount,
+        expectedVersion: 0,
+        ruleVersion: 2 as const,
+        mathProfileId: profileId,
+      };
+      const key = randomUUID();
+      const reply = await mutateStorm(user.id, key, action);
+      assert.equal(reply.statusCode, 200);
+      const data = stormMutationResponseSchema.parse(reply.body);
+      assert.equal(data.round.result.cost, amount);
+      assert.equal(data.session.amount, amount);
+      assert.equal(data.balance, sumMoney([100000.01, -amount, data.round.result.payout]));
+      assert.deepEqual(await mutateStorm(user.id, key, action), reply);
+      const debits = await pool.query(
+        "SELECT delta FROM financial_ledger_entries WHERE user_id=$1 AND source='STORM_BET_DEBIT'",
+        [user.id],
+      );
+      assert.deepEqual(
+        debits.rows.map((row) => Number(row.delta)),
+        [-amount],
+      );
+      assert.equal((await reconcileUserBalance(user.id))?.isReconciled, true);
+    }
+    for (const [label, balance] of [
+      ["spoor", 4999.99],
+      ["srich", 1999999999],
+    ] as const) {
+      const user = await stormSetup(label, balance);
+      const reply = await mutateStorm(user.id, randomUUID(), {
+        kind: "spin",
+        amount: 5000,
+        expectedVersion: 0,
+        ruleVersion: 2,
+        mathProfileId: profileId,
+      });
+      assert.equal(reply.statusCode, 400);
+      assert.equal((await stormState(user.id))?.balance, balance);
+      assert.equal(
+        (await pool.query("SELECT count(*) FROM storm_rounds WHERE user_id=$1", [user.id])).rows[0]
+          .count,
+        "0",
+      );
+    }
+  } finally {
+    await pool.query("UPDATE storm_math_settings SET active_profile_id=$1 WHERE id=1", [previous]);
+  }
+});
+
+test("Storm configurable profiles persist settings and reserve their configured free-series exposure", async () => {
+  for (const capScope of ["cycle", "spin"] as const) {
+    const settings = { ...STORM_LEGACY_SETTINGS, capScope };
+    const profile = {
+      id: randomUUID(),
+      modelRevision: "configurable-3.0" as const,
+      targetRtp: capScope === "cycle" ? 0 : 10000,
+      maxWinFactor: 1000,
+      payoutScale: capScope === "cycle" ? 0 : 20000000,
+      settings,
+    };
+    await pool.query(
+      "INSERT INTO storm_math_profiles(id,draft_id,model_revision,target_rtp,max_win_factor,payout_scale,fingerprint,report,settings,cap_scope,free_max) VALUES($1,$2,$3,$8,1000,$9,$4,$5,$6,$7,100)",
+      [
+        profile.id,
+        randomUUID(),
+        profile.modelRevision,
+        "a".repeat(64),
+        { passed: true },
+        settings,
+        capScope,
+        profile.targetRtp,
+        profile.payoutScale,
+      ],
+    );
+    const user = await stormSetup(capScope, 0);
+    const progress = {
+      ...initialStormProgress(),
+      freeLeft: 1,
+      freeGranted: 100,
+      cycleWin: 19999.99,
+    };
+    const exposure = stormExposure(progress, 20, profile);
+    assert.equal(exposure, capScope === "cycle" ? 0.01 : 20000);
+    await pool.query(
+      "INSERT INTO storm_sessions(user_id,amount,progress,version,maximum_payout,rule_version,math_profile_id,max_win_factor,cap_scope,free_max) VALUES($1,20,$2,1,$3,3,$4,1000,$5,100)",
+      [user.id, progress, exposure, profile.id, capScope],
+    );
+    assert.equal(await getUserUnsettledMaximumPayout(user.id), exposure);
+    assert.deepEqual((await stormState(user.id))?.session.mathProfile?.settings, settings);
+    const reply = await mutateStorm(user.id, randomUUID(), {
+      kind: "spin",
+      amount: 20,
+      expectedVersion: 1,
+      ruleVersion: 3,
+      mathProfileId: profile.id,
+    });
+    assert.equal(reply.statusCode, 200);
+    const data = stormMutationResponseSchema.parse(reply.body);
+    assert.equal(data.round.ruleVersion, 3);
+    assert.equal(data.round.result.cost, 0);
+    assert.equal(data.session.mathProfile?.targetRtp, profile.targetRtp);
+    if (profile.targetRtp === 0) assert.equal(data.round.result.payout, 0);
+    assert.equal(data.session.progress.freeLeft, 0);
+    assert.equal(await getUserUnsettledMaximumPayout(user.id), 0);
+    assert.equal((await reconcileUserBalance(user.id))?.isReconciled, true);
+    await assert.rejects(
+      pool.query("UPDATE storm_sessions SET cap_scope=$2 WHERE user_id=$1", [
+        user.id,
+        capScope === "cycle" ? "spin" : "cycle",
+      ]),
+      /storm_session_settings_fk|storm_session_exposure|storm_session_profile_version/,
+    );
+    await pool.query("UPDATE storm_math_settings SET active_profile_id=$1 WHERE id=1", [
+      profile.id,
+    ]);
+    const next = await stormSetup(capScope + "p");
+    const fresh = await mutateStorm(next.id, randomUUID(), {
+      kind: "spin",
+      amount: 5000,
+      expectedVersion: 0,
+      ruleVersion: 3,
+      mathProfileId: profile.id,
+    });
+    assert.equal(fresh.statusCode, 200);
+    assert.equal(stormMutationResponseSchema.parse(fresh.body).round.result.cost, 5000);
+    assert.deepEqual(
+      stormMutationResponseSchema.parse(fresh.body).session.mathProfile?.settings,
+      settings,
+    );
+    await pool.query("UPDATE storm_math_settings SET active_profile_id=NULL WHERE id=1");
+  }
 });

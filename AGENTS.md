@@ -37,6 +37,10 @@
 
 ## UI：避免重複出現的對齊、閃動與動畫問題
 
+- 所有現有與新增畫面依 [全站布局規範](docs/game-layout-standard.md)：不得超過 `100vh`（支援時使用 `100dvh`），包含登入、遊戲選單、帳戶、歷史、規則、遊戲、Big Win 與所有彈窗。Navbar、safe-area、餘額與操作列包含在同一高度內；長內容只能在指定區域內部捲動，不可撐高整頁或裁掉必要內容。鍵盤開啟時依可見 viewport 調整。所有遊戲共用 `AppPageHeader`、只提供直式布局，手機／平板橫向時阻擋新操作，桌面維持置中直式容器。文件為目標規範，實作後須逐頁、逐彈窗驗收。
+
+- 不使用 emoji、顏文字或文字字元充當 UI 圖示；新圖示使用 `AppIcon` 的自託管 icon font，撲克牌花色使用 `CardSuit`。AI 生成圖片轉成 WebP 後放入專案，並在 Markdown 記錄概念、完整 prompt、檔案路徑與使用位置，詳見 [圖片與圖示資產](docs/image-assets.md)。
+
 - 遊戲大廳 `/lobby`、百家樂選桌 `/baccarat`、百家樂牌桌 `/game/:tableId`、Hi-Lo、Plinko、Mines 都使用 `AppPageHeader`，不要另畫返回箭頭或各自重寫 header。
 - Header 外層左右留白統一使用 `var(--ui-page-gutter)`（目前固定 16 個 CSS px）。百家樂選桌與牌桌用頁面 `padding-inline`；大廳輪播需要滿寬，因此只在 header 設定左右 margin。不能重複加兩層留白，也不能沿用 `.player-page` 會縮放的 `12px` 當作已對齊。
 - 箭頭偏移先檢查外層 padding／margin、mobile-forever 轉換及共用 grid，不用 translate、負 margin 或單頁箭頭偏移補償。Header 標題保持水平置中；右側操作使用 actions slot。
@@ -86,3 +90,9 @@ E2E_MOCKED_ONLY=true npm run test:e2e -- e2e/hilo-mocked.spec.ts e2e/viewport.sp
 - 回覆應清楚交代變更、實際執行的驗證與尚未處理的限制；不要把未執行項目寫成通過。
 
 進一步規則：[Hi-Lo](docs/hilo.md)、[Mines](docs/mines.md)、[Plinko](docs/plinko.md)、[部署](deploy/README.md)。
+
+## 沙海神殿
+
+- `/storm-demo` 已接共用帳戶錢包，需 PLAYER 登入；不要恢復前端 10,000 點、重設餘額或強制免費展示入口。
+- client 只播放 server 結果。沿用 `/api/ws`、`storm.spin` 永久 idempotency、session version 與 walletVersion；免費系列須保留原投注額。
+- 免費系列最大剩餘派彩納入所有遊戲的共用曝險；有未完成免費回合時不可回退到不計 Storm 的舊版。`STORM_ENABLED=false` 只停新付費局，保留免費結算與 replay。詳見 [沙海神殿](docs/storm-demo.md)。

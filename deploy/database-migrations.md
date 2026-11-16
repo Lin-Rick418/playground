@@ -55,7 +55,6 @@ ORDER BY version;
 
 若 status 回報 checksum drift 或 out-of-order history，將資料庫視為需人工處理的異常狀態；先比對部署 artifact 與資料庫來源，不得直接改 history 來繞過檢查。
 
-
 ## Migration 10：Mines 與兩位小數錢包
 
 此版本不是僅新增欄位，必須安排維護時段，停止 API／worker 寫入、完成備份、build、migrate，再一起更新前端並要求既有分頁重新載入。不要讓舊版整數 client 連到新版小數 API。
@@ -95,3 +94,27 @@ ORDER BY version;
 4. 驗證新局、分牌／加倍／保險追加投注、失聯重播、每日損益、跨遊戲曝險與 `financial_balance_reconciliation`，再明確設定 `BLACKJACK_ENABLED=true`。
 
 停用旗標只拒絕新局；讀取、既有局操作與 idempotency replay 繼續提供。存在 ACTIVE Blackjack 時不得回退到不含 Blackjack 曝險的 server；保留新版 schema、結算能力、ledger 與永久 idempotency，採向前修復。無自動 down migration。
+
+## 沙海神殿（migration 15）
+
+新增 `storm_sessions`／`storm_rounds`、不可變局紀錄 trigger、ledger 來源與索引；共用曝險與每日損益納入 Storm。範例 `STORM_ENABLED=false`，完成隔離驗收後明確開啟。
+
+先備份並停止 API／worker，使用新版執行 `db:migrate`、確認 `db:migrate:status` 為 15/15，再啟動服務。一般帳戶與既有交易保留。已發出的免費回合可在關閉旗標後繼續結算，原 key replay 永久可用。
+
+有剩餘免費回合時不可回退到不計 Storm 曝險的舊程式；關閉新投注並保留 schema、ledger、idempotency 與結算能力，向前修復。不要刪除免費進度、重新套用舊 migration 或改寫 migration history。完整 API 與規則見 [沙海神殿](../docs/storm-demo.md)。
+
+## 沙海神殿可配置 RTP（migration 16／17）
+
+16 新增不可變配率 profile、發布紀錄與 active pointer；17 加入完整 `settings`、每轉／整段 cap 與免費系列上限，並用 session composite FK 和曝險 CHECK 綁定原始 profile。migration 保留既有 v1/v2 與 active pointer，不會自動發布草稿。
+
+先備份、停止舊版 API／worker，再執行 `db:migrate`，確認 `db:migrate:status` 為 17/17 後啟動新版。後台需先 build 平台 contracts，且使用相同 DB 與 source root。免費系列持續依原 profile 結算；禁止回退不理解 v3 或 Storm 曝險的 server。停止新局採 `STORM_ENABLED=false`，保留免費結算與 replay。詳見 [RTP 操作與驗證](../docs/storm-rtp-control.md)。
+
+## 沙海神殿高／低 RTP（migration 18）
+
+18 擴大 `target_rtp` 精度與 v3 的派彩係數範圍，支援零 RTP 與超過 100% 的目標；舊 v2 仍保留原範圍，profile、publication 與 active pointer 不改寫。依同一備份／停止服務／migrate／確認 18/18／啟動流程部署。不要重寫 migration 16 或 17；新目標需重新校準與確認發布。無法達成的參數組合保持草稿，不會變更玩家配率。
+
+## 沙海神殿投注級距（migration 19）
+
+19 擴充 `storm_sessions.amount` 與 `storm_rounds.stake` 的 CHECK，支援 10／50／100／200／500／1000／2000／5000，並保留舊 20 幣資料與請求。免費累計派彩欄位上限對齊 money contract 的 20 億；原本 session 曝險、profile 上限與 round 派彩 CHECK 保留，不改寫任何交易或 math profile。
+
+依備份／停止 API 與 worker／`db:migrate`／確認 `db:migrate:status` 為 19/19／啟動新版服務與 web 的順序部署。產生新級距交易後，不可直接回退至只接受舊四個金額的 server 或 contracts；暫停新付費局使用 `STORM_ENABLED=false`，保留已發出免費回合與原 key replay。新選單不代表繞過曝險上限，舊 v1 的大額投注限制詳見 [沙海神殿](../docs/storm-demo.md)。

@@ -50,7 +50,9 @@ if (
   throw new Error("BLACKJACK_ENABLED must be true or false");
 }
 
+if (process.env.STORM_ENABLED !== undefined && !["true", "false"].includes(process.env.STORM_ENABLED)) throw new Error("STORM_ENABLED must be true or false");
 export const env = {
+  stormEnabled: process.env.STORM_ENABLED === "true",
   blackjackEnabled: process.env.BLACKJACK_ENABLED === "true",
   plinkoEnabled: process.env.PLINKO_ENABLED !== "false",
   hiloEnabled: process.env.HILO_ENABLED === "true",

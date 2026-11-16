@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import AppIcon from "./AppIcon.vue";
 import { computed } from "vue";
 import AppButton from "./AppButton.vue";
 import AppSelect from "./AppSelect.vue";
@@ -48,14 +49,14 @@ function adjust(delta: number) {
         :disabled="disabled || amount <= min"
         :aria-label="`減少投注 ${step}`"
         @click="adjust(-step)"
-        >−</AppButton
-      >
+        ><AppIcon name="minus"
+      /></AppButton>
       <AppButton
         :disabled="disabled || amount >= max"
         :aria-label="`增加投注 ${step}`"
         @click="adjust(step)"
-        >＋</AppButton
-      >
+        ><AppIcon name="plus"
+      /></AppButton>
       <AppButton
         :disabled="disabled || amount >= max"
         :aria-label="`最高投注 ${max}`"

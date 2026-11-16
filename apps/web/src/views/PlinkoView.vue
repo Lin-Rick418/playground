@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import AppIcon from "../components/ui/AppIcon.vue";
 import AppSelect from "../components/ui/AppSelect.vue";
 import AppButton from "../components/ui/AppButton.vue";
 import StakeControl from "../components/ui/StakeControl.vue";
@@ -11,6 +12,7 @@ import type { PlinkoRisk, PlinkoRound } from "@baccarat/contracts";
 import PlinkoWin from "../components/PlinkoWin.vue";
 import { getRollingMoneyValue } from "../composables/useSettledDailyProfit";
 import { useLiveChannel } from "../composables/useLiveChannel";
+import { usePortraitBlocked } from "../composables/usePortraitGuard";
 import { formatMoney, sumMoney } from "../lib/money";
 import { useAuthStore } from "../stores/auth";
 import { isValidPlinkoStake, PendingPlinkoMutationError, usePlinkoStore } from "../stores/plinko";
@@ -26,6 +28,7 @@ type AnimatedBall = {
 const router = useRouter();
 const auth = useAuthStore();
 const store = usePlinkoStore();
+const portraitBlocked = usePortraitBlocked();
 const amount = ref(100);
 const rows = ref(16);
 const risk = ref<PlinkoRisk>("medium");
@@ -60,7 +63,7 @@ function stopAuto() {
   autoRemaining.value = 0;
 }
 async function runAuto(version: number) {
-  if (!autoRunning.value || version !== autoGeneration || disposed) return;
+  if (portraitBlocked.value || !autoRunning.value || version !== autoGeneration || disposed) return;
   // Wait for animation capacity without submitting overlapping requests.
   if (activeBalls.value.length < 12) {
     const accepted = await submit();
@@ -80,6 +83,7 @@ async function runAuto(version: number) {
   autoTimer = setTimeout(() => void runAuto(version), 350);
 }
 async function togglePlay() {
+  if (portraitBlocked.value) return;
   if (autoRunning.value) {
     stopAuto();
     return;
@@ -94,6 +98,13 @@ async function togglePlay() {
   autoRunning.value = true;
   void runAuto(++autoGeneration);
 }
+watch(
+  portraitBlocked,
+  (blocked) => {
+    if (blocked) stopAuto();
+  },
+  { flush: "sync" },
+);
 const loading = ref(true);
 const settingsDialog = ref<HTMLDialogElement | null>(null);
 const settingsOpen = ref(false);
@@ -730,8 +741,8 @@ onUnmounted(() => {
               type="button"
               aria-label="關閉投注設定"
               @click="closeSettings"
-              >✕</AppButton
-            >
+              ><AppIcon name="close"
+            /></AppButton>
           </header>
           <StakeControl v-model="amount" stacked :disabled="controlsBusy || autoRunning" />
           <label
