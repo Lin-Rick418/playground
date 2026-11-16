@@ -50,6 +50,8 @@ jobs:
           cache: npm
       - name: Install locked dependencies
         run: npm ci
+      - name: Build shared contracts
+        run: npm run build --workspace @baccarat/contracts
       - name: Install Chromium and WebKit
         run: npx playwright install --with-deps chromium webkit
       - name: Prepare test database
